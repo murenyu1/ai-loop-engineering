@@ -8,6 +8,17 @@ export const ADAPTERS = {
   dsh: { home: '.dsh/ai-loop', entry: '.dsh/ai-loop/ENTRY.md', loader: 'explicit', conditions: ['此目录只存工作流部署；DSH 原生项目注入尚未验证，必须显式读取入口'] },
 };
 
+// 未实现的原生能力保持 unknown/unsupported，不能由入口文件存在推断。
+export function capabilities(harness) {
+  return {
+    native_agents: ['codex', 'claude-code'].includes(harness) ? 'implemented-unverified' : 'unsupported',
+    per_role_model: ['codex', 'claude-code'].includes(harness),
+    running_model_switch: 'not-guaranteed',
+    progress: harness === 'codex' ? '原生子代理面板；CLI /subagents'
+      : harness === 'claude-code' ? '原生 /tasks；/agents 检查定义' : '需核对该产品与版本；仅提供本地记录',
+  };
+}
+
 export function selectHarness(requested, env = process.env) {
   const aliases = { claude: 'claude-code', 'claude_code': 'claude-code' };
   if (requested && requested !== 'auto') return aliases[requested] || requested;
@@ -47,6 +58,8 @@ export function entryInstructions(adapter) {
     '- 部署目录（相对项目根）：' + code(adapter.home) + '。仅使用当前 harness 的部署，不读取其他平台副本。',
     '- 新会话首次处理项目相关请求，运行 ' + code(adapter.home + '/scripts/memory.mjs bootstrap --project 项目根') + ' 并读取共享 ' + code('.ai-loop/memory/index.md') + '；已读且未变化时复用。',
     '- 开始开发时按阶段读取 ' + code(adapter.home + '/WORKFLOW.md') + '，需要角色时仅读取该部署的对应角色。',
+    '- 若已部署 ' + code(adapter.home + '/ROUTING.md') + '，主代理首次调度前读取；执行已批准的 standard/full 任务时，使用原生 loop-* 子代理分工，按任务依赖串行或安全并行。简单 lite 任务可由主代理完成。不要仅口头扮演代理。',
+    '- 首次派发前运行本部署 doctor.mjs；缺少原生代理工具、角色未被发现或模型被替换时停止派发并报告。未启用模型分工时先询问用户是否配置各角色模型与强度。',
     '- 当前会话已读取同版本流程和当前角色时复用上下文；版本、阶段或任务变化后按需重读，不重复回灌正文和历史。',
     '- 项目根 AGENTS.md / CLAUDE.md 等保存项目规范；用户要求、项目规范及平台权限优先。命中 deny 立即停止，不换工具或平台绕过。',
     '- 继续请求用 bootstrap --intent continue 定位任务；多个候选先澄清。再用 ' + code(adapter.home + '/scripts/loop.mjs') + ' 的 status、session.md 和必要资料核对，交接过期先更新；新需求使用新 run_id，不恢复已关闭运行。',

@@ -1,0 +1,6 @@
+# 手动原生验收生成的隔离项目与日志
+/.validation/
+
+# 本机系统文件
+.DS_Store
+Thumbs.db

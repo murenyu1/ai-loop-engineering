@@ -5,10 +5,12 @@ import crypto from 'node:crypto';
 import { VERSION, BUNDLE, assert, inside, rootPath, safePath, jsonFile, atomicWrite, locked, args, allowArgs, mainModule, printResult } from './lib.mjs';
 import { ADAPTERS, selectHarness, adapterFor, entryInstructions, codexBootstrap } from './adapters.mjs';
 import { rootString, updateRootString } from './toml.mjs';
+import { configureModels } from './codex-models.mjs';
+import { ROLES, balanced, validateProfile, agentPath, nativeAgent, skillPath, nativeSkill, routingGuide, routeHash } from './routing.mjs';
 
 const START = '<!-- ai-loop:start -->';
 const END = '<!-- ai-loop:end -->';
-export const REQUIRED_FILES = ['SETUP.md', 'WORKFLOW.md', 'MEMORY.md', ...['planner', 'dev', 'tester', 'reviewer', 'scribe'].map(role => `agents/loop-${role}.md`), ...['install.mjs', 'loop.mjs', 'lib.mjs', 'adapters.mjs', 'toml.mjs', 'memory.mjs', 'README.md'].map(file => `scripts/${file}`), 'templates/memory-index.md'];
+export const REQUIRED_FILES = ['SETUP.md', 'WORKFLOW.md', 'MEMORY.md', ...['planner', 'dev', 'tester', 'reviewer', 'scribe'].map(role => `agents/loop-${role}.md`), ...['install.mjs', 'loop.mjs', 'lib.mjs', 'adapters.mjs', 'toml.mjs', 'codex-models.mjs', 'routing.mjs', 'models.mjs', 'agents.mjs', 'doctor.mjs', 'memory.mjs', 'README.md'].map(file => `scripts/${file}`), 'templates/memory-index.md', 'templates/routing.md'];
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const wrapped = text => `${START}\n${text}\n${END}`;
 
@@ -50,6 +52,19 @@ function validateRecord(root, bundle, record) {
     assert(!inside(bundle, item.target), '部署不能写入源包');
     assert(item.existed && hash(item.original) === file.hash, `部署文件已被人工修改或移除：${file.path}；请先合并`);
   }
+  const nativePaths = Object.keys(ROLES).map(role => ['codex', 'claude-code'].includes(adapter.harness) ? agentPath(adapter.harness, role) : null);
+  if (['codex', 'claude-code'].includes(adapter.harness)) nativePaths.push(skillPath(adapter.harness));
+  assert(!record.native_files || Array.isArray(record.native_files), '原生代理清单无效');
+  for (const file of record.native_files || []) {
+    assert(nativePaths.includes(file.path) && /^[a-f0-9]{64}$/.test(file.hash) && !paths.has(file.path), '原生代理清单路径、摘要或重复项无效');
+    paths.add(file.path);
+    const item = read(root, file.path);
+    assert(!inside(bundle, item.target) && item.existed && hash(item.original) === file.hash, `部署文件已被人工修改或移除：${file.path}；请先合并`);
+  }
+  if (record.model_routing?.profile) {
+    const profile = validateProfile(record.model_routing.profile, adapter.harness);
+    assert(routeHash(profile) === record.model_routing.profile_hash, '模型配置摘要损坏');
+  }
   const expectedEntries = adapter.config ? [adapter.config] : adapter.entry.startsWith(adapter.home + '/') ? [] : [adapter.entry];
   assert(record.entries.length === expectedEntries.length, '安装清单入口数量不符');
   for (const entry of record.entries) {
@@ -81,6 +96,10 @@ export function install(options) {
   const env = options.env || process.env;
   const harness = selectHarness(options.harness, env);
   const selected = adapterFor(harness, options.entry);
+  assert(options['model-routing'] === undefined || options['model-routing'] === 'balanced', '--model-routing 仅支持 balanced');
+  assert(!(options['model-routing'] && (options.routing || options.profile)), '预设与自定义模型配置不能同时提供');
+  assert(!(options.routing && options.profile), '不能同时提供 routing 和 profile');
+  assert(!(options['model-routing'] || options.routing || options.profile) || ['codex', 'claude-code'].includes(harness), '原生模型分工仅适用于 codex / claude-code');
   for (const flag of ['apply', 'check', 'migrate']) assert(options[flag] === undefined || options[flag] === true, `--${flag} 不接受值；移除该参数即可关闭`);
   assert(!options.apply || !options.check, '--apply 与 --check 不能同时使用');
   const source = path.relative(root, bundle).split(path.sep).join('/');
@@ -91,6 +110,15 @@ export function install(options) {
     assert(item.existed, `源包缺少必需普通文件：${file}`);
     return { file, ...item };
   });
+  let requestedProfile = options.profile;
+  if (options.routing) {
+    const item = read(root, options.routing);
+    assert(item.existed, '模型配置文件不存在');
+    requestedProfile = jsonFile(item.target);
+    inputs.push({ file: options.routing, external: true, ...item });
+  }
+  if (options['model-routing']) requestedProfile = balanced(harness);
+  if (requestedProfile) requestedProfile = validateProfile(requestedProfile, harness);
   const manifestItem = read(root, '.ai-loop/install.json');
   const manifest = manifestItem.existed ? jsonFile(manifestItem.target) : null;
   assert(!manifest || [1, 2].includes(manifest.schema_version), '安装清单格式无效，先人工检查');
@@ -155,7 +183,7 @@ export function install(options) {
     const previous = records[adapter.key];
     if (previous) {
       validateRecord(root, bundle, previous);
-      for (const item of [...previous.files, ...previous.entries]) observe(item.path);
+      for (const item of [...previous.files, ...previous.native_files || [], ...previous.entries]) observe(item.path);
     }
     const files = [];
     const ownFiles = new Map((previous?.files || []).map(file => [file.path, file]));
@@ -165,7 +193,42 @@ export function install(options) {
       plan(name, content, { action: item.existed ? 'update-deployment' : 'deploy', bytes: Buffer.byteLength(content) });
       files.push({ path: name, hash: hash(content) });
     };
-    for (const input of inputs) deploy(adapter.home + '/' + input.file, input.original);
+    for (const input of inputs.filter(input => !input.external)) deploy(adapter.home + '/' + input.file, input.original);
+    const profile = adapter.key === selected.key && requestedProfile ? requestedProfile
+      : previous?.model_routing?.profile || (previous?.model_routing ? balanced(adapter.harness) : null);
+    const nativeFiles = [];
+    if (profile) {
+      const directory = adapter.harness === 'codex' ? '.codex/agents' : '.claude/agents';
+      const fullDirectory = safePath(root, directory);
+      if (fs.existsSync(fullDirectory)) {
+        assert(fs.statSync(fullDirectory).isDirectory(), '原生代理目录被普通文件占用');
+        for (const entry of fs.readdirSync(fullDirectory)) {
+          if (!entry.endsWith(adapter.harness === 'codex' ? '.toml' : '.md')) continue;
+          const name = directory + '/' + entry;
+          if (previous?.native_files?.some(file => file.path === name)) continue;
+          const candidate = observe(name);
+          const text = candidate.original.toString('utf8');
+          const declared = adapter.harness === 'codex' ? rootString(text, 'name')?.value
+            : /^name:\s*["']?(loop-[a-z]+)["']?\s*$/m.exec(text)?.[1];
+          assert(!Object.keys(ROLES).some(role => declared === 'loop-' + role), `原生代理名称已有未注册定义：${name}；停止覆盖`);
+        }
+      }
+      for (const role of Object.keys(ROLES)) {
+        const name = agentPath(adapter.harness, role);
+        const native = observe(name);
+        assert(!native.existed || previous?.native_files?.some(file => file.path === name), `部署路径已有未注册文件：${name}；停止覆盖`);
+        const content = nativeAgent(profile, role);
+        plan(name, content, { action: native.existed ? 'update-native-agent' : 'create-native-agent', bytes: Buffer.byteLength(content) });
+        nativeFiles.push({ path: name, hash: hash(content) });
+      }
+      const name = skillPath(adapter.harness);
+      const skill = observe(name);
+      assert(!skill.existed || previous?.native_files?.some(file => file.path === name), `原生技能路径已有未注册文件：${name}；停止覆盖`);
+      const content = nativeSkill(adapter.harness);
+      plan(name, content, { action: skill.existed ? 'update-native-skill' : 'create-native-skill', bytes: Buffer.byteLength(content) });
+      nativeFiles.push({ path: name, hash: hash(content) });
+      deploy(adapter.home + '/ROUTING.md', routingGuide(profile, inputs.find(input => input.file === 'templates/routing.md').original.toString('utf8')));
+    }
     const desiredBlock = wrapped(entryInstructions(adapter));
     if (adapter.config || adapter.entry.startsWith(adapter.home + '/')) deploy(adapter.entry, desiredBlock + '\n');
     const entryPath = adapter.config || adapter.entry;
@@ -174,11 +237,17 @@ export function install(options) {
     const previousEntry = previous?.entries.find(entry => entry.path === entryPath);
     let updated;
     let managed;
+    let modelRouting;
     if (adapter.config) {
       const existing = rootString(original, 'developer_instructions');
       assert(existing || !globalInstructions('codex', env).trim(), '全局 developer_instructions 非空；新项目字段会覆盖它。先保留有效个人指令到项目字段，再预演；不自动修改全局配置');
       managed = wrapped(codexBootstrap(adapter));
       updated = updateRootString(original, 'developer_instructions', value => merge(value, managed, previousEntry, entryPath));
+      if (profile) {
+        const routing = configureModels(updated, previous?.model_routing, profile);
+        updated = routing.text;
+        modelRouting = routing.record;
+      }
     } else if (!adapter.entry.startsWith(adapter.home + '/')) {
       managed = desiredBlock;
       if (adapter.harness === 'pi') {
@@ -187,6 +256,7 @@ export function install(options) {
       updated = merge(original, managed, previousEntry, entryPath);
       if (adapter.harness === 'cursor' && !item.existed) updated = '---\ndescription: AI Loop Engineering\nalwaysApply: true\n---\n\n' + updated;
     }
+    if (profile && adapter.harness === 'claude-code') modelRouting = { mode: 'custom', format: 'native-v2', profile, profile_hash: routeHash(profile) };
     const entries = [];
     if (updated !== undefined) {
       plan(entryPath, updated, { action: item.existed ? 'merge-native-entry' : 'create-native-entry', managed_block: managed, preserved_existing_text: true });
@@ -194,7 +264,8 @@ export function install(options) {
     }
     // 显式入口由 files 的整文件摘要管理；无需再建立第二条读取链。
     for (const old of previous?.files || []) if (!files.some(file => file.path === old.path)) plan(old.path, null, { action: 'remove-obsolete-deployment' });
-    records[adapter.key] = { key: adapter.key, harness: adapter.harness, home: adapter.home, entry: adapter.entry, loader: adapter.loader, version: VERSION, files: files.sort((a, b) => a.path.localeCompare(b.path)), entries, conditions: adapter.conditions, loading: 'unverified' };
+    for (const old of previous?.native_files || []) if (!nativeFiles.some(file => file.path === old.path)) plan(old.path, null, { action: 'remove-obsolete-native-file' });
+    records[adapter.key] = { key: adapter.key, harness: adapter.harness, home: adapter.home, entry: adapter.entry, loader: adapter.loader, version: VERSION, files: files.sort((a, b) => a.path.localeCompare(b.path)), entries, ...(modelRouting ? { model_routing: modelRouting, native_files: nativeFiles } : {}), conditions: adapter.conditions, loading: 'unverified' };
   }
   // 共享项目知识是运行资料，不作为某个平台部署文件接管或覆盖。
   const memoryIndex = observe('.ai-loop/memory/index.md');
@@ -229,7 +300,7 @@ export function install(options) {
     for (const item of [...observations.values(), ...inputs]) {
       assert(fs.existsSync(item.target) === item.existed && (!item.existed || fs.readFileSync(item.target).equals(item.original)), '文件在预演后发生变化，请重新预演：' + item.path);
       // 写前再次确认中间目录没有被替换成符号链接。
-      safePath(item.target.startsWith(bundle + path.sep) ? bundle : root, item.path);
+      safePath(!item.external && item.target.startsWith(bundle + path.sep) ? bundle : root, item.path);
     }
     const applied = [];
     try {
@@ -252,9 +323,9 @@ export function install(options) {
 
 export function cli(argv) {
   const options = args(argv);
-  allowArgs(options, ['project', 'harness', 'entry', 'apply', 'check', 'migrate', 'help']);
+  allowArgs(options, ['project', 'harness', 'entry', 'apply', 'check', 'migrate', 'model-routing', 'routing', 'help']);
   assert(!options._.length, '安装器不接受位置参数');
-  if (options.help) return { usage: 'node scripts/install.mjs --project ROOT [--harness auto|codex|claude-code|cursor|pi|dsh|generic] [--entry .mytool/rules/ai-loop.md] [--migrate] [--apply|--check]' };
+  if (options.help) return { usage: 'node scripts/install.mjs --project ROOT [--harness auto|codex|claude-code|cursor|pi|dsh|generic] [--entry .mytool/rules/ai-loop.md] [--model-routing balanced | --routing PROJECT_RELATIVE_JSON] [--migrate] [--apply|--check]' };
   return install(options);
 }
 if (mainModule(import.meta.url)) printResult(() => cli(process.argv.slice(2)));

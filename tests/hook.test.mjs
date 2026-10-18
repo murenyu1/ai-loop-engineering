@@ -4,10 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { PassThrough } from 'node:stream';
-import { after, before, test } from 'node:test';
+import { after, before, test, describe } from 'node:test';
+import { link } from './support.mjs';
 
 const require = createRequire(import.meta.url);
 const { checkReportPath, evaluateHook, runHook } = require('../hooks/check-report-path.js');
+describe('报告路径 hook', () => {
 let fixture;
 let root;
 let outside;
@@ -21,8 +23,6 @@ before(() => {
   fs.mkdirSync(path.join(root, '.ai-loop', 'runs', 'run-1', 'reports'), { recursive: true });
   fs.mkdirSync(path.join(outside, 'test-reports'), { recursive: true });
   fs.writeFileSync(path.join(root, 'test-reports', 'existing.md'), '报告夹具');
-  fs.symlinkSync(outside, path.join(root, 'test-reports', 'escape'), 'dir');
-  fs.symlinkSync(path.join(outside, 'missing.md'), path.join(root, 'test-reports', 'dangling.md'));
 });
 
 after(() => fs.rmSync(fixture, { recursive: true, force: true }));
@@ -62,7 +62,9 @@ test('拒绝目录穿越、项目外同名报告目录和非法 run_id', () => {
   denied(`.ai-loop/runs/${'a'.repeat(65)}/reports/test.md`);
 });
 
-test('拒绝符号链接逃逸和悬空符号链接', () => {
+test('拒绝符号链接逃逸和悬空符号链接', t => {
+  if (!link(t, outside, path.join(root, 'test-reports', 'escape'), 'dir')) return;
+  if (!link(t, path.join(outside, 'missing.md'), path.join(root, 'test-reports', 'dangling.md'))) return;
   denied('test-reports/escape/test-reports/outside.md');
   denied('test-reports/escape/../src/main.js');
   denied('test-reports/dangling.md');
@@ -140,4 +142,5 @@ test('stdin 读取错误也返回合法拒绝 JSON', async () => {
   await pending;
   assert.equal(runtime.exitCode, 2);
   assert.equal(JSON.parse(output).hookSpecificOutput.permissionDecision, 'deny');
+});
 });

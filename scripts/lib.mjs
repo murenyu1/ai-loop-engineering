@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-export const VERSION = '3.1.0';
+export const VERSION = '4.0.0';
 export const BUNDLE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 export function assert(condition, message) {

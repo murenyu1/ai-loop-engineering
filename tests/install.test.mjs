@@ -8,6 +8,8 @@ import { install, REQUIRED_FILES } from '../scripts/install.mjs';
 import { selectHarness } from '../scripts/adapters.mjs';
 import { rootString, updateRootString } from '../scripts/toml.mjs';
 import { snapshot } from '../scripts/loop.mjs';
+import { configureModels } from '../scripts/codex-models.mjs';
+import { link } from './support.mjs';
 
 const digest = text => crypto.createHash('sha256').update(text).digest('hex');
 function fixture(t) {
@@ -22,6 +24,74 @@ function fixture(t) {
 }
 const get = (options, name) => fs.readFileSync(path.join(options.root, name), 'utf8');
 function put(options, name, text) { const file = path.join(options.root, name); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); }
+
+test('Codex 分工显式启用、Luna high、角色路径可读；检查与升级保持幂等', t => {
+  const options = fixture(t);
+  put(options, 'AGENTS.md', '# 项目初始化规则\n');
+  put(options, '.codex/config.toml', '# 保留注释\n[profiles.keep]\nmodel="personal"\n');
+  const routed = { ...options, 'model-routing': 'balanced' };
+  const preview = install(routed);
+  assert.ok(preview.changes.includes('.codex/agents/loop-dev.toml'));
+  assert.equal(fs.existsSync(path.join(options.root, '.ai-loop')), false);
+  install({ ...routed, apply: true });
+  const config = get(options, '.codex/config.toml');
+  assert.equal(rootString(config, 'model').value, 'gpt-6.1-sol');
+  assert.equal(rootString(config, 'model_reasoning_effort').value, 'medium');
+  assert.match(config, /default_subagent_model = "gpt-6-luna"/);
+  assert.match(config, /default_subagent_reasoning_effort = "high"/);
+  assert.match(config, /\[profiles.keep\]\nmodel="personal"/);
+  for (const role of ['planner', 'reviewer', 'dev', 'tester', 'scribe']) {
+    assert.ok(!config.includes('config_file ='));
+    const roleText = get(options, `.codex/agents/loop-${role}.toml`);
+    assert.equal(rootString(roleText, 'name').value, `loop-${role}`);
+    assert.ok(rootString(roleText, 'description').value);
+    assert.equal(rootString(roleText, 'model').value, ['planner', 'reviewer'].includes(role) ? 'gpt-6.1-sol' : 'gpt-6-luna');
+    assert.equal(rootString(roleText, 'model_reasoning_effort').value, 'high');
+  }
+  assert.equal(get(options, 'AGENTS.md'), '# 项目初始化规则\n');
+  assert.deepEqual(install({ ...options, check: true }).changes, []);
+  assert.deepEqual(install({ ...routed, apply: true }).changes, []);
+  fs.appendFileSync(path.join(options.bundle, 'WORKFLOW.md'), '\n升级\n');
+  install({ ...options, apply: true });
+  assert.equal(get(options, '.codex/config.toml'), config);
+  assert.ok(JSON.parse(get(options, '.ai-loop/install.json')).harnesses.codex.model_routing);
+});
+
+test('Codex 分工不接管冲突配置、不覆盖人工修改或未注册角色', t => {
+  for (const before of ['model="other"\n', '[agents]\nenabled=false\n', '[agents.custom]\ndescription="keep"\n', 'agents.enabled=true\n']) {
+    const options = fixture(t);
+    put(options, '.codex/config.toml', before);
+    assert.throws(() => install({ ...options, 'model-routing': 'balanced', apply: true }), /停止覆盖/);
+    assert.equal(get(options, '.codex/config.toml'), before);
+    assert.equal(fs.existsSync(path.join(options.root, '.ai-loop')), false);
+  }
+  const options = fixture(t);
+  install({ ...options, 'model-routing': 'balanced', apply: true });
+  const config = get(options, '.codex/config.toml');
+  put(options, '.codex/config.toml', config.replace('default_subagent_reasoning_effort = "high"', 'default_subagent_reasoning_effort = "low"'));
+  assert.throws(() => install({ ...options, apply: true }), /人工修改/);
+  put(options, '.codex/config.toml', config);
+  fs.appendFileSync(path.join(options.root, '.codex/agents/loop-dev.toml'), '\n# 修改');
+  assert.throws(() => install({ ...options, check: true }), /部署文件已被人工修改/);
+  const collision = fixture(t);
+  put(collision, '.codex/agents/loop-dev.toml', '# 手工角色');
+  assert.throws(() => install({ ...collision, 'model-routing': 'balanced', apply: true }), /未注册/);
+  assert.equal(fs.existsSync(path.join(collision.root, '.ai-loop')), false);
+});
+
+test('Codex 分工参数和模型标记损坏停止，默认安装不变', t => {
+  const options = fixture(t);
+  assert.throws(() => install({ ...options, 'model-routing': 'cheap' }), /仅支持/);
+  assert.throws(() => install({ ...options, harness: 'pi', 'model-routing': 'balanced' }), /仅适用/);
+  assert.throws(() => configureModels('# ai-loop-models:end\n# ai-loop-models:start\n'), /顺序/);
+  assert.throws(() => configureModels('# ai-loop-models:start\n'), /损坏/);
+  install({ ...options, apply: true });
+  assert.equal(rootString(get(options, '.codex/config.toml'), 'model'), null);
+  assert.equal(fs.existsSync(path.join(options.root, '.codex/ai-loop/codex')), false);
+  // 已安装默认工作流可以在获批后原地启用分工。
+  install({ ...options, 'model-routing': 'balanced', apply: true });
+  assert.deepEqual(install({ ...options, check: true }).changes, []);
+});
 function legacy(options, edited = false, pure = false) {
   const instructions = '<!-- ai-loop:start -->\n旧工作流\n<!-- ai-loop:end -->';
   const claude = '<!-- ai-loop:start -->\n@AGENTS.md\n<!-- ai-loop:end -->';
@@ -54,11 +124,12 @@ test('Codex 无损合并 TOML，保留个人正文、注释、表和文件权限
   const before = '# comment\ndeveloper_instructions = """\n我的个人指令\\n第二行\n""" # keep\nmodel = "test"\n[projects."/work"]\ntrust_level = "trusted"\n';
   put(options, '.codex/config.toml', before);
   fs.chmodSync(path.join(options.root, '.codex/config.toml'), 0o640);
+  const originalMode = fs.statSync(path.join(options.root, '.codex/config.toml')).mode & 0o777;
   install({ ...options, apply: true });
   const after = get(options, '.codex/config.toml');
   assert.match(rootString(after, 'developer_instructions').value, /^我的个人指令\n第二行\n/);
   assert.ok(after.endsWith('# keep\nmodel = "test"\n[projects."/work"]\ntrust_level = "trusted"\n'));
-  assert.equal(fs.statSync(path.join(options.root, '.codex/config.toml')).mode & 0o777, 0o640);
+  assert.equal(fs.statSync(path.join(options.root, '.codex/config.toml')).mode & 0o777, originalMode);
   assert.equal((rootString(after, 'developer_instructions').value.match(/ai-loop:start/g) || []).length, 1);
   put(options, '.codex/config.toml', after.replace('model = "test"', 'model = "changed"'));
   assert.deepEqual(install({ ...options, apply: true }).changes, []);
@@ -157,7 +228,7 @@ test('路径越界、符号链接、源包目标及非法参数均停止', t => 
   assert.throws(() => install({ ...options, project: options.bundle }), /目标/);
   for (const entry of ['AGENTS.md', '../out.md', '.mytool/../out.md', '.codex/rule.md', '.ai-loop/rules.md', '.mytool//rules.md']) assert.throws(() => install({ ...options, harness: 'generic', entry }));
   assert.throws(() => install({ ...options, apply: 'false' }), /不接受值/);
-  fs.symlinkSync(options.bundle, path.join(options.root, '.codex'));
+  if (!link(t, options.bundle, path.join(options.root, '.codex'), 'dir')) return;
   assert.throws(() => install({ ...options, apply: true }), /符号链接/);
   assert.equal(fs.existsSync(path.join(options.root, '.ai-loop')), false);
 });

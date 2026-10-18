@@ -1,16 +1,40 @@
 # AI Loop Engineering
 
+4.0 支持 Codex 与 Claude Code 原生子代理和逐角色模型配置：强模型指挥，性价比模型执行。配置时询问各角色模型、思考强度和并发数；支持中途修改，明确重载与生效边界。安装、升级与验证见 SETUP.md，派发与切换协议见 templates/routing.md。
+
+安装、原生角色发现、真实调用、实际模型与界面显示需要分层验收。Codex 项目信任、Claude 第三方模型映射与客户端重载条件会影响运行；文件检查通过不代表全部能力已经生效。
+
 可复制到开发项目中的通用 AI 开发闭环：**计划 → 实现 → 验证 → 评审 → 修复**。按任务风险分级，按阶段读取角色，限制无效重试，通过持久状态恢复任务。
 
 核心协议统一维护，各 harness 使用独立的原生加载入口。根 `AGENTS.md` / `CLAUDE.md` 保存项目规范，工作流部署到 `.codex`、`.claude`、`.cursor`、`.pi` 等子目录，不占用 `/init` 的根文件。
 
 ## 一次配置当前工具
 
-把完整 `ai-loop-engineering/` 文件夹复制到**目标项目的子目录**，在目标项目打开 AI，发送：
+新建目录和进行中的项目采用同一种放置方式：把完整 `ai-loop-engineering/` 文件夹复制到**目标项目的子目录**，然后在**目标项目根目录**打开 AI。不要在源包目录中配置，也不要只复制 README。目录示例：
 
-> 请读取 `./ai-loop-engineering/SETUP.md`，根据 codex 的规范配置 ai-loop-engineering 工作流。
+```text
+你的项目/                       ← 在这里打开 AI、执行本文命令
+├── ai-loop-engineering/        ← 完整源包
+│   ├── README.md
+│   ├── SETUP.md
+│   └── ...
+└── 现有源码、项目规则等          ← 新建目录可以暂时没有
+```
 
-使用 Claude Code、Cursor、Pi 时替换工具名；也可写“根据当前 harness 的规范配置”，AI 根据会话身份选择，不根据已有目录猜测。安装步骤、冲突处理和验收都在 [SETUP.md](SETUP.md)。默认不修改 settings.json，不安装依赖、插件、hook 或原生子代理。
+在 **AI 聊天输入框**发送以下提示词；这不是终端命令：
+
+> 请读取 `./ai-loop-engineering/SETUP.md`，为当前目标项目按 **codex** 的规范配置完整 AI Loop 工作流，包括原生子代理和逐角色模型分工。先检查已有项目规则与配置，让我选择主代理和各子代理的模型、思考强度及并发数，再预演并按确认结果应用。保留现有源码、项目规范和运行记录；遇到配置冲突先展示具体原因与合并方案。安装后分别报告文件一致性、原生角色发现、真实调用、实际模型证据和界面显示，不把文件安装成功当作全部验收通过。
+
+Claude Code 用户把提示词中的 **codex** 改为 **claude-code**。已有明确的模型选择时可以在同一条消息里给出，不需要重新问一遍。基础入口安装与完整多代理安装不同：**不启用模型分工的普通 install 命令不会生成原生子代理或 ai-loop 技能**。
+
+Cursor、Pi、DSH 和 generic 当前只支持工作流入口，不能按这两个平台的方式配置原生多模型子代理。使用这些工具时，把提示词改为“仅配置工作流入口”，并核对具体工具名与版本；能力不足时应明确报告。安装步骤与冲突处理见 [SETUP.md](SETUP.md)。默认不修改 settings.json，不安装依赖、插件或 hook。
+
+配置后再检查启动条件：
+
+1. **Codex**：通过原生客户端确认目标项目受信任，再新开会话；未信任时项目配置会被跳过，不能靠反复安装解决。以 `doctor --native` 的配置层诊断为准。[官方加载规则](https://learn.chatgpt.com/docs/config-file/config-basic)
+2. **Claude Code**：首次生成 `.claude/agents/` 后新开会话，运行 `/agents` 确认五个 `loop-*` 已发现；已有目录的定义改动通常自动检测，首次创建目录、add-dir 等情形仍需重开。[官方重载说明](https://code.claude.com/docs/en/sub-agents)
+3. 在新会话发送：`$ai-loop 请使用原生子代理完成：你的需求`（Codex），或 `/ai-loop 请完成：你的需求`（Claude Code）。也可自然语言明确要求“使用原生子代理按 AI Loop 工作流完成”。lite 小任务允许主代理直接完成；要验收代理调用，请明确要求一次只读子代理任务。
+4. 观察真实运行：Codex 子代理面板或 CLI `/subagents`，Claude Code `/tasks`。本地台账是最后观察记录，不等于原生实时面板。
 
 **一次配置只覆盖选定工具。** 换其他工具时再配置对应入口，已有配置互不覆盖；运行记录共享。未知工具与 DSH 默认显式加载，不能保证任意 harness 都自动读取。
 
@@ -24,10 +48,12 @@
 ├── CLAUDE.md                     # 需要时由项目/Claude 生成；安装不创建
 ├── .codex/
 │   ├── config.toml               # 追加短 developer_instructions，保留其他内容
+│   ├── agents/                   # 启用分工时生成 loop-*.toml 原生定义
 │   └── ai-loop/
 │       ├── AGENTS.md             # 工作流入口，由短提示指向
 │       ├── WORKFLOW.md           # 从源包部署，按阶段读取
 │       ├── MEMORY.md             # 持久知识与恢复协议
+│       ├── ROUTING.md            # 启用分工时生成各角色请求配置与派发规则
 │       ├── SETUP.md
 │       ├── agents/               # 所需角色按需读取
 │       └── scripts/              # 状态工具与接口
@@ -51,6 +77,8 @@
 
 Codex 需要受信任项目与有效的项目配置；Claude 的 project 指令来源及规则需启用；Cursor/Pi 需要版本支持、相应规则或资源信任。个人 Codex 同名字段、Pi 同名提示可能被项目配置覆盖，安装会检测已知位置的非空内容，先保留再配置；其他配置层与启动覆盖在 SETUP 中核对。
 
+原生子代理：Codex 使用 `.codex/agents/loop-*.toml`，Claude Code 使用 `.claude/agents/loop-*.md`。Codex 子代理面板 / CLI `/subagents` 与 Claude Code `/tasks` 用于观察运行；界面由客户端提供，入口文件不能保证 UI 显示。Cursor/Pi/DSH/generic 当前只适配工作流入口，原生模型分工未实现，不能宣称等价支持。
+
 源包是更新来源，各平台部署是安装器维护的运行副本。正常开发只读取当前平台副本，不重复读取源包、其他平台或全部角色。这减少配置导致的重复加载，不能保证模型绝不重读。
 
 ## 各类项目配置方法
@@ -58,10 +86,10 @@ Codex 需要受信任项目与有效的项目配置；Claude 的 project 指令�
 ### 新建项目或空目录
 
 1. 创建项目目录，把源包复制到子目录，不把源包自身当目标项目。
-2. 使用开头的配置提示词安装当前工具。
+2. 使用开头的完整配置提示词，明确 harness，选择模型后配置当前工具。
 3. 用 `/init` 生成项目根规范；空项目先形成基本结构再初始化通常更有实际内容。也可以先 `/init` 再安装，两种顺序都可。
 4. 检查根规范只保存项目信息，不重复粘贴工作流正文或导入原生工作流入口。
-5. 给出开发需求和验收，按项目规则实施。
+5. 完成上文的信任、重开会话和原生角色发现检查，再给出开发需求与验收。安装本身不需要 Git 仓库；不要为了安装而自动初始化 Git。
 
 安装与开发可合并授权：
 
@@ -73,7 +101,7 @@ Codex 需要受信任项目与有效的项目配置；Claude 的 project 指令�
 
 保留已有源码、未提交修改与根规范，把源包复制进去，发送：
 
-> 请读取 `./ai-loop-engineering/SETUP.md`，按当前 harness 配置工作流，原样保留根 AGENTS.md / CLAUDE.md 与项目设置。了解当前实现、未提交修改和测试基线，再为这项需求创建新运行：这里填写需求。
+> 请读取 `./ai-loop-engineering/SETUP.md`，按 **codex** 配置完整工作流、原生子代理与模型分工，先让我确认各角色模型与强度。保留根 AGENTS.md / CLAUDE.md、现有源码、未提交修改及已有运行；需要改动原生模型字段时先展示差异。了解当前实现和测试基线，完成加载验收后，再为这项需求创建新运行：这里填写需求。
 
 不需要重跑 `/init`；已有项目规范继续生效。先区分已有测试失败与本次改动引入的问题，明确不能执行的检查和必要回归。此前开发历史不能补写成已通过工作流验证。
 
@@ -114,18 +142,36 @@ node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --che
 
 ## 手动安装与工具切换
 
-Node.js ≥18，无第三方依赖。在目标项目根执行：
+Node.js ≥18，无第三方依赖。以下是**终端命令**，都在目标项目根执行。首次安装且已决定使用 balanced 预设时：
 
 ```bash
-# 预演
-node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex
-# 写入
-node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --apply
+# 预演完整配置
+node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --model-routing balanced
+# 应用同一预设
+node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --model-routing balanced --apply
 # 只读检查
+node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --check
+# 原生配置层、技能发现与 CLI 版本诊断，不调用模型
+node ./.codex/ai-loop/scripts/doctor.mjs --project . --harness codex --probe --native
+```
+
+Claude Code 将前三条中的 harness 改为 `claude-code`，诊断命令为：
+
+```bash
+node ./.claude/ai-loop/scripts/doctor.mjs --project . --harness claude-code --probe --native
+```
+
+`--check` 只验文件一致性。doctor 若显示 `dispatch: blocked` 或原生 `disabledReason`，先处理具体加载问题，不能宣称子代理可运行。即使配置检查通过，仍需原生调用、实际模型与 UI 证据。没有 CLI 时，改用当前客户端的原生诊断并保留未验证项。
+
+**升级时不要重复加 `--model-routing balanced`**，除非您想把全部角色重置为该预设。普通升级不带模型参数，会保留已选配置：
+
+```bash
+node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex
+node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --apply
 node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --check
 ```
 
-替换为 claude-code、cursor、pi、dsh 即配置对应平台。其他工具先核对具体产品及版本：
+首次安装不带模型参数时，上述命令只安装基础入口。Cursor、Pi、DSH 使用这个基础模式，替换 harness 即可。其他工具先核对具体产品及版本：
 
 ```bash
 node ./ai-loop-engineering/scripts/install.mjs --project . --harness generic --entry .mytool/rules/ai-loop.md
@@ -136,6 +182,109 @@ node ./ai-loop-engineering/scripts/install.mjs --project . --harness generic --e
 切换工具时，在新工具发送 SETUP 配置请求；只新增/更新该工具副本，其他平台保留原版本。继续任务沿用原 run_id、状态与计数。升级多个平台要逐个平台预演和应用，不假定一次升级全部同步。
 
 源包改名或移动后，从新源包路径运行安装器，更新 source 与当前平台副本；部署路径不变。整个项目搬家后核对路径、环境和入口，旧日志不证明新环境检查通过。
+
+## 自己配置与切换各子代理模型
+
+仅适用于已经实现原生适配的 `codex` / `claude-code`。可以在聊天中让 AI 操作，也可以自己执行命令。不要直接编辑生成的角色文件或安装清单，否则后续升级会因人工修改而停止。
+
+| 命令中的 role | 对应职责 |
+|---|---|
+| main | 主代理：计划、管理、疑难决策与最终验收 |
+| planner | 复杂任务计划 |
+| reviewer | 独立评审 |
+| dev | 开发与修复 |
+| tester | 执行测试与收集证据 |
+| scribe | 整理项目记忆与交接 |
+
+### 首次自选：逐角色问答
+
+在自己的交互终端执行其中一条；会逐项询问六个角色的模型、强度和并发数，回车保留显示值，完成后应用：
+
+```bash
+# Codex
+node ./ai-loop-engineering/scripts/models.mjs configure --project . --harness codex --apply
+# Claude Code
+node ./ai-loop-engineering/scripts/models.mjs configure --project . --harness claude-code --apply
+```
+
+去掉 `--apply` 仅预演，预演不会保存问答结果，再次运行会重新询问。AI 的非交互工具不能代替您填写终端问答；此时在聊天里给出选择，让 AI 用下述 JSON 方式预演并应用同一份配置。
+
+当前 balanced 预设如下，您可逐项替换为账户/provider 实际可用的模型；它不是模型支持能力或价格保证：
+
+| 角色 | Codex 模型 / 强度 | Claude Code 模型 / 强度 |
+|---|---|---|
+| main | gpt-6.1-sol / medium | opus / medium（主会话用原生选择器设置） |
+| planner、reviewer | gpt-6.1-sol / high | opus / high |
+| dev、tester | gpt-6-luna / high | sonnet / high |
+| scribe | gpt-6-luna / high | sonnet / medium |
+
+进行中的 Codex 项目若已有不同的项目级 `model` / `model_reasoning_effort` 或 agents 配置，预设安装会停止覆盖。要保留现有主模型，在自定义配置中把 main 填为现有值；要改动既有冲突内容，让 AI 先展示并确认合并方案。不要通过删除清单或移除规则强行接管。
+
+### 手动填写 JSON：可复用的配置
+
+在目标项目中创建 `.ai-loop/` 目录，把以下内容保存为 UTF-8 的 `.ai-loop/routing-input.json`，再按需修改所有角色的 model / effort：
+
+```json
+{
+  "schema_version": 1,
+  "harness": "codex",
+  "concurrency": 3,
+  "main": {"model": "gpt-6.1-sol", "effort": "medium"},
+  "roles": {
+    "planner": {"model": "gpt-6.1-sol", "effort": "high"},
+    "reviewer": {"model": "gpt-6.1-sol", "effort": "high"},
+    "dev": {"model": "gpt-6-luna", "effort": "high"},
+    "tester": {"model": "gpt-6-luna", "effort": "high"},
+    "scribe": {"model": "gpt-6-luna", "effort": "high"}
+  }
+}
+```
+
+```bash
+node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --routing .ai-loop/routing-input.json
+node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --routing .ai-loop/routing-input.json --apply
+```
+
+Claude Code 同时将 JSON 的 harness 与命令参数改成 `claude-code`，将模型替换为该平台实际可用的模型。五个子角色必须完整提供；concurrency 为 1–8，Claude Code 中由调度者遵守，并非平台硬限制。JSON 的 `effort: null` 表示省略该字段；Codex main 必须明确强度。这里的 model 必须明确，不能写 inherit。
+
+### 安装后查看与切换单个角色
+
+Codex 示例，预演和应用使用同一组参数：
+
+```bash
+node ./.codex/ai-loop/scripts/models.mjs status --project . --harness codex
+node ./.codex/ai-loop/scripts/models.mjs set --project . --harness codex --role dev --model gpt-6-luna --effort medium
+node ./.codex/ai-loop/scripts/models.mjs set --project . --harness codex --role dev --model gpt-6-luna --effort medium --apply
+# 只修改思考强度，保留该角色当前模型
+node ./.codex/ai-loop/scripts/models.mjs set --project . --harness codex --role reviewer --effort high --apply
+node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --check
+```
+
+Claude Code 示例：
+
+```bash
+node ./.claude/ai-loop/scripts/models.mjs status --project . --harness claude-code
+node ./.claude/ai-loop/scripts/models.mjs set --project . --harness claude-code --role tester --model sonnet --effort medium
+node ./.claude/ai-loop/scripts/models.mjs set --project . --harness claude-code --role tester --model sonnet --effort medium --apply
+# 换记录员模型，并省略单独的 effort 字段
+node ./.claude/ai-loop/scripts/models.mjs set --project . --harness claude-code --role scribe --model haiku --effort inherit --apply
+node ./ai-loop-engineering/scripts/install.mjs --project . --harness claude-code --check
+```
+
+替换 `--role` 即可配置其他角色；可以只传 `--model` 或只传 `--effort`。Codex 的字段校验接受 minimal/low/medium/high/xhigh/max/ultra，Claude Code 接受 low/medium/high/xhigh/max；**实际支持哪些强度取决于模型和客户端**。CLI 的 `--effort inherit` 对应 JSON 的 null，不保证自动关闭思考。
+
+也可以直接在聊天中说：
+
+> 请把当前项目的 dev 子代理换成 MODEL，思考强度 high；先显示预演，按我确认的结果应用，其他角色不变。
+
+> 请把 tester 的思考强度改为 medium，保留当前模型，后续派发使用。
+
+### 切换何时生效、如何确认
+
+- 配置默认作用于**原生重载后的下一次派发**；已经运行的代理继续原配置，不会因为文件更新而自动换模型。需要立即换时，让主代理在安全边界停止、保存 checkpoint，再以新代理接续同一任务，保留 run_id 和修复次数。
+- Codex 未验证热重载时，新开会话再确认角色；Claude Code 在已有 agents 目录中通常自动检测更新，首次创建目录等情形须重开。确认后才开始下一次派发。
+- 修改 `main` 不会追溯切换当前主会话。Codex 用原生模型选择器核对；Claude 的 main 只保存调度建议，实际主模型/强度需用原生 `/model` 等入口设置。
+- `models status` 显示请求配置，不证明实际模型。用原生调用结果、模型日志和运行面板核对。第三方兼容服务可能把 opus/sonnet/haiku 都映射到同一后端；不同别名不等于不同模型。还需检查 FORCE / EFFORT 环境覆盖，详见 SETUP。
 
 ## 当前会话、新会话与中断恢复
 
@@ -198,6 +347,16 @@ Claude 使用 `.claude/rules/ai-loop.md`，Cursor 使用 `.cursor/rules/ai-loop.
 
 ## 特殊情况与验证范围
 
+源包维护验证命令：
+
+```bash
+node tests/all.mjs
+```
+
+自动测试覆盖新目录/已有项目的 Codex 与 Claude Code 安装、启动读取、自定义 JSON、模型与强度切换、升级保留设置及脚本证据闭环。测试不会调用真实模型或观察原生 UI；受环境限制而跳过的用例必须如实报告。
+
+手动原生验收脚本 `tests/native-smoke.mjs` 可复用，但不在默认测试中运行；使用方法见 `node tests/native-smoke.mjs --harness codex --inspect`（只读检查本地协议）或把命令改为 `--harness codex` / `--harness claude-code`（实际模型调用）。临时现场生成在 `.validation/`，不作为发布源码保留。真实运行仍需逐层核对项目加载、模型映射、实际强度和 UI，不以固定日期的历史报告替代当前环境验收。
+
 单仓库先确定仓库统一根还是子项目边界，读取上级规则，不混用两套运行目录；子项目安装要求源包位于该子项目内。非 Git 项目也能使用文件快照，不自动初始化 Git。
 
 没有 Node.js 时说明脚本未运行，用户明确选择指令模式后显式读取源包协议与角色，手工记录；不声称脚本校验或强制次数门已经生效。冲突、符号链接、路径越界和锁冲突时停止并保留现场，不通过删除清单、换工具或入口绕过。
@@ -216,7 +375,8 @@ ai-loop-engineering/
 ├── agents/                   # 5 个角色，按需读取
 ├── scripts/                  # 安装器、适配器、状态工具
 ├── templates/                # 初始知识索引模板，不填充虚构事实
-└── tests/                    # 源包校验，不部署到各平台
+├── tests/                    # 源包校验，不部署到各平台
+└── commands/orchestrate.md   # 可选 Claude 命令壳，默认不安装
 ```
 
 小任务走短流程；跨模块与高风险任务增加计划和检查。共享角色不是原生代理定义，独立评审须有真实独立执行者，否则明确自检或待复核。持久状态避免重复派发，证据绑定快照，代码没变且证据完整时复用检查。

@@ -4,3 +4,4 @@ await import('./loop.test.mjs');
 await import('./hook.test.mjs');
 
 await import('./memory.test.mjs');
+await import('./routing.test.mjs');

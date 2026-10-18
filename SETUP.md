@@ -42,7 +42,51 @@ node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --che
 
 安装器从原始源包复制核心文件与角色、脚本到当前平台部署目录，记录 schema 2 清单及摘要。仅更新当前平台，保留其他平台副本和 `.ai-loop/runs/`；切换工具须为新工具再配置一次。同参数同版本重复安装没有变化。清单的每个平台记录包含独立版本，顶层 version 不表示所有平台已经同步升级。
 
-正常安装不创建、追加或删除项目根规范；不修改 settings.json、原生代理、hook、权限、模型或 Git。部署文件不要手改；修改源包后预演升级。不要从部署副本反向安装，以清单 source 定位原始源包。
+基础安装不创建、追加或删除项目根规范；默认不修改 settings.json、hook、权限、模型或 Git。选择模型分工时才生成原生代理配置。部署文件不要手改；模型切换使用 models.mjs，协议修改从源包预演升级。不要从部署副本反向安装，以清单 source 定位原始源包。
+
+### Codex / Claude Code 原生代理与模型选择
+
+当用户要求完整多代理工作流时，先询问使用推荐预设还是自定义 main / planner / reviewer / dev / tester / scribe 的模型、思考强度和并发数。展示全部请求值及实际生效边界，不能无声选择模型；已有明确选择不重复问。推荐预设只是起点，不代表账户可用性或成本已经验证。
+
+| 角色 | Codex 推荐 | Claude Code 推荐 |
+|---|---|---|
+| 主代理 | gpt-6.1-sol / medium | opus / medium（原生选择器设置） |
+| 计划、评审 | gpt-6.1-sol / high | opus / high |
+| 开发、测试 | gpt-6-luna / high | sonnet / high |
+| 记录 | gpt-6-luna / high | sonnet / medium |
+
+主代理应使用可用的强模型；复杂任务可提高主代理强度。自定义可选用户实际可用的模型 ID，不静默替换；模型/强度是否支持、客户端版本、provider 和组织限制仍须原生验收。
+
+用户选定 balanced 后，先预演再应用；Claude Code 替换 harness 参数：
+
+```bash
+node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --model-routing balanced
+node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --model-routing balanced --apply
+node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --check
+```
+
+自定义方法：本机交互终端使用源包 `scripts/models.mjs configure --project ROOT --harness HARNESS` 逐项选择；加 --apply 才写入。AI 非交互工具先在聊天收集选择，再通过 `install.mjs --routing .ai-loop/routing-input.json` 预演与应用；完整 JSON 示例见 scripts/README.md。不能在非交互环境默认替用户选定预设。
+
+原生导出与升级：
+
+- Codex：按当前规范生成 `.codex/agents/loop-*.toml`，包含 name、description、developer_instructions、model 和可选 model_reasoning_effort；`.codex/config.toml` 仅管理主模型、强度和全局 agents 设置，不继续生成旧 `[agents.loop-*].config_file` 注册。项目需受信任；不自动授予信任。旧分工的管理块和部署摘要完好时可原地升级，移除清单拥有的旧生成文件；有人改动则停止。依据：[OpenAI 原生子代理规范](https://learn.chatgpt.com/docs/agent-configuration/subagents)。
+- Claude Code：生成 `.claude/agents/loop-*.md`，采用 YAML name、description、model、effort 和叶子代理约束；不把共享角色 Markdown 直接当原生定义。主模型由用户用原生 `/model` 设置，不修改 settings.json。当前文档支持 per-agent effort，但旧客户端可能忽略字段，须检查版本与实际日志。依据：[Claude Code 原生子代理规范](https://code.claude.com/docs/en/sub-agents)。
+- 两者均生成本部署 `ROUTING.md`；清单保存完整请求配置、摘要和 native_files。后续不带模型选项升级保留自定义选择。已有同名文件、其他文件声明同名代理、未注册 agents 设置或人工修改均停止接管；不覆盖个人配置。
+- 同时生成原生调度技能：Codex `.agents/skills/ai-loop/SKILL.md`，Claude Code `.claude/skills/ai-loop/SKILL.md`。技能明确要求 standard/full 使用原生子代理，避免仅靠角色存在推断会自动调用。新会话显式使用 `$ai-loop` / `/ai-loop`，或直接要求使用原生子代理；同名现有技能不覆盖。
+- Claude 的 `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` 可强制全部代理使用同一模型，`CLAUDE_CODE_EFFORT_LEVEL` 可覆盖 effort；必须检查并告知，不能通过安装器偷偷修改环境或权限。调用参数和设置来源也需核对。
+- 用 `claude auth status --text` 核对 provider；第三方兼容服务可能将 opus/sonnet 别名映射到同一后端，此时配置不同别名不等于真正使用不同模型。选择该服务实际支持的模型并取得运行证据，不能自动切换服务、写入密钥或更改 settings.json。
+
+中途切换示例（BUNDLE 使用当前部署 home）：
+
+```text
+node BUNDLE/scripts/models.mjs status --project ROOT --harness codex
+node BUNDLE/scripts/models.mjs set --project ROOT --harness codex --role dev --model MODEL --effort high
+node BUNDLE/scripts/models.mjs set --project ROOT --harness codex --role dev --model MODEL --effort high --apply
+```
+
+自然语言提出同样有效，由主代理执行以上操作。配置默认用于原生重载后的下一次派发；当前运行者不因改文件而自动换模型。Codex 未验证热加载时新会话确认；Claude Code 已有 agents 目录通常自动监测，新目录、add-dir 等情形需重开。要求立即切换时先安全停止、checkpoint 并接续原任务，保留运行、修复计数和证据。main 的配置不追溯更改当前会话。详细调度协议见部署 ROUTING.md。
+
+Cursor / Pi / DSH / generic 当前仅适配工作流入口，不宣称已经实现原生子代理、逐角色模型或原生运行 UI；完整多代理请求遇到这些平台须说明缺口，不能生成猜测的配置字段。
 
 ### 共享知识初始化与旧资料迁移
 
@@ -82,6 +126,10 @@ node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --che
 | 显式读取 | 当前 AI 读取入口、流程与所需角色 | 当前会话能访问内容 |
 | 原生加载 | 新会话用工具诊断核对入口；无诊断时区分显式读取 | 仅证明观察到的工具/版本/会话 |
 | 执行 | 已授权的小任务、状态、真实日志与证据 | 仅证明该任务的执行结果 |
+| 代理与模型 | 原生工具发现 loop-*，真实启动与原生 ID，日志核对实际模型/强度 | 配置请求值与实际值分开；不可观察则 unverified |
+| 原生 UI | Codex 子代理面板或 CLI /subagents；Claude /tasks | 仅证明观察到的客户端；任务条目可能完成后消失 |
+
+首次派发前运行本部署 `scripts/doctor.mjs --project ROOT --harness HARNESS`；可加 `--probe` 只读探测 CLI 版本，`--native` 检查 Codex 本地配置层与技能发现、或 Claude 当前 provider。Codex 返回 disabledReason / dispatch_blocked 时先处理原生加载问题，不派发；不自动授予信任。该命令不调用模型、不改变信任或设置，输出独立验收层与原生检查步骤。原生代理工具缺失、角色未发现、模型被覆盖时先报告问题，不把文件完整当作验收成功。本部署 agents.mjs 记录派发和最后观察状态，不能替代实时原生面板；schema 与证据示例见 scripts/README.md。
 
 脚本不调用模型，loading 始终是 unverified，不伪造平台实测。无法观察自动加载时标注未验证并显式启动，例如：
 

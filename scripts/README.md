@@ -5,6 +5,8 @@
 
 ## 安装
 
+Codex / Claude Code 可选 `--model-routing balanced` 或 `--routing PROJECT_RELATIVE_JSON`。前者采用 SETUP 的推荐分工，后者逐角色自定义，两者不能同时提供。先让用户选择，再预演；基础安装保留原模型。Codex 原生定义在 `.codex/agents/loop-*.toml`；Claude Code 在 `.claude/agents/loop-*.md`；本部署生成 ROUTING.md。清单 model_routing 保存请求配置与摘要，native_files 管理原生文件；后续升级保留选择。
+
 ```text
 node BUNDLE/scripts/install.mjs --project ROOT --harness codex
 node BUNDLE/scripts/install.mjs --project ROOT --harness codex --apply
@@ -18,6 +20,67 @@ Codex 以 .codex/config.toml 的 developer_instructions 指向 .codex/ai-loop/AG
 正常安装不改根 AGENTS.md / CLAUDE.md，只配置当前工具。schema 2 清单 harnesses 为注册表，各记录独立 home、entry、loader、version、files 摘要和 entries 管理块摘要；loading 仍为 unverified。源包和已部署文件不能相互包含；不从部署副本反向安装。
 
 schema 1 使用 --migrate 预演与应用，迁移全部已知旧平台，备份原清单与根入口，移除未改动的旧管理块，保留块外规则与 runs。旧 generic 需单独映射。孤立块、修改过的正文、符号链接、目录冲突和路径越界均停止。个人指令覆盖风险、原生规则碰撞及加载验收按 SETUP 处理；不修改 settings.json。
+
+## 模型问答、切换与诊断
+
+```text
+node BUNDLE/scripts/models.mjs configure --project ROOT --harness codex
+node BUNDLE/scripts/models.mjs configure --project ROOT --harness codex --input .ai-loop/routing-input.json --apply
+node BUNDLE/scripts/models.mjs status --project ROOT --harness codex
+node BUNDLE/scripts/models.mjs set --project ROOT --harness codex --role dev --model MODEL --effort high --apply
+node BUNDLE/scripts/doctor.mjs --project ROOT --harness codex --probe --native
+```
+
+首次 configure 从原始源包执行；安装后使用当前部署脚本，工具会定位清单 source 作为升级来源。configure 无 input/preset 时需交互终端，逐项询问；非交互环境先由 AI 收集用户选择。所有写入默认预演，加 --apply 才应用。set 支持 main 和五个子角色，可只修改模型或强度；`--effort inherit` 省略角色强度，Codex main 必须明确。主模型建议不等于当前主会话已经切换；Claude Code 用原生选择器设置，不写 settings.json。
+
+JSON 示例（请求值；不是模型支持清单）：
+
+```json
+{
+  "schema_version": 1,
+  "harness": "codex",
+  "concurrency": 3,
+  "main": {"model": "gpt-6.1-sol", "effort": "medium"},
+  "roles": {
+    "planner": {"model": "gpt-6.1-sol", "effort": "high"},
+    "reviewer": {"model": "gpt-6.1-sol", "effort": "high"},
+    "dev": {"model": "gpt-6-luna", "effort": "high"},
+    "tester": {"model": "gpt-6-luna", "effort": "high"},
+    "scribe": {"model": "gpt-6-luna", "effort": "high"}
+  }
+}
+```
+
+effort 可为 null 表示省略。Codex 接受 minimal/low/medium/high/xhigh/max/ultra；Claude Code 接受 low/medium/high/xhigh/max。这里只校验字段形状与平台枚举，不保证任意模型或客户端支持全部强度。模型 ID 允许用户的自定义 provider 标识；须用当前平台核对可用性。Claude 的 FORCE / EFFORT 环境覆盖、Codex 的配置层/profile/信任会影响实际值。
+
+doctor 验文件一致性，--probe 运行 CLI --version；--native 只读检查 Codex 本地 config/read 配置层和 skills/list，或读取 Claude provider 来源。Codex project layer 有 disabledReason 时返回 dispatch_blocked，不能继续派发；不改变项目的信任。输出只保留必要诊断字段，不导出全量个人 provider 配置或凭据。原生子代理发现、实际调用、有效推理模型与 UI 仍需分别验收；不能用配置值证明模型调用。不同平台能力通过 capabilities 单独报告；未实现平台不导出猜测字段。
+
+启用分工时额外生成 ai-loop 原生技能：Codex `.agents/skills/ai-loop/SKILL.md`；Claude Code `.claude/skills/ai-loop/SKILL.md`。显式调用 `$ai-loop` / `/ai-loop` 可加载明确的委派要求；不覆盖用户已有同名技能。
+
+## 代理运行台账
+
+```text
+node BUNDLE/scripts/agents.mjs record --project ROOT --run RUN_ID --input .ai-loop/agent-event.json
+node BUNDLE/scripts/agents.mjs status --project ROOT --run RUN_ID
+```
+
+首次输入：
+
+```json
+{"id":"dev-1","harness":"codex","role":"dev","task":"task1","state":"requested","summary":"准备派发批准任务"}
+```
+
+原生工具真实启动后，记录返回的 ID：
+
+```json
+{"id":"dev-1","native_id":"替换为真实原生代理ID","state":"running","summary":"原生工具已返回启动结果"}
+```
+
+状态转换：requested → running/failed/stopped；running → waiting/completed/failed/stopped；waiting → running/failed/stopped；终态不能恢复。completed 只表示代理返回，不表示验证 PASS。身份和请求配置在首次记录后固定，不能手改成“已切换”；接续创建新 id，通过 replaces 指向已停止或完成的同任务同角色记录。
+
+可选 observation 示例：`{"source":"native-log","path":".ai-loop/runs/RUN_ID/reports/native.json","model":"原生记录显示的模型","effort":"high","visible":true}`。source 只接受 native-log/native-ui，证据必须为项目内非空文件，保存其 hash；不得以模型自述充当证明。字段来自调度者观察，工具不自动解析证据语义，标记 reported-with-evidence，不宣称模型已验证。台账保存在运行 agents.json，不改 loop.mjs 的任务状态、修复计数或验证门。
+
+切换配置和原生代理文件属于实际项目变更，会影响快照；切换后原源码证据需按原流程重新核对适用性。运行中的代理默认不变，安全停止和 checkpoint 后才以新配置接续；重载要求见 ROUTING.md。原生面板提供实时状态，台账仅为最后观察记录。
 
 ## 项目记忆与启动
 

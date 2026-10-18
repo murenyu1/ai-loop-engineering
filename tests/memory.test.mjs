@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { link } from './support.mjs';
 import path from 'node:path';
 import os from 'node:os';
 import { bootstrap, inspect, save, checkpoint, search } from '../scripts/memory.mjs';
@@ -184,7 +185,7 @@ test('未索引资料必须显式导入并备份，已保存索引丢失不重�
 
 test('运行与知识路径符号链接停止，不写链接目标；输出不回灌长历史', t => {
   const { root } = fixture(t); task(root); saveIndex(root);
-  const linked = path.join(root, '.ai-loop/memory/index.md'); fs.unlinkSync(linked); fs.symlinkSync(path.join(root, 'main.txt'), linked);
+  const linked = path.join(root, '.ai-loop/memory/index.md'); fs.unlinkSync(linked); if (!link(t, path.join(root, 'main.txt'), linked)) return;
   assert.throws(() => inspect(root), /符号链接/);
   assert.equal(fs.readFileSync(path.join(root, 'main.txt'), 'utf8'), '实际项目资料：数据接口必须兼容。');
   fs.unlinkSync(linked);

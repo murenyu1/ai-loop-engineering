@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { link } from './support.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { create, begin, snapshot, record, fix, resume, stop, complete, event, events, status, validateSpec } from '../scripts/loop.mjs';
@@ -103,7 +104,7 @@ test('快照已变化或不可读取时仍可持久化阻塞与权限停止', t 
   assert.equal(status(root, run).tasks[0].verification.revision_confirmed, false);
   resume(root, run, 'task1', '已确认源码变化');
   begin(root, run, 'task1', 'verification');
-  fs.symlinkSync(path.join(root, 'main.txt'), path.join(root, 'alias'));
+  if (!link(t, path.join(root, 'main.txt'), path.join(root, 'alias'))) return;
   record(root, run, { role: 'tester', task_id: 'task1', status: 'BLOCKED', execution: 'self', revision: null, permission_denied: true, issues: ['验证权限被拒绝，当前快照不可确认'] });
   assert.equal(status(root, run).status, 'stopped');
 });
@@ -111,7 +112,7 @@ test('快照已变化或不可读取时仍可持久化阻塞与权限停止', t 
 test('开发阶段可以直接停止，无需伪造验证报告或读取源码', t => {
   const { root, run } = fixture(t);
   begin(root, run, 'task1', 'development');
-  fs.symlinkSync(path.join(root, 'main.txt'), path.join(root, 'alias'));
+  if (!link(t, path.join(root, 'main.txt'), path.join(root, 'alias'))) return;
   assert.throws(() => stop(root, run, ''), /reason/);
   stop(root, run, '开发工具权限被拒绝');
   assert.equal(status(root, run).status, 'stopped');
@@ -185,11 +186,11 @@ test('方案直接修改、循环依赖和目录逃逸都拒绝', t => {
 
 test('符号链接源码与报告都不能隐式越界', t => {
   const { root, run } = fixture(t);
-  fs.symlinkSync(path.join(root, 'main.txt'), path.join(root, 'alias'));
+  if (!link(t, path.join(root, 'main.txt'), path.join(root, 'alias'))) return;
   assert.throws(() => snapshot(root), /符号链接/);
   fs.unlinkSync(path.join(root, 'alias'));
   begin(root, run, 'task1', 'development'); begin(root, run, 'task1', 'verification');
-  fs.symlinkSync(path.join(root, 'main.txt'), path.join(root, `.ai-loop/runs/${run}/reports/alias.log`));
+  if (!link(t, path.join(root, 'main.txt'), path.join(root, `.ai-loop/runs/${run}/reports/alias.log`))) return;
   const report = verification(root, run); report.checks[0].log = 'reports/alias.log';
   assert.throws(() => record(root, run, report), /符号链接/);
 });
