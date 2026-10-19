@@ -1,6 +1,6 @@
 # 配置 AI Loop Engineering
 
-Codex 4.2 推荐全局插件：先读 README.md 的独立下载和管理面板说明。维护者从仓库 `node scripts/build-release.mjs` 构建；用 `scripts/install-plugin.mjs --project ROOT` 预演、加 --apply 安装。插件提供核心，目标只保存 `.ai-loop/`；不适用下文旧式“源包位于目标内部”的约束。模型面板支持 global 默认、project 覆盖；SessionStart 自动入口需要原生审核信任。安装成功不等于原生加载和实际模型已验证。
+Codex 4.3.0 使用插件详情页的原生 `openai/settings` 设置区；[GitHub Releases](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.3.0) 提供通用工作流和 Codex 插件独立下载，原生页面可见性需在客户端验收。查看仓库 README 的下载和使用说明。维护者从仓库 `node scripts/build-release.mjs` 构建；用 `scripts/install-plugin.mjs --project ROOT` 预演、加 --apply 安装。插件提供核心，目标只保存 `.ai-loop/`；不适用下文旧式“源包位于目标内部”的约束。原生设置支持全局默认、项目覆盖、模型/思考深度/并发和恢复继承，并提供 Codex 工作区自动列表、直接选择与启停。SessionStart 自动入口需要在 Codex 原生 `/hooks` 审核信任。安装成功不等于设置页可见、原生加载或实际模型已验证。
 
 以下为 adapters/project/ 保留的旧式项目安装兼容说明。仓库的共用正文现在位于 core/，根 scripts/ 是兼容命令；安装器会从权威源码生成部署，不能把兼容转发脚本单独复制到目标。通用工作流独立 ZIP 不包含这些平台安装器。
 
@@ -135,7 +135,7 @@ node ./ai-loop-engineering/scripts/install.mjs --project . --harness codex --che
 | 代理与模型 | 原生工具发现 loop-*，真实启动与原生 ID，日志核对实际模型/强度 | 配置请求值与实际值分开；不可观察则 unverified |
 | 原生 UI | Codex 子代理面板或 CLI /subagents；Claude /tasks | 仅证明观察到的客户端；任务条目可能完成后消失 |
 
-首次派发前运行本部署 `scripts/doctor.mjs --project ROOT --harness HARNESS`；可加 `--probe` 只读探测 CLI 版本，`--native` 检查 Codex 本地配置层与技能发现、或 Claude 当前 provider。Codex 返回 disabledReason / dispatch_blocked 时先处理原生加载问题，不派发；不自动授予信任。该命令不调用模型、不改变信任或设置，输出独立验收层与原生检查步骤。原生代理工具缺失、角色未发现、模型被覆盖时先报告问题，不把文件完整当作验收成功。本部署 agents.mjs 记录派发和最后观察状态，不能替代实时原生面板；schema 与证据示例见 scripts/README.md。
+首次派发前运行本部署 `scripts/doctor.mjs --project ROOT --harness HARNESS`；可加 `--probe` 只读探测 CLI 版本，`--native` 检查 Codex 本地配置层与技能发现、或 Claude 当前 provider。Codex 返回 disabledReason / dispatch_blocked 时先处理原生加载问题，不派发；不自动授予信任。该命令不调用模型、不改变信任或设置，输出独立验收层与原生检查步骤。原生代理工具缺失、角色未发现、模型被覆盖时先报告问题，不把文件完整当作验收成功。本部署 agents.mjs 记录派发和最后观察状态，不能替代 Codex 原生子代理状态界面；schema 与证据示例见 scripts/README.md。
 
 脚本不调用模型，loading 始终是 unverified，不伪造平台实测。无法观察自动加载时标注未验证并显式启动，例如：
 

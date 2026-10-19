@@ -36,7 +36,11 @@ export function zip(entries) {
 }
 export function buildRelease() {
   const plugin=buildPlugin();
-  const packages=[['workflow',filesUnder(safePath(BUNDLE,'core'))],['codex',filesUnder(plugin.output)]];
+  const pluginFiles=filesUnder(plugin.output);
+  const lock=JSON.parse(fs.readFileSync(path.join(plugin.output,'bundle.json')));
+  const owned=new Set(['bundle.json',...lock.files.map(item=>item.path)]);
+  assert(pluginFiles.every(item=>owned.has(item.path)), '插件输出含未登记文件，停止打包；请先核对并移出本机临时文件');
+  const packages=[['workflow',filesUnder(safePath(BUNDLE,'core'))],['codex',pluginFiles]];
   const results=[];
   for(const [kind,files] of packages) {
     const bytes=zip(files),name=`ai-loop-${kind}-${VERSION}.zip`;

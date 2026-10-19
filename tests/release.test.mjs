@@ -37,11 +37,29 @@ test('独立发行包可复现、精简核心没有 Codex 依赖、两个包均�
     assert.ok(names.includes('README.md'));
     assert.ok(!names.some(name=>/(?:^|\/)(?:tests|node_modules|\.ai-loop|\.release|workspaces.json|models.json)(?:\/|$)/.test(name)));
     if(item.name.includes('workflow')) assert.ok(!names.some(name=>name.includes('plugin.json')||name.includes('profiles.mjs')||name.includes('console')));
-    else {assert.ok(names.includes('hooks/hooks.json'));assert.ok(names.includes('scripts/install-plugin.mjs'));}
+    else {
+      assert.ok(names.includes('hooks/hooks.json'));assert.ok(names.includes('scripts/install-plugin.mjs'));
+      assert.ok(names.includes('mcp.json'));assert.ok(names.includes('.mcp.json'));assert.ok(names.includes('scripts/settings-server.mjs'));
+      assert.ok(names.includes('scripts/codex-workspaces.mjs'));
+      assert.ok(!names.some(name => name.startsWith('console/') || name.endsWith('/console.mjs') || name === 'open-console.ps1'));
+      const mcp=JSON.parse(fs.readFileSync(path.join(target,'mcp.json')));
+      assert.equal(mcp.mcpServers['ai-loop-settings'].type,'stdio');
+      assert.equal(mcp.mcpServers['ai-loop-settings'].cwd,'./');
+      const initialize=spawnSync(process.execPath,[path.join(target,'scripts/settings-server.mjs')],{input:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'release-test',version:'1'}}})+'\n',encoding:'utf8',windowsHide:true,timeout:10000});
+      assert.equal(initialize.status,0,initialize.stderr);
+      assert.equal(JSON.parse(initialize.stdout).result.capabilities.experimental['openai/settings'].readTool,'ai_loop.settings.read');
+    }
     const run=spawnSync(process.execPath,[path.join(target,'scripts/memory.mjs'),'bootstrap','--project',project],{encoding:'utf8',windowsHide:true});
     assert.equal(run.status,0,run.stderr);assert.equal(JSON.parse(run.stdout).active_count,0);
     if(item.name.includes('codex')) {
       const home=path.join(root,'home');fs.mkdirSync(home);
+      fs.writeFileSync(path.join(home,'.codex-global-state.json'),JSON.stringify({'local-projects':{example:{name:'打包项目',rootPaths:[project]}}}));
+      const read=spawnSync(process.execPath,[path.join(target,'scripts/settings-server.mjs')],{input:JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'ai_loop.settings.read',arguments:{}}})+'\n',encoding:'utf8',windowsHide:true,timeout:10000,env:{...process.env,CODEX_HOME:home,AI_LOOP_PROJECT:'',AI_LOOP_NATIVE_MODEL_PROBE:'1'}});
+      assert.equal(read.status,0,read.stderr);
+      const view=JSON.parse(read.stdout).result.structuredContent;
+      assert.ok(view.schema.properties.workspace_root.enum.some(value=>value.includes('打包项目')&&value.includes(project)));
+      assert.equal(view.schema.properties.workspace_path,undefined);
+      assert.equal(fs.existsSync(path.join(home,'ai-loop')),false);
       const preview=spawnSync(process.execPath,[path.join(target,'scripts/install-plugin.mjs'),'--project',project],{encoding:'utf8',windowsHide:true,env:{...process.env,CODEX_HOME:home}});
       assert.equal(preview.status,0,preview.stderr);assert.equal(JSON.parse(preview.stdout).status,'dry-run');
     }
@@ -60,4 +78,12 @@ test('启动钩子仅匹配已启用的精确工作区，错误事件和关闭�
   assert.equal(startupContext({...input,cwd:path.join(root,'child')},options),null);
   assert.equal(startupContext({...input,hook_event_name:'Stop'},options),null);
   setWorkspaceEnabled(home,root,false);assert.equal(startupContext(input,options),null);
+});
+
+test('插件目录中未登记的本机文件不得混入发行包',()=>{
+  const target=path.join(BUNDLE,'dist/codex/unowned-private-test.txt');
+  assert.equal(fs.existsSync(target),false);
+  fs.writeFileSync(target,'本机临时资料');
+  try { assert.throws(()=>buildRelease(),/未登记文件/); }
+  finally { fs.unlinkSync(target); }
 });

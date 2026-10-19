@@ -4,7 +4,7 @@ import { REQUIRED_FILES } from './install.mjs';
 import { BUNDLE, VERSION, runtimeContent, assert, safePath, jsonFile, atomicWrite, args, allowArgs, mainModule, printResult } from './lib.mjs';
 import { digest } from './memory-store.mjs';
 
-export const PLUGIN_FILES = [...new Set([...REQUIRED_FILES, ...['profiles','plugin-models','plugin','console','workspaces','session-start','install-plugin'].map(name => 'scripts/'+name+'.mjs')])];
+export const PLUGIN_FILES = [...new Set([...REQUIRED_FILES, ...['profiles','plugin-models','plugin','codex-workspaces','native-settings','settings-server','native-models','workspaces','session-start','install-plugin'].map(name => 'scripts/'+name+'.mjs')])];
 export function buildPlugin(output, options = {}) {
   const relative = output || 'dist/codex';
   const target = safePath(BUNDLE, relative);
@@ -15,14 +15,17 @@ export function buildPlugin(output, options = {}) {
   assert(manifest.version === VERSION, '插件版本与核心不一致');
   planned.set('plugin.json', Buffer.from(JSON.stringify(manifest, null, 2) + '\n'));
   planned.set('ROUTING.md', Buffer.concat([Buffer.from('# 插件原生代理调度\n\n模型与强度从 plugin-models.mjs status 读取；不在此复制个人配置。\n\n'),text('templates/routing.md')]));
-  const compatibility = { name: manifest.name, version: manifest.version, description: manifest.description, author: manifest.author, skills: './skills/', hooks: './hooks/hooks.json', ...manifest.extensions['com.openai'] };
+  const compatibility = { name: manifest.name, version: manifest.version, description: manifest.description, author: manifest.author, skills: './skills/', hooks: './hooks/hooks.json', mcpServers: './.mcp.json', ...manifest.extensions['com.openai'] };
   planned.set('.codex-plugin/plugin.json', Buffer.from(JSON.stringify(compatibility, null, 2) + '\n'));
   for (const name of ['ai-loop', 'ai-loop-models']) planned.set(`skills/${name}/SKILL.md`, text(`plugin/skills/${name}/SKILL.md`));
-  for (const name of ['index.html','app.js','style.css']) planned.set('console/'+name,text('plugin/console/'+name));
+  planned.set('mcp.json',text('plugin/mcp.json'));
+  const mcp = JSON.parse(text('plugin/mcp.json'));
+  delete mcp.$schema;
+  for (const server of Object.values(mcp.mcpServers)) delete server.type;
+  planned.set('.mcp.json',Buffer.from(JSON.stringify(mcp,null,2)+'\n'));
   planned.set('hooks/hooks.json',text('plugin/hooks/hooks.json'));
   planned.set('marketplace.json',text('plugin/marketplace.json'));
   planned.set('README.md',text('plugin/README.md'));
-  planned.set('open-console.ps1',text('plugin/open-console.ps1'));
   const lock = { version: VERSION, files: [...planned].map(([file, content]) => ({ path: file, hash: digest(content) })).sort((a, b) => a.path.localeCompare(b.path)) };
   planned.set('bundle.json', Buffer.from(JSON.stringify(lock, null, 2) + '\n'));
   const previousFile = path.join(target, 'bundle.json');

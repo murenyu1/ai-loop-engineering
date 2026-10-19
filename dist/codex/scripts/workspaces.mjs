@@ -6,7 +6,6 @@ const fail = message => { throw new Error(message); };
 const ensure = (condition, message) => { if (!condition) fail(message); };
 const fileFor = home => path.join(path.resolve(home), 'ai-loop', 'workspaces.json');
 const lockFor = home => path.join(path.resolve(home), 'ai-loop', 'workspaces.lock');
-
 function checkedDirectory(home, create = false) {
   const base = path.resolve(home);
   ensure(fs.existsSync(base) && fs.statSync(base).isDirectory() && !fs.lstatSync(base).isSymbolicLink(), 'CODEX_HOME 必须是现存的真实目录');
@@ -58,23 +57,25 @@ export function listWorkspaces(home) {
   return entries.map(item => ({ root: item.root, enabled: item.enabled === true, exists: (() => { try { return fs.realpathSync(item.root) === item.root && fs.statSync(item.root).isDirectory(); } catch { return false; } })() }));
 }
 
-export function registerWorkspace(home, value) {
+export function registerWorkspace(home, value, options = {}) {
   const root = exactRoot(value);
+  ensure(options && typeof options === 'object' && (options.enabled === undefined || typeof options.enabled === 'boolean'), '工作区启用选项无效');
   return locked(home, file => {
     const data = read(file), found = data.workspaces.find(item => item.root === root);
-    if (!found) data.workspaces.push({ root, enabled: true });
+    if (!found) data.workspaces.push({ root, enabled: options.enabled ?? true });
     write(file, data);
-    return { root, enabled: found ? found.enabled === true : true };
+    return { root, enabled: found ? found.enabled === true : (options.enabled ?? true) };
   });
 }
 
-export function setWorkspaceEnabled(home, value, enabled) {
+export function setWorkspaceEnabled(home, value, enabled, options = {}) {
   ensure(typeof enabled === 'boolean', 'enabled 必须为布尔值');
   const root = exactRoot(value);
   return locked(home, file => {
     const data = read(file), found = data.workspaces.find(item => item.root === root);
-    ensure(found, '工作区尚未登记');
-    found.enabled = enabled;
+    ensure(found || options.create === true, '工作区尚未登记');
+    if (found) found.enabled = enabled;
+    else data.workspaces.push({ root, enabled });
     write(file, data);
     return { root, enabled };
   });

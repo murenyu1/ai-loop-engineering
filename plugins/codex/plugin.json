@@ -1,19 +1,20 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "ai-loop-engineering",
-  "version": "4.2.0",
-  "description": "项目开发闭环、跨聊天恢复、本机模型面板与工作区自动入口。",
+  "version": "4.3.0",
+  "description": "项目开发闭环、跨聊天恢复、原生插件设置与工作区自动入口。",
   "author": { "name": "murenyu1" },
   "repository": "https://github.com/murenyu1/ai-loop-engineering",
   "keywords": ["workflow", "memory", "subagents"],
   "extensions": {
     "com.openai": {
+      "mcpServers": "./.mcp.json",
       "interface": {
         "displayName": "AI Loop Engineering",
         "shortDescription": "开发闭环、任务续接和代理模型设置",
         "category": "Productivity",
         "capabilities": ["Read", "Write"],
-        "defaultPrompt": ["使用 AI Loop 工作流继续当前项目", "打开 AI Loop 模型设置"]
+        "defaultPrompt": ["使用 AI Loop 工作流继续当前项目"]
       }
     }
   }

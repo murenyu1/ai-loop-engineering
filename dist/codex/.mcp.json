@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "ai-loop-settings": {
+      "command": "node",
+      "args": [
+        "./scripts/settings-server.mjs"
+      ],
+      "cwd": "./"
+    }
+  }
+}

@@ -1,5 +1,5 @@
 {
-  "description": "为已在 AI Loop 面板启用的精确工作区提供简短恢复入口，需经 Codex 原生审核信任。",
+  "description": "为用户在 AI Loop 设置中启用的精确工作区提供简短恢复入口，需经 Codex 原生审核信任。",
   "hooks": {
     "SessionStart": [{
       "matcher": "startup|resume|clear|compact|fork",

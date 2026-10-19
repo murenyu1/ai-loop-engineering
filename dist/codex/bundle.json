@@ -1,9 +1,13 @@
 {
-  "version": "4.2.0",
+  "version": "4.3.0",
   "files": [
     {
       "path": ".codex-plugin/plugin.json",
-      "hash": "1acd4977d096bad2259332ebfc1e1f8cdaa38fda773a883618cf0d086c272bd3"
+      "hash": "36b3aa30a5dd67ca9b9cb14e24d0cf5cb9a7365e723d0ffba5221037dc3cea14"
+    },
+    {
+      "path": ".mcp.json",
+      "hash": "347ce0a34d32e2d4e2ff5977544b78503b04fff91b9dbaac29d1b9f07bfc6ba5"
     },
     {
       "path": "agents/loop-dev.md",
@@ -26,40 +30,28 @@
       "hash": "9276041add42e8c1df91085a219867324ad38eb576c1d30afa28009d57c79b90"
     },
     {
-      "path": "console/app.js",
-      "hash": "c075c2f7ccb78d67013bb4a407eaf55e1d47bf8ce3fe36cf1ed9f0843814fe99"
-    },
-    {
-      "path": "console/index.html",
-      "hash": "6c1c8f0ab96b32835de93fdc155a7f67c4c560e2d043ec38589c65c4ad07c618"
-    },
-    {
-      "path": "console/style.css",
-      "hash": "8b919938e511589e987754d64af9c603dc5833cc3d1137d3506fa0be85da374f"
-    },
-    {
       "path": "hooks/hooks.json",
-      "hash": "e3d3a420a2be98ddd674342c70ef170888cee9d0b7943086c20a039d4b58ca6a"
+      "hash": "0b21817903e473bd629b1ee02e0fed5c4fb73370465a8be4d837723e629f37b0"
     },
     {
       "path": "marketplace.json",
       "hash": "accdea5e4d66652076d0bfc2fb534c0f5486094a2be0d5b34f57bcd3a1152c6f"
     },
     {
+      "path": "mcp.json",
+      "hash": "1f471d3eebddfad249e2018e4edfe04bb2ba81e464db87880f1049ef04a26591"
+    },
+    {
       "path": "MEMORY.md",
       "hash": "6ca0641342c14376aa7125fde1da90f44f048bac71171ccf3fa4777ae545978c"
     },
     {
-      "path": "open-console.ps1",
-      "hash": "39c27de51ffb49757050ad29178518c59f348f3f4b03368c6cf17e68f22b88c9"
-    },
-    {
       "path": "plugin.json",
-      "hash": "8e4eeeee625825a7c657f90b9aeb821f417f4169273f1dbd9670ccbe2535c2ec"
+      "hash": "cf8bc3f9b1a12c07bb67db3961243924199304c4ea79f60a6c3d1d708c0438cc"
     },
     {
       "path": "README.md",
-      "hash": "2fc1bb64b70de1a09f9fbbacc4f519876b33590139c0ba5f43da5991f3d7b2d5"
+      "hash": "017d930fe23c53685745ec4f70a0c9980437673f1a1f10cc1b3d940a8d6ca07c"
     },
     {
       "path": "ROUTING.md",
@@ -78,8 +70,8 @@
       "hash": "9df26b22941d2de1ef111fcdeff118814f004ec7480e0613fe89813ce6ab33c2"
     },
     {
-      "path": "scripts/console.mjs",
-      "hash": "17d0461e7cc775da5549bba10a55374cb4f24808767a3d54759a10383c7ed6ed"
+      "path": "scripts/codex-workspaces.mjs",
+      "hash": "1186939df33724a7ed77782f33aa20c12de07f909866814559813131d2233048"
     },
     {
       "path": "scripts/doctor.mjs",
@@ -91,7 +83,7 @@
     },
     {
       "path": "scripts/install-plugin.mjs",
-      "hash": "0d53fa24990b618408950067a21e23d3ffc74bd6eae4fa23e87bc39116601d08"
+      "hash": "e6896def2af914b704f5f4d83cfbacd4aea20f82394e8aea8a365e47f9fdec06"
     },
     {
       "path": "scripts/install.mjs",
@@ -99,7 +91,7 @@
     },
     {
       "path": "scripts/lib.mjs",
-      "hash": "cd720d2742a65d6a613f61bbbc3c0ac0eee715aebdc940d33e90f4924fcaf0e0"
+      "hash": "f662ceddc5ddd4872f57b93e3b01112b7c76c49a4be6028e0455ff23c47ceddd"
     },
     {
       "path": "scripts/loop.mjs",
@@ -118,6 +110,14 @@
       "hash": "d27c9617eb8d97f01bacd3390104082156f6ec7ad640eabaed1471a5e9bdfb4b"
     },
     {
+      "path": "scripts/native-models.mjs",
+      "hash": "794ad9a6f45312cc1c4aa52bbe7c62d10022f6150a1b514a0baacfb630f642a5"
+    },
+    {
+      "path": "scripts/native-settings.mjs",
+      "hash": "d9bd0629061a0ab4786715faf1e93c175b9998953a7dfd09fb047cedbed25d04"
+    },
+    {
       "path": "scripts/plugin-models.mjs",
       "hash": "2405655191fdc6914a517f5e024135757ff21ed27dc7b49309bc05daec29abef"
     },
@@ -131,7 +131,7 @@
     },
     {
       "path": "scripts/README.md",
-      "hash": "c616fe715394ce1a3c7a91a9890471f945b71a4ac1e8475d7237ce8d97d78738"
+      "hash": "b04ff80b58e9c7440042d82666410969d903e96fe41ebf9b5ad60edc41b8efd2"
     },
     {
       "path": "scripts/routing.mjs",
@@ -139,11 +139,15 @@
     },
     {
       "path": "scripts/session-start.mjs",
-      "hash": "245d1ed1dcf207a8a1c76ac185cfbd615cf889815fdfa74b3fd664cc28ae168d"
+      "hash": "5c1984e13a8f8bf994d7b487e639bd937ad80eeb8e955631f4d3706e6fff5be4"
+    },
+    {
+      "path": "scripts/settings-server.mjs",
+      "hash": "d5243ef640d37b88cf1bf648a755511b2d32b4e149c602127fd2b2680372f090"
     },
     {
       "path": "scripts/source.mjs",
-      "hash": "ff72fdae4f6f5224c072472b522007ee479bbb3f0d1c2015ff36d847734bee10"
+      "hash": "3e84b352f8e6ef54109fd6f72d0e7298228659c73eb5ecd10da4e01fa4db9a59"
     },
     {
       "path": "scripts/toml.mjs",
@@ -155,19 +159,19 @@
     },
     {
       "path": "scripts/workspaces.mjs",
-      "hash": "66aeaae21882acfdeef4ef5607db27103eaef87a56c6538089e599c015dfb346"
+      "hash": "be808e85f5b460584395e5c17d4ac49af0cf875050a40b0c9b543882a0640424"
     },
     {
       "path": "SETUP.md",
-      "hash": "61d71de94b015e47aedb5109824ff7ef137f9b23737a7188c31a52e2b671f890"
+      "hash": "651bddab3fa9a682da7142efb25da570ebb7010433b77909a625a6462ae22f70"
     },
     {
       "path": "skills/ai-loop-models/SKILL.md",
-      "hash": "cc6f3fe7407d7b928f28d75e87ee26760b87506e958ab467a335742dd8fd5e6b"
+      "hash": "62cba89369c8a7b96fca3a98932a66f041cc765f2edca9d75562640b0ac52330"
     },
     {
       "path": "skills/ai-loop/SKILL.md",
-      "hash": "31939457431df8af250f7089798a72cb4733ac832330fdf653b23bc1478a8ed8"
+      "hash": "24957760f2ea8cc6e65f9cae61011ffe639f555324f6f1e8247c8bfda64945c3"
     },
     {
       "path": "templates/memory-index.md",

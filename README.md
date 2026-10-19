@@ -1,102 +1,77 @@
 # AI Loop Engineering
 
-让 AI 按“计划 → 开发 → 验证 → 评审 → 交接”推进项目，并在换聊天后按记录接着做。当前版本 **4.2.0**；脚本需要 Node.js 18+，不依赖第三方 npm 包。
+让 AI 按“计划 → 开发 → 验证 → 评审 → 交接”推进项目，并从已保存的记录恢复中断任务。当前版本为 **4.3.0**，需要 Node.js 18+，不依赖第三方 npm 包。
 
-## 我应该下载哪个？
+## 选择适合你的版本
 
-| 你的用途 | 下载 | 包含什么 |
+| 用途 | 获取方式 | 内容 |
 |---|---|---|
-| 在不同 AI 开发工具中使用共用流程 | [通用工作流 ZIP](https://github.com/murenyu1/ai-loop-engineering/raw/refs/heads/main/downloads/ai-loop-workflow-4.2.0.zip) | 流程、角色、状态和分页记忆工具；不含 Codex 插件 |
-| 在 Codex 中一次安装，用界面管理模型和项目 | [Codex 插件 ZIP](https://github.com/murenyu1/ai-loop-engineering/raw/refs/heads/main/downloads/ai-loop-codex-4.2.0.zip) | 可安装插件、管理面板、工作区启动钩子，已含所需核心 |
-| 修改本项目或开发其他客户端插件 | [完整仓库](https://github.com/murenyu1/ai-loop-engineering/archive/refs/heads/main.zip) | 单份核心、适配器源码、测试和构建工具 |
+| 在不同 AI 开发工具中使用共用流程 | [通用工作流 4.3.0](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.3.0/ai-loop-workflow-4.3.0.zip) | 共用流程、角色、状态和分页记忆工具；不含 Codex 插件 |
+| 在 Codex 中一次安装，并在插件详情页设置 | [Codex 插件 4.3.0](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.3.0/ai-loop-codex-4.3.0.zip) | Codex 插件、原生设置、工作区管理和所需核心 |
+| 修改工作流或开发其他客户端插件 | 本仓库源码 | core、平台适配器、插件源码、测试和构建工具 |
 
-下载后解压再使用；校验值见 [SHA256SUMS](downloads/SHA256SUMS)。Codex 用户只需插件包，无需另装通用包。完整仓库 ZIP 用于维护开发，内容比精简发行包多。
+两个包在 [v4.3.0 Releases](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.3.0) 的 Assets 中分别提供下载。Codex 用户只需插件包；其他工具可选通用工作流包。校验文件为 [SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.3.0/SHA256SUMS)。GitHub 自动提供的 Source code 压缩包包含仓库源码，主要供开发维护使用。
 
-## 可以解决什么问题？
+## 功能
 
-- **任务可续接**：每个项目保存自己的任务状态、决策、检查证据和交接。新聊天先读短索引和必要代码位置，避免每次重新扫描全部源码。
-- **中断有线索**：开发单元开始前记 planned，结束后记 done / blocked。突然中断后，新聊天能看到尚未关闭的单元，再核对实际改动。
-- **长记录不截断**：知识和交接自动分片、分页读取，短索引只负责导航，完整正文仍保留。
-- **验收有证据**：测试和评审绑定代码快照，旧报告不能直接证明新代码通过；独立评审使用真正的独立上下文。
-- **Codex 可视化配置**：在本机面板选择各子角色模型、支持的思考深度和并发；支持全局默认、项目覆盖和撤销覆盖。
-- **按工作区启用**：登记项目目录并打开开关后，已信任的启动钩子在新会话提供恢复入口。未启用的项目不注入。
+- **跨聊天续接**：项目记录保存任务状态、决定、验证证据和交接。新聊天从短索引、未关闭工作单元、事件和改动位置恢复，再核对当前文件，不需要每次扫描全部源码。
+- **中断可恢复**：工作开始前记录 planned，完成后记录 done 或 blocked。突然中断后，新聊天先检查记录和实际文件；未落盘的聊天内容无法恢复。
+- **长记录分页**：知识和交接自动分片，按需分页读取；文档超过阅读预算时保留完整正文，不靠截断丢内容。
+- **验收有依据**：测试和评审绑定代码快照，旧报告不能证明新代码已通过；独立评审要求客户端提供真正独立的上下文。
+- **Codex 原生设置**：在 Codex 插件详情页配置 planner、reviewer、dev、tester、scribe 的模型与支持的思考深度，调整并发、全局或项目范围，并可恢复项目对全局默认的继承。
+- **工作区管理**：打开插件设置即可读取 Codex 已保存的本机工作区，按项目名称和目录直接选择；选择只读取，启用和模型配置由用户分别应用。
 
-恢复能力以已落盘资料为限，不能恢复尚未记录的聊天内容；发现旧任务不等于获得新的开发或发布授权。
+Codex 插件的模型设置通过本地 stdio MCP 的 `openai/settings` 集成到插件详情页。页面可见性取决于当前 Codex 客户端对原生插件设置的支持和功能开关；原生界面需在实际客户端验收，自动测试不能证明页面一定显示。主会话模型继续由 Codex 原生选择器控制。设置在原生重载后的后续代理派发中生效，已运行代理不热切换。
 
-## Codex：首次安装
+## Codex 安装与使用
 
-先安装并登录 Codex，确认有 Node.js 18+。在普通用户终端中进入解压后的 **Codex 插件目录**，运行：
+1. 下载并解压 [Codex 插件 4.3.0](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.3.0/ai-loop-codex-4.3.0.zip)，安装并登录 Codex，并准备 Node.js 18+。
+2. 在解压后的插件目录，以正常用户终端预演和安装：
 
-```powershell
-node scripts/install-plugin.mjs --project .
-node scripts/install-plugin.mjs --project . --apply
-```
+   ```powershell
+   node scripts/install-plugin.mjs --project .
+   node scripts/install-plugin.mjs --project . --apply
+   ```
 
-第一行预演，第二行调用 Codex 原生插件管理命令安装到用户范围。安装一次供本机各项目使用，无需往每个项目复制工作流。Windows 桌面版 CLI 不在 PATH 时会自动定位；特殊安装可设置 AI_LOOP_CODEX_CLI 为真实 Codex 可执行文件路径。
+   插件安装到当前用户的 Codex 插件范围。桌面版 CLI 不在 PATH 时安装器会尝试定位；特殊安装可将 `AI_LOOP_CODEX_CLI` 设为 Codex 可执行文件路径。安装成功不等于当前聊天已经加载新版本。
 
-也可以直接把仓库作为 Codex 插件市场添加：
+3. 打开 Codex 的 AI Loop Engineering 插件详情页，直接在“Codex 工作区”下拉框选择项目，无需查找或填写路径。选择仅查看该项目的模型和启用状态；新项目默认停用。调整开关后点击“应用工作区开关”，模型、支持的思考深度和并发调整后点击“应用模型配置”。选中工作区后，配置范围默认“仅当前工作区”；需要修改所有继承项目的默认值时，可明确选择“全局默认”。
+4. 项目范围的配置覆盖全局默认；使用恢复动作后，项目重新继承全局配置。主会话模型仍在 Codex 自身模型选择器里修改。保存后对下一次原生重载后的派发生效。
+5. 工作区列表读取不依赖钩子。自动恢复入口需要在 Codex 原生 `/hooks` 页面审核并信任 SessionStart；它只在用户启用的精确根目录生效。选择工作区不会自动信任钩子。
 
-```text
-codex plugin marketplace add https://github.com/murenyu1/ai-loop-engineering
-codex plugin add ai-loop-engineering@ai-loop-engineering
-```
+若插件详情页没有显示设置，先确认安装版本和客户端当前提供的插件设置入口；客户端功能开关可能限制显示。不要通过浏览器管理面板或修改私有功能开关、`settings.json`、信任缓存来代替原生设置。用户可在插件详情页直接检查字段是否出现及保存后能否保留。
 
-直接从市场安装后，在插件文件夹运行 open-console.ps1，或运行该文件夹的 `node scripts/console.mjs`。新开聊天核对技能加载；安装成功不等于当前已打开的聊天立即加载新版本。
+执行应用或恢复动作后，退出并重新进入插件详情页，读取最新结果。编辑期间若配置被其他窗口修改，先点击“放弃未应用草稿”，再重新进入页面；服务不会覆盖这次外部修改。普通下拉字段修改后会自动重新读取相应模型支持的思考深度。
 
-### 打开模型和工作区管理面板
+## 通用工作流
 
-在插件包内右键运行 open-console.ps1，或执行：
+下载并解压通用工作流 ZIP 到固定目录，不必复制进每个项目。让当前 AI：
 
-```text
-node scripts/console.mjs
-```
+> 使用这里的 AI Loop 工作流完成当前需求。先读取目标项目规则和工作流目录中的 `WORKFLOW.md`，再按阶段读取角色与记忆协议，并遵守当前工具的权限规则。
 
-浏览器会打开只监听本机的管理面板。启动地址中 # 后的临时凭据不要分享。无需在聊天中发送设置指令，也无需远程部署。使用页尾“关闭管理服务”退出；重新运行入口即可打开新面板。
-
-1. 在“工作区”输入项目真实绝对路径，点击登记，按需启用或关闭。
-2. 选择工作区，再选择“全局默认”或“当前项目覆盖”。模型列表和支持的思考深度从当前 Codex 原生服务读取；列表不可用时显示错误，不冒充已验证模型。
-3. 修改角色模型、思考深度与并发，点击保存。项目覆盖可点击恢复全局默认；主会话模型继续使用 Codex 自身的模型选择器。
-4. 设置作用于原生重载后的后续派发，已有代理保持启动时配置。新会话核对角色发现和实际调用结果。
-
-面板遇到人工修改或未登记的同名角色文件会停止覆盖，需先合并。全局保存影响其他项目的后续派发，项目保存仅影响选中项目。
-
-### 新聊天自动恢复入口
-
-首次使用需在 Codex 原生钩子管理中审核并信任本插件的 SessionStart 定义；CLI 使用 /hooks。安装和工作区开关不会替代这次信任；更新钩子后可能需要重新审核，组织策略也可能禁用非托管钩子。参见 [Codex 官方 hooks 文档](https://learn.chatgpt.com/docs/hooks)。
-
-启用工作区并信任钩子后，在该**精确项目根目录**新开聊天，直接说“继续实现登录接口”即可。钩子只注入短入口与运行提示，AI 按需读取摘要和改动位置，不在每次启动全量加载代码和历史。子目录不自动继承登记，避免误启用嵌套项目。
-
-原生插件详情页的按钮是聊天入口，当前公开清单没有任意设置表单。本项目模型控件位于本机面板。未信任钩子时，仍可在聊天中显式使用 AI Loop。
-
-## 通用工作流：如何使用
-
-解压通用 ZIP 到固定目录，向当前开发工具说明：
-
-> 使用这里的 AI Loop 工作流完成当前需求。先读取目标项目规则，以及工作流目录中的 WORKFLOW.md；按阶段读取角色和记忆协议，遵守当前工具的权限与审批规则。
-
-有 Node.js 时，可先发现当前项目记录：
+有 Node.js 时，可从工作流目录运行：
 
 ```text
-node 工作流目录/scripts/memory.mjs bootstrap --project 项目绝对路径
+node scripts/memory.mjs bootstrap --project 项目绝对路径
 ```
 
-通用包提供协议和本地工具，客户端自动入口、模型配置和原生子代理选择由适配器负责。没有 Node.js 时可按协议手动维护记录，不能声称脚本检查已执行。详细接口见通用包 scripts/README.md。
+通用包提供共享协议和状态工具；各客户端的自动入口、模型配置和原生子代理选择由对应适配器负责。没有 Node.js 时可按协议手动维护记录，但不能声称脚本检查已执行。命令接口见 `scripts/README.md`。
 
-## 设计与源码分区
+## 源码结构
 
 ```text
 core/                  共用流程、角色、记忆协议与平台无关状态工具
-plugins/codex/         Codex 源码、技能、模型/工作区面板与启动钩子
-adapters/project/      原有多客户端项目安装兼容实现
-scripts/               构建/发行工具与旧命令兼容入口
-tests/                 维护者回归检查
-dist/codex/            自动构建的可安装插件，含所需核心副本
-downloads/             两种独立 ZIP 与 SHA256 校验值
+adapters/project/      多客户端项目安装兼容适配器
+plugins/codex/         Codex 插件源代码、技能、MCP 设置和钩子
+dist/codex/            从插件源码构建的可安装目录
+scripts/               构建、发行和上传清单工具
+tests/                 维护者检查
+downloads/             本机生成的通用包、插件包与校验文件
 ```
 
-只维护一份 core/；dist/codex/ 是生成物，不应手动修改。以后新增客户端插件放 plugins/<harness>/，构建到 dist/<harness>/，分别提供下载。发行包不含用户模型配置、工作区名单、任务记忆、日志、缓存或测试夹具。
+`core/` 是共享工作流的权威源码；插件源码与通用工作流分开，Codex 插件通过构建流程带上所需核心副本。新增其他客户端插件时，在 `plugins/<harness>/` 增加独立源码，再生成对应的 `dist/<harness>/`，使用户能分别识别和下载。发行包不包含个人模型配置、工作区名单、项目任务记忆、日志、缓存或测试夹具。
 
-维护者在仓库根执行：
+维护者命令：
 
 ```text
 node tests/all.mjs
@@ -104,13 +79,8 @@ node scripts/build-release.mjs
 node scripts/publish-files.mjs --list
 ```
 
-最后一行只生成上传白名单，不联网提交。测试、构建工具和必要文档属于维护源码；本机 .ai-loop/、.release/、.validation/、依赖目录和临时输出不会上传。
+`publish-files.mjs --list` 只列出允许发布的文件，不会上传。维护者按授权上传源码，并在 Releases 的版本标签下分别附加通用工作流 ZIP、Codex 插件 ZIP 和校验文件。
 
-## 从 4.1 升级与 Windows 权限
+Windows 配置写入前会检查所有者，避免由 CodexSandboxOffline/Online 身份创建受保护配置。请从正常用户终端运行配置入口；不改 `settings.json`，不批量重置 ACL。已有异常需用 `windows.mjs inspect` 定位，再只对确认异常的目录做有备份的精确修复；插件不能保证操作系统或其他程序永远不产生权限问题。
 
-更新插件后保留原项目运行、记忆和模型选择。旧的项目复制入口仍可能优先，先检查并明确迁移；不要删除旧入口或模型文件强行接管。旧脚本不能写新版 schema 2 记忆，避免混用。
-
-安装器和面板在写原生配置前检查 Windows 所有者，拒绝让 CodexSandboxOffline/Online 创建受保护目录。请从正常用户终端运行配置入口；不改 settings.json，不批量重置 ACL。既有异常需用 windows.mjs inspect 定位，只对明确异常目录做有备份的精确修复。插件无法保证操作系统或其他程序永远不产生权限问题。
-
-旧项目安装和迁移见 [SETUP.md](SETUP.md)，版本变更见 [CHANGES.md](CHANGES.md)。实际模型、原生执行、界面和新会话钩子应分别以当前客户端证据验收。
-
+旧项目安装和迁移见 [SETUP.md](SETUP.md)，版本记录见 [CHANGES.md](CHANGES.md)。文件完整性、插件详情页可见性、钩子信任、原生角色发现和真实模型调用分别验收。

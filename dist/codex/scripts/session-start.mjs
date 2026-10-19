@@ -4,12 +4,15 @@ import os from 'node:os';
 import { BUNDLE, ID, safePath, jsonFile, mainModule } from './lib.mjs';
 import { listWorkspaces } from './workspaces.mjs';
 
-// 钩子只读登记和短状态，不递归扫描代码、写工作区或推断用户的新命令。
+// 钩子只读已启用工作区的短状态；工作区列表由设置页直接读取 Codex 本机项目。
 export function startupContext(input, options = {}) {
   if (!input || input.hook_event_name !== 'SessionStart' || typeof input.cwd !== 'string') return null;
   const home = options.home || process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
-  const workspace = listWorkspaces(home).find(item => item.root === input.cwd && item.enabled && item.exists);
-  if (!workspace) return null;
+  const workspaces = listWorkspaces(home);
+  const exact = workspaces.find(item => item.root === input.cwd && item.exists);
+  if (!exact) return null;
+  if (!exact.enabled) return null;
+  const workspace = exact;
   const root = workspace.root, runs = safePath(root, '.ai-loop/runs');
   const active = [];
   if (fs.existsSync(runs)) {

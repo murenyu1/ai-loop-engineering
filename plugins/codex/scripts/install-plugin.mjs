@@ -20,6 +20,8 @@ export function installPlugin(project, options = {}) {
     assert(fs.existsSync(target) && digest(fs.readFileSync(target)) === item.hash, '已安装本地插件被修改或丢失，停止覆盖：' + item.path);
   }
   const changes = [];
+  const owned = new Set([...lock.files.map(item => item.path), 'bundle.json']);
+  const removed = (previous?.files || []).filter(item => !owned.has(item.path)).map(item => safePath(home, `${location}/${item.path}`));
   const stage = (relative, content) => {
     const target = safePath(home, relative);
     if (!fs.existsSync(target) || !fs.readFileSync(target).equals(content)) changes.push({ path: target, content });
@@ -39,10 +41,11 @@ export function installPlugin(project, options = {}) {
     assert(JSON.stringify(before) === JSON.stringify(metadata), '本地市场内容被修改，先合并，不覆盖');
   }
   stage(marketplaceFile, marketplaceContent);
-  if (!options.apply) return { status: 'dry-run', changes: changes.map(item => item.path), native_commands: ['codex plugin marketplace add LOCAL_MARKETPLACE --json', 'codex plugin add ai-loop-engineering@ai-loop-engineering --json'], scope: 'global-user', settings_json: 'unchanged' };
+  if (!options.apply) return { status: 'dry-run', changes: changes.map(item => item.path), removed, native_commands: ['codex plugin marketplace add LOCAL_MARKETPLACE --json', 'codex plugin add ai-loop-engineering@ai-loop-engineering --json'], scope: 'global-user', settings_json: 'unchanged' };
   const owners = inspectWindows(root, { home });
   assert(['ready', 'not-windows'].includes(owners.status), '所有者预检未通过；请在正常用户宿主进程安装插件，不在沙箱账户下写入受保护配置');
   for (const item of changes) atomicWrite(item.path, item.content);
+  for (const file of removed) fs.unlinkSync(file);
   const run = argv => {
     const result = spawnSync(codexExecutable(), ['plugin', ...argv, '--json'], { cwd: root, encoding: 'utf8', timeout: 60000, shell: false, windowsHide: true });
     assert(result.status === 0, 'Codex 原生插件安装失败：' + (result.error?.message || result.stderr?.trim() || result.stdout?.trim()));

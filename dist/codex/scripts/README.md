@@ -80,7 +80,7 @@ node BUNDLE/scripts/agents.mjs status --project ROOT --run RUN_ID
 
 可选 observation 示例：`{"source":"native-log","path":".ai-loop/runs/RUN_ID/reports/native.json","model":"原生记录显示的模型","effort":"high","visible":true}`。source 只接受 native-log/native-ui，证据必须为项目内非空文件，保存其 hash；不得以模型自述充当证明。字段来自调度者观察，工具不自动解析证据语义，标记 reported-with-evidence，不宣称模型已验证。台账保存在运行 agents.json，不改 loop.mjs 的任务状态、修复计数或验证门。
 
-切换配置和原生代理文件属于实际项目变更，会影响快照；切换后原源码证据需按原流程重新核对适用性。运行中的代理默认不变，安全停止和 checkpoint 后才以新配置接续；重载要求见 ROUTING.md。原生面板提供实时状态，台账仅为最后观察记录。
+切换配置和原生代理文件属于实际项目变更，会影响快照；切换后原源码证据需按原流程重新核对适用性。运行中的代理默认不变，安全停止和 checkpoint 后才以新配置接续；重载要求见 ROUTING.md。Codex 子代理状态界面提供实时状态，台账仅为最后观察记录。
 
 ## 项目记忆与启动
 
@@ -173,13 +173,19 @@ base_cursor 对应已读取的旧交接游标；event_cursor 仅填本次实际�
 
 改动完成后同 unit 填 stage:done 或 blocked。单元关闭后新工作用新 unit。文件可尚未创建或已删除，保存当时 hash/null。bootstrap 返回未关闭单元和最后摘要，不把 done 当 PASS；直接中断后先核对实际文件、增量事件与证据，无法恢复未落盘内容。
 
-## Codex 全局插件与模型设置
+## Codex 插件原生设置 4.3.0
 
-源包执行 `node scripts/build-plugin.mjs` 构建 plugins/ai-loop-engineering，`--check` 核对产物。插件使用自身脚本，目标项目只执行 `plugin.mjs init --project ROOT` 预演并加 --apply 初始化共享记录。已存在旧部署时保留记录和入口，先核对优先级。
+Codex 插件 4.3.0通过本地 stdio MCP 的 `openai/settings` 在插件详情页提供原生设置。打开设置时只读 Codex 本机项目列表与旧 AI Loop 工作区配置，下拉框显示项目名称和根目录；选择即可查看配置，不再提供路径输入或单独登记动作。用户可分别应用启用开关、模型/思考深度/并发，界面范围显示“全局默认／仅当前工作区”，选择工作区默认项目范围；可切换全局默认并恢复项目继承。新项目默认停用，模型保存不会启用恢复入口。模型和强度须来自当前原生模型列表，保存前会复核。
 
-`plugin-models.mjs status|list|configure|set|reset --project ROOT`：list 读取原生可用模型和支持强度；configure 可用交互问答、--input JSON 或明确 --preset balanced。默认 --scope global，项目覆盖加 --scope project；set --role dev --model MODEL --effort high 或 set --concurrency N；reset --scope project 恢复全局。默认预演，加 --apply 写入。
+`codex-workspaces.mjs` 隔离桌面格式兼容：只提取 `CODEX_HOME/.codex-global-state.json` 中的 `local-projects`、`project-order` 及旧根目录数组；不写回，不遍历会话历史。列表缺失、损坏或未知格式明确报错，旧登记仍可选择。失效目录和链接被过滤；动作保存前重新检查所选根目录仍在列表。
 
-全局资料放 CODEX_HOME/ai-loop/models.json 与 CODEX_HOME/agents，项目覆盖放 .ai-loop/models.json 与 .codex/agents；保留历史，不覆盖未登记/人工修改角色。主会话模型用原生选择器，当前代理不热切换，重载后下一次派发生效。预设不是账户可用性保证。
+主会话模型仍由 Codex 原生选择器控制。配置在原生重载后的下一次派发生效，运行中的代理不热切换。工作区恢复入口只对用户启用的精确根目录生效，需在 Codex `/hooks` 审核信任；设置页读取工作区列表不依赖该钩子。安装不改 `settings.json` 或信任缓存。
+
+Codex 当前客户端的功能开关可能影响原生设置区是否显示。字段和保存效果须在实际插件详情页验收；脚本或协议测试不等于 UI 验收。不要修改私有开关、`settings.json` 或信任缓存来强制显示。
+
+从仓库构建插件：`node scripts/build-plugin.mjs`，用 `--check` 核对产物。插件使用自己的脚本，目标项目只需执行 `plugin.mjs init --project ROOT` 预演，并在允许时加 `--apply` 初始化共享记录；已有旧部署时先核对优先级。
+
+底层配置脚本 `plugin-models.mjs status|list|configure|set|reset --project ROOT` 可用于诊断或兼容操作，选项以该脚本的 `--help` 为准。写入前预演，确认范围和字段后才应用。全局资料位于 CODEX_HOME/ai-loop/models.json 与 CODEX_HOME/agents，项目覆盖位于 .ai-loop/models.json 与 .codex/agents；保留历史，不覆盖未登记或人工修改角色。配置值不能证明原生角色发现、模型推理或插件页面显示已通过。
 
 ## Windows 所有者预检
 
