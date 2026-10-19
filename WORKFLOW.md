@@ -1,6 +1,6 @@
 # AI Loop Engineering 通用流程
 
-本文件是通用流程正文；原始源包统一维护，安装器部署到各平台。当前会话仅使用本平台部署，不读取源包和其他平台副本。
+本文件是通用流程正文；原始源包统一维护，支持项目部署与全局插件。当前会话只使用已选平台部署或已启用插件，不重复读取其他副本。插件使用技能指定的绝对根目录，忽略仅用于项目安装的部署路径假设。
 本文件中的 `agents/`、`scripts/` 相对当前部署目录；`.ai-loop/` 相对目标项目根。平台入口与部署路径见 `.ai-loop/install.json` 的 harnesses 注册表，source 仅用于安装与升级。
 
 ## 入口与读取
@@ -9,6 +9,7 @@
 2. 新会话首次处理项目相关请求：读项目规则和本平台入口，运行本部署 memory.mjs bootstrap，读共享 `.ai-loop/memory/index.md`。请求分为 inspect / new / continue；细则按需读 MEMORY.md。
 3. continue 时用户指定运行优先，否则唯一 active 运行可定位，多个候选先澄清。不重开 complete/stopped，不清零计数。新需求创建新 run_id，一般问答不启动开发。
 4. 恢复时先 status、session 与必要计划；交接游标落后、正文变化或引用失效先合并。核对实际源码与证据适用性，bootstrap 不验证代码快照。
+   用户下一条命令明显延续唯一活跃任务时使用 continue；多个候选先澄清，新需求另开运行。检查 work_units 未关闭单元，不能要求突然中断前必须先完成交接才可恢复，也不能承诺恢复未落盘讨论。
 5. 开发按当前阶段读取本文件和角色。主代理保留任务索引、依赖、验收和证据摘要，源码、长日志和完整报告按问题定位读取；已在上下文的同版本内容复用。
 6. 压缩或换 harness 后从共享持久资料恢复；平台 agent ID 只是可选续接信息，不承担唯一记忆职责。
 
@@ -51,6 +52,7 @@ Codex / Claude Code 配置原生模型分工后，按本部署 `ROUTING.md` 调�
 
 - 先 `begin --phase development`，再读取 `agents/loop-dev.md` 和本任务资料。
 - 只实现批准范围；保留用户原有修改。范围或方案需要变化时先说明影响并取得所需批准。
+- 每个有意义的工作单元开始前用 loop progress 保存 planned，包含 unit、task、summary、files；完成后立即保存 done/blocked，再处理下一单元。阶段交接记录改动文件、关键符号、原因与优先读取位置；未完成验证须明示，不把 done 当 PASS。
 - 完成自检后记录开发要点与变更文件；执行 `begin --phase verification` 并获取完整 `revision`。
 - 不以开发自述 DONE 宣布完成；进入真实验证阶段。
 
@@ -81,6 +83,10 @@ Codex / Claude Code 配置原生模型分工后，按本部署 `ROUTING.md` 调�
 ## 持久化与上下文
 
 所有 harness 共用项目 `.ai-loop/`。长期知识放 memory/index.md、architecture.md、decisions.md、lessons.md，按主题读取；只创建必要文档，详细内容优先引用项目原有资料。契约见 MEMORY.md。
+
+超过视图预算时由记忆工具分片，短导航加分页续读，不靠增大上下文或丢弃旧条目解决。schema 1 记录可读，首次更新迁移；旧入口升级前不能用旧版脚本写 schema 2 目录。
+
+Codex 插件模式使用全局核心与项目独立记录。模型设置用插件 plugin-models.mjs：global 默认、project 覆盖、reset 恢复默认；主会话模型由原生选择器控制，当前代理不热切换。项目已有旧入口时先核对优先级，不能混用两套核心。
 
 运行 `.ai-loop/runs/<run_id>/` 中，spec/plan 是方案，state 是权威阶段、计数和结果指针，reports 是实际证据，events 是增量事件，session/checkpoint 是语义交接与消费游标。不得直接编辑状态或计数来恢复。
 

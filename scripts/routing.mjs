@@ -50,9 +50,9 @@ export function nativeSkill(harness) {
     '派发完整的精简任务包，记录真实原生代理 ID；必要规则与验收不能省略。原生能力不足时报告，独立评审不能降格为 self。实际模型、思考强度、UI 分别验收，无法观察就保留 unverified。',
     '用户要求切换角色模型时，用 models.mjs 预演/应用；说明重载和下一次派发生效边界。当前执行者安全停止并 checkpoint 后，以新代理接续同一任务，不清零修复次数。agents.mjs 台账记录最后观察，不冒充实时面板。', ''].join('\n');
 }
-export function nativeAgent(profile, role) {
+export function nativeAgent(profile, role, deployment) {
   const { model, effort } = profile.roles[role];
-  const home = profile.harness === 'codex' ? '.codex/ai-loop' : '.claude/ai-loop';
+  const home = deployment || (profile.harness === 'codex' ? '.codex/ai-loop' : '.claude/ai-loop');
   const instructions = `你是 AI Loop 的 ${role}。遵守用户、项目规则和批准范围；命中 deny 立即停止，不能换工具或代理绕过。修改 settings.json 必须先获得具体许可；三个及以上文件改动须有已确认方案。读取任务包、必要项目规则和 ${home}/agents/loop-${role}.md，按需读 ${home}/ROUTING.md。只做本任务，不再派发子代理；疑难、权限不足或范围变化返回主代理。简体中文，用户可见回答先称呼“主人”。返回角色契约的简短 JSON，长日志保存在运行目录。`;
   if (profile.harness === 'codex') return [`name = "loop-${role}"`, `description = ${JSON.stringify(ROLES[role])}`, `model = ${JSON.stringify(model)}`, ...(effort === null ? [] : [`model_reasoning_effort = ${JSON.stringify(effort)}`]), `developer_instructions = ${JSON.stringify(instructions)}`, ''].join('\n');
   return ['---', `name: loop-${role}`, `description: ${JSON.stringify(ROLES[role])}`, `model: ${JSON.stringify(model)}`, ...(effort === null ? [] : [`effort: ${effort}`]), 'disallowedTools: Agent', '---', '', instructions, ''].join('\n');

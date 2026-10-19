@@ -6,11 +6,12 @@ import { VERSION, BUNDLE, assert, inside, rootPath, safePath, jsonFile, atomicWr
 import { ADAPTERS, selectHarness, adapterFor, entryInstructions, codexBootstrap } from './adapters.mjs';
 import { rootString, updateRootString } from './toml.mjs';
 import { configureModels } from './codex-models.mjs';
+import { inspectWindows } from './windows.mjs';
 import { ROLES, balanced, validateProfile, agentPath, nativeAgent, skillPath, nativeSkill, routingGuide, routeHash } from './routing.mjs';
 
 const START = '<!-- ai-loop:start -->';
 const END = '<!-- ai-loop:end -->';
-export const REQUIRED_FILES = ['SETUP.md', 'WORKFLOW.md', 'MEMORY.md', ...['planner', 'dev', 'tester', 'reviewer', 'scribe'].map(role => `agents/loop-${role}.md`), ...['install.mjs', 'loop.mjs', 'lib.mjs', 'adapters.mjs', 'toml.mjs', 'codex-models.mjs', 'routing.mjs', 'models.mjs', 'agents.mjs', 'doctor.mjs', 'memory.mjs', 'README.md'].map(file => `scripts/${file}`), 'templates/memory-index.md', 'templates/routing.md'];
+export const REQUIRED_FILES = ['SETUP.md', 'WORKFLOW.md', 'MEMORY.md', ...['planner', 'dev', 'tester', 'reviewer', 'scribe'].map(role => `agents/loop-${role}.md`), ...['install.mjs', 'loop.mjs', 'lib.mjs', 'adapters.mjs', 'toml.mjs', 'codex-models.mjs', 'routing.mjs', 'models.mjs', 'profiles.mjs', 'agents.mjs', 'doctor.mjs', 'memory.mjs', 'memory-store.mjs', 'windows.mjs', 'README.md'].map(file => `scripts/${file}`), 'templates/memory-index.md', 'templates/routing.md'];
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const wrapped = text => `${START}\n${text}\n${END}`;
 
@@ -296,6 +297,10 @@ export function install(options) {
   }
   if (!options.apply) return { ...summary, preview: [...changes.values()].map(item => ({ path: item.path, ...item.preview })) };
   if (!changes.size) return summary;
+  if (process.platform === 'win32' && [...changes.keys()].some(name => name.startsWith('.codex/') || name.startsWith('.agents/'))) {
+    const owners = inspectWindows(root);
+    assert(owners.status === 'ready', 'Windows 受保护目录所有者预检未通过；请在正常用户宿主进程安装，先处理 windows.mjs inspect 的异常，不在沙箱账户中创建 .codex/.agents');
+  }
   return locked(root, 'install', () => {
     for (const item of [...observations.values(), ...inputs]) {
       assert(fs.existsSync(item.target) === item.existed && (!item.existed || fs.readFileSync(item.target).equals(item.original)), '文件在预演后发生变化，请重新预演：' + item.path);

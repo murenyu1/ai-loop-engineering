@@ -1,15 +1,16 @@
 # 项目知识与会话恢复
 
-本协议用于跨会话、跨 harness 的项目记忆。所有工具共享项目 `.ai-loop/memory/` 和 `.ai-loop/runs/`；当前平台只使用自己的部署脚本，不复制知识库，不改根规范。
+本协议用于跨会话、跨 harness 的项目记忆。所有工具共享项目 `.ai-loop/memory/` 和 `.ai-loop/runs/`；使用当前平台部署或已启用插件中的脚本，不复制知识库，不改根规范。插件模式不要求每项目安装核心。
 
 ## 新会话启动
 
 1. 先遵守项目、上级和当前工具规则。首次处理项目相关请求时运行本部署 `scripts/memory.mjs bootstrap --project ROOT`，读取 `.ai-loop/memory/index.md`。同会话已读且未变化时复用。
-2. 根据本次用户请求选 intent：项目提问用 inspect，新需求用 new，继续任务用 continue。默认 inspect 不选任务；启动只读，不自动执行开发或恢复状态。
+2. 根据本次用户请求选 intent：项目提问用 inspect，新需求用 new，继续任务用 continue。命令明显延续唯一活跃任务时不要求用户记住 run_id；新需求不附会为旧任务。默认 inspect 不选任务；启动只读，不自动执行开发或恢复状态。
 3. continue：用户指定 run_id 优先；否则仅一个 active 运行时定位它。多个候选列出简短选择，不根据最近时间擅自挑选。分页有 next_after 时按需续读；不能把当前页当全部运行。
 4. 被选运行有阻塞先解决条件；complete/stopped 不重开。新需求创建新 run_id，不覆盖已有运行，不清零计数。一般问答不启动完整开发流程。
 5. 读取所选运行 status、session.md、必要计划与资料。checkpoint 缺失、正文被改、事件尚未整理或引用丢失时，先按范围补读并合并交接，再执行。旧 session 内容和原运行仍保留。
 6. bootstrap 的 snapshot_status 为 unchecked。恢复执行前核对当前源码、用户改动和实际差异；使用验证结论前核对快照与环境。知识文档、旧交接和候选任务都不证明当前代码通过验证。
+7. 查看 work_units 中未关闭的 planned 单元。直接中断后它可能已改代码但还未记 done；先核对文件和验证状态，再接续，不重置阶段或计数。session 为分页导航时读取 checkpoint.details 中必要正文。
 
 索引尚未整理时，从用户要求、实际项目和已有文档建立简短索引，未知项标待核对。接入进行中项目只记录可以观察的基线，不能从源码猜出过去未保存的讨论或验收结果。
 
@@ -31,6 +32,7 @@
 ## 更新与交接时机
 
 - 重要需求、约束、决策得到确认后：立即追加简短 requirement / decision / rejected 等运行事件，保存结论和原因，不等聊天结束才补记。用户明确要求保存的项目知识也应及时保存。
+- 每个有意义的开发单元开始前用 loop progress 保存 planned（任务、目标、预期文件），完成后立即保存 done/blocked。阶段 checkpoint 批量整理语义；不用每个工具调用都写记录。突然中断恢复仅覆盖已经落盘的资料。
 - 阶段产生有意义的结果、阻塞或交付后：按需用记录角色批量整理新增事件，更新知识和交接。
 - 用户准备换聊天、换工具、压缩上下文或明确要求交接：保存完整 checkpoint。
 - 有可靠上下文指标达到 80% 时：提醒用户并保存交接；指标不可得时不编造百分比，在可识别的交接时机保存。
@@ -42,9 +44,9 @@
 
 `scripts/memory.mjs` 提供 bootstrap / inspect / search / save / checkpoint，具体输入见脚本 README。
 
-- catalog.json 保存结构化知识与 revision；Markdown 是阅读视图。save 根据已读取的 base_revision 和 expected_hash 增量合并条目，不默认删除旧条目；改动正文前留 history 备份。未索引旧资料需要先读、保留有效内容，再显式 import_existing。
+- catalog.json 保存短目录与 revision，schema 2 的结构化知识按不可变 data 分片保存；Markdown 是阅读视图。schema 1 仍可读，更新时迁移并保留旧目录备份。save 根据已读取的 base_revision 和 expected_hash 增量合并条目，不默认删除旧条目；改动正文前留 history 备份。未索引旧资料需要先读、保留有效内容，再显式 import_existing。
 - checkpoint.json 保存实际消费的 event_cursor、交接结构和 session_hash。checkpoint 根据 base_cursor 和 expected_session_hash 合并；旧 session 留 handoffs 备份。可分批处理事件，但游标落后仍标 events-pending，不能称交接完整。
-- session.md 保存用户意图、约束、决策原因、未决问题、下一步和必要文件指针，不复制权威计数。state.json 始终是执行状态源；complete/stopped 的交接可归档整理，但状态不会重开。
+- session.md 保存用户意图、约束、决策原因、未决问题、下一步和必要文件指针，不复制权威计数。changes 固定记录本阶段改动文件、symbols、reason、read_first；保存文件 hash，删除文件用 deleted:true。按符号定位优先于不稳定的行号，不复制整段源码。旧交接缺字段仍可读，新交接应补齐。state.json 始终是执行状态源；complete/stopped 的交接可归档整理，但状态不会重开。
 - 不手改 catalog.json、checkpoint.json、state.json 或计数。Markdown 人工补充、丢失或冲突时先读取现有资料，展示必要差异并合并；不能直接重建来丢弃修改。
 - inspect 检查正文摘要、文件来源变化、缺失事件与未索引资料；bootstrap 给短问题摘要，必要时才读详细 inspect。状态异常、符号链接、路径越界或锁冲突停止并保留现场。
 
@@ -52,7 +54,7 @@
 
 启动只给知识索引和任务摘要，不回灌所有架构、历史事件、报告、长日志。知识条目按主题检索；search 返回有限摘录，截断时返回文档指针，重要约束需核对原文。
 
-index 的硬上限为 6000 字符、单详细文档 48000 字符、交接 12000 字符；这些是防无界输出的字符限制，不是实测 token 数。超限先保留约束与问题，把详细内容组织到项目资料并留下指针，不静默删除重要信息。
+index 阅读视图最多 6000 字符、详细视图最多 48000 字符、session 视图最多 12000 字符。超限自动换成短导航，全部正文保存在不可变分页中；不截断或删除语义。目录 JSON 不再内嵌全部条目，超过 100 条可分批追加；每批最多 100 条，单条正文最多 200000 字符，超大材料仍需按主题拆分。memory read 每次最多返回 8000 字符，用 next_offset/next_page 续读；search 返回 entry 读取指令。分页不是归档废弃，重要约束仍需核对原文。字符限制不是实测 token 节省。
 
 记录员是固定职责。当前 harness 支持且授权使用子 agent 时，可派发独立记录员，输入仅为当前运行、知识索引、已读资料指针和新增事件范围；否则主 AI 履行同一职责。默认不注册供应商专属 agent、hook 或修改 settings.json。
 

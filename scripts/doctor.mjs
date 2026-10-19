@@ -3,7 +3,8 @@ import { createInterface } from 'node:readline';
 import { install } from './install.mjs';
 import { installed } from './models.mjs';
 import { capabilities, selectHarness } from './adapters.mjs';
-import { assert, safePath, args, allowArgs, mainModule } from './lib.mjs';
+import { assert, safePath, args, allowArgs, mainModule, codexExecutable, VERSION } from './lib.mjs';
+import { inspectWindows } from './windows.mjs';
 
 export function diagnose(options) {
   const harness = selectHarness(options.harness);
@@ -29,12 +30,14 @@ export function diagnose(options) {
   let runtime = null;
   if (options.probe) {
     assert(['codex', 'claude-code'].includes(harness), '版本探测仅支持 codex / claude-code');
-    const name = harness === 'codex' ? 'codex' : 'claude';
+    const name = harness === 'codex' ? codexExecutable() : 'claude';
     const child = spawnSync(name, ['--version'], { encoding: 'utf8', timeout: 10000, windowsHide: true, shell: false });
     runtime = { executable: name, exit_code: child.status, version_output: child.stdout?.trim() || null, error: child.error?.message || child.stderr?.trim() || null };
     if (child.status !== 0) issues.push('CLI 版本探测失败；不能据此宣称该客户端可运行');
   }
-  return { harness, capabilities: capabilities(harness), configuration: integrity, runtime, issues,
+  const windows = inspectWindows(root);
+  if (windows.issues.length) issues.push('Windows 所有者/访问权限预检未通过，先处理 windows.issues；不修改沙箱策略');
+  return { harness, capabilities: capabilities(harness), configuration: integrity, runtime, issues, windows,
     native_discovery: 'unverified', execution: 'unverified', effective_model: 'unverified', ui_visibility: 'unverified',
     acceptance: harness === 'codex' ? [
       '受信任项目中新开会话，确认发现 loop-* 自定义代理及 ai-loop 技能；项目配置、profile 与启动参数均须核对',
@@ -62,7 +65,7 @@ export async function inspectNative(project, harness) {
       note: '只读认证方式/provider 诊断，不输出凭据；不能仅凭别名证明不同后端模型。' };
   }
   assert(harness === 'codex', '本地原生协议检查仅支持 codex / claude-code');
-  const child = spawn('codex', ['--strict-config', 'app-server', '--stdio'], { cwd: root, windowsHide: true, shell: false });
+  const child = spawn(codexExecutable(), ['--strict-config', 'app-server', '--stdio'], { cwd: root, windowsHide: true, shell: false });
   const lines = createInterface({ input: child.stdout });
   const pending = new Map();
   let sequence = 0;
@@ -86,7 +89,7 @@ export async function inspectNative(project, harness) {
     child.stdin.write(JSON.stringify({ id, method, params }) + '\n');
   });
   try {
-    const init = await request('initialize', { clientInfo: { name: 'ai_loop_doctor', version: '4.0.0' }, capabilities: { experimentalApi: true } });
+    const init = await request('initialize', { clientInfo: { name: 'ai_loop_doctor', version: VERSION }, capabilities: { experimentalApi: true } });
     assert(!init.error, '原生协议初始化失败：' + (init.error?.message || 'unknown'));
     child.stdin.write(JSON.stringify({ method: 'initialized', params: {} }) + '\n');
     const config = await request('config/read', { cwd: root, includeLayers: true });
@@ -94,10 +97,12 @@ export async function inspectNative(project, harness) {
     const layers = config.result?.layers?.map(layer => ({ name: layer.name, disabledReason: layer.disabledReason ?? layer.disabled_reason ?? null })) || [];
     const blocked = layers.filter(layer => layer.name?.type === 'project' && layer.disabledReason);
     const skills = await request('skills/list', { cwds: [root], forceReload: true });
+    const models = await request('model/list', { limit: 100 });
     return { project_config: blocked.length ? 'disabled' : 'inspect-layers', dispatch_blocked: blocked.length > 0,
       config_model: config.result?.config?.model || null, config_effort: config.result?.config?.model_reasoning_effort || null, layers,
-      ai_loop_skill: skills.result?.data?.flatMap(item => item.skills || []).filter(skill => skill.name === 'ai-loop').map(skill => ({ name: skill.name, path: skill.path, enabled: skill.enabled })) || [],
+      ai_loop_skill: skills.result?.data?.flatMap(item => item.skills || []).filter(skill => ['ai-loop', 'ai-loop-models'].includes(skill.name) || skill.name?.startsWith('ai-loop-engineering:')).map(skill => ({ name: skill.name, path: skill.path, enabled: skill.enabled })) || [],
       skills_error: skills.error || null, native_agents: 'unverified', effective_model: 'unverified',
+      models: models.result?.data?.map(item => ({ id: item.model || item.id, name: item.displayName || item.display_name, efforts: item.supportedReasoningEfforts || item.supported_reasoning_efforts || [], default_effort: item.defaultReasoningEffort || item.default_reasoning_effort })) || [], models_error: models.error || null, models_next_cursor: models.result?.nextCursor || null,
       note: '只读本地配置与技能发现；不授予项目信任，不调用模型，不证明子代理启动或 UI。config_model 是有效配置值，不是实际推理证据。' };
   } finally { lines.close(); child.kill(); }
 }

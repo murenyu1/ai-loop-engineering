@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { status as runStatus } from './loop.mjs';
 import { installed } from './models.mjs';
+import { resolveProfile } from './profiles.mjs';
 import { ROLES, routeHash, validateProfile } from './routing.mjs';
 import { assert, rootPath, safePath, validId, jsonFile, locked, writeJson, args, allowArgs, mainModule, printResult } from './lib.mjs';
 
@@ -32,9 +33,11 @@ export function recordAgent(project, run, input) {
       assert(input.state === 'requested' && Object.hasOwn(ROLES, input.role), '首次记录须为 requested 且有合法角色');
       assert(current.tasks.some(task => task.id === input.task), '代理任务不属于当前运行');
       const { record } = installed(root, input.harness);
-      const profile = record?.model_routing?.profile;
+      const marker = safePath(root, '.ai-loop/plugin.json');
+      const plugin = fs.existsSync(marker) ? resolveProfile(root) : null;
+      const profile = plugin?.profile || record?.model_routing?.profile;
       assert(profile, '该 harness 未配置模型分工');
-      assert(routeHash(validateProfile(profile, input.harness)) === record.model_routing.profile_hash, '模型配置摘要损坏，停止派发记录');
+      assert(routeHash(validateProfile(profile, input.harness)) === (plugin?.profile_hash || record.model_routing.profile_hash), '模型配置摘要损坏，停止派发记录');
       if (input.replaces) {
         const old = data.agents.find(agent => agent.id === input.replaces);
         assert(old && ['completed', 'failed', 'stopped'].includes(old.state) && old.task === input.task && old.role === input.role, '替换前须先完成或停止同任务同角色代理并保存交接');

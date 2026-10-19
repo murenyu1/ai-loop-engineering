@@ -1,6 +1,35 @@
 # AI Loop Engineering
 
-4.0 支持 Codex 与 Claude Code 原生子代理和逐角色模型配置：强模型指挥，性价比模型执行。配置时询问各角色模型、思考强度和并发数；支持中途修改，明确重载与生效边界。安装、升级与验证见 SETUP.md，派发与切换协议见 templates/routing.md。
+4.1 支持 Codex 全局插件、分页记忆、带代码定位的交接与中断恢复。保留 Codex / Claude Code 项目安装方式和原生子代理配置；新增全局默认、项目模型覆盖及恢复默认。实际模型和原生加载仍须单独验收。
+
+## Codex 安装一次，所有本地项目可用
+
+推荐 Codex 用户使用插件，不必再把源包复制进每个目标项目。Node.js ≥18，无第三方依赖。在源包目录执行：
+
+```text
+node scripts/build-plugin.mjs
+node scripts/install-plugin.mjs --project .
+node scripts/install-plugin.mjs --project . --apply
+```
+
+最后一步应由正常用户宿主进程执行，安装器会先检查 Windows 所有者，再调用 Codex 原生插件管理命令注册用户级市场和安装插件；不手改缓存或 settings.json。CLI 不在 PATH 时自动定位 Windows 桌面版，也可用 AI_LOOP_CODEX_CLI 指定真实程序路径。
+
+安装后新开项目聊天，发送“使用 AI Loop 工作流继续当前项目”或“打开 AI Loop 模型设置”。插件按需加载，项目只保存自己的 `.ai-loop/`；各项目任务、记忆和报告互不混用。首次全局模型分工需选择模型/思考强度，以后所有项目复用；可随时说“把开发代理改为 MODEL、思考深度 high，仅当前项目”或“当前项目恢复全局模型设置”。
+
+也可以直接从 GitHub 安装：
+
+```text
+codex plugin marketplace add https://github.com/murenyu1/ai-loop-engineering
+codex plugin add ai-loop-engineering@ai-loop-engineering
+```
+
+本仓库包含可直接安装的 plugins/ai-loop-engineering；plugin/ 是维护模板，scripts/build-plugin.mjs 从当前源包生成并核对摘要。仅打包运行必需文件，不含个人配置、任务记录、日志或测试夹具。GitHub 市场目录在 .agents/plugins/marketplace.json。
+
+旧项目保留原来的 .ai-loop/runs 和 memory。插件首次使用先预演初始化，不删除旧部署或规则；旧入口与项目模型优先级需要核对。旧版本脚本不能写新版 schema 2 记忆，先升级/迁移当前入口，避免混用。跨聊天会先读摘要、未关闭工作单元和必要改动，无法恢复尚未落盘的讨论。
+
+Windows 配置前用 `node scripts/windows.mjs inspect --project 目标项目`；发现受保护目录由沙箱账户拥有时先备份并针对性修复，不能批量重置 ACL。插件减少项目 .codex 写入，但不能保证 Codex 或系统权限永远不出现故障。
+
+以下章节介绍保留的逐项目安装方式；插件用户不需要再执行。
 
 安装、原生角色发现、真实调用、实际模型与界面显示需要分层验收。Codex 项目信任、Claude 第三方模型映射与客户端重载条件会影响运行；文件检查通过不代表全部能力已经生效。
 

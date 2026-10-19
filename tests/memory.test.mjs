@@ -189,12 +189,11 @@ test('运行与知识路径符号链接停止，不写链接目标；输出不�
   assert.throws(() => inspect(root), /符号链接/);
   assert.equal(fs.readFileSync(path.join(root, 'main.txt'), 'utf8'), '实际项目资料：数据接口必须兼容。');
   fs.unlinkSync(linked);
-  const index = JSON.parse(fs.readFileSync(path.join(root, '.ai-loop/memory/catalog.json'))).documents.index;
   // 恢复正文后启动应只提供索引路径，不返回知识全文。
   fs.writeFileSync(linked, '# 非原文');
   const startup = bootstrap(root);
   assert.ok(startup.memory.documents[0].issues.some(issue => issue.type === 'edited-document'));
-  assert.equal(JSON.stringify(startup).includes(index.entries[0].text), false);
+  assert.equal(JSON.stringify(startup).includes(fact().text), false);
 });
 
 
@@ -215,8 +214,8 @@ test('完成运行不会自动恢复，归档交接不重开或修改权威状�
 
 test('记录预算、事件不一致及活跃写锁不被绕过', t => {
   const { root } = fixture(t); task(root);
-  assert.throws(() => saveIndex(root, [fact({ id: 'a', text: '约束'.repeat(2000) }), fact({ id: 'b', text: '知识'.repeat(2000) })]), /字符预算/);
-  assert.equal(fs.existsSync(path.join(root, '.ai-loop/memory/catalog.json')), false);
+  saveIndex(root, [fact({ id: 'a', text: '约束'.repeat(2000) }), fact({ id: 'b', text: '知识'.repeat(2000) })]);
+  assert.ok(inspect(root).documents[0].pages > 1);
   const input = handoff(root);
   fs.writeFileSync(path.join(root, '.ai-loop/run-run1.lock'), '活跃');
   assert.throws(() => checkpoint(root, 'run1', input), /持有锁/);

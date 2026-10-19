@@ -1,0 +1,32 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "ai-loop-engineering",
+  "version": "4.1.0",
+  "description": "项目开发闭环、跨聊天恢复、分页记忆与子代理模型设置。",
+  "author": {
+    "name": "murenyu1"
+  },
+  "repository": "https://github.com/murenyu1/ai-loop-engineering",
+  "keywords": [
+    "workflow",
+    "memory",
+    "subagents"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "AI Loop Engineering",
+        "shortDescription": "开发闭环、任务续接和代理模型设置",
+        "category": "Productivity",
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "defaultPrompt": [
+          "使用 AI Loop 工作流继续当前项目",
+          "打开 AI Loop 模型设置"
+        ]
+      }
+    }
+  }
+}

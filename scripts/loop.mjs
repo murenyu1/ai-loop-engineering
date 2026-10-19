@@ -64,7 +64,9 @@ export function snapshot(project, ignore = [], bundle = BUNDLE) {
   const excluded = ['.git', '.ai-loop', ...ignore];
   if (manifest?.source) {
     const source = safePath(root, manifest.source);
-    assert(fs.existsSync(source) && fs.statSync(source).isDirectory(), '安装源包路径已失效；先修复安装');
+    const markerPath = safePath(root, '.ai-loop/plugin.json');
+    const pluginMode = fs.existsSync(markerPath) && jsonFile(markerPath).plugin === 'ai-loop-engineering';
+    assert(pluginMode || fs.existsSync(source) && fs.statSync(source).isDirectory(), '安装源包路径已失效；先修复安装');
     excluded.push(manifest.source);
   }
   if (manifest?.schema_version === 2) {
@@ -342,6 +344,24 @@ export function event(project, run, input) {
     persist(root, files, state, input.type, { summary: input.summary }); return { run_id: run, event_seq: state.event_seq };
   });
 }
+export function progress(project, run, input) {
+  const root = rootPath(project);
+  assert(input && ['planned', 'done', 'blocked'].includes(input.stage) && nonempty(input.summary) && input.summary.length <= 2000, '进度须有 planned / done / blocked 阶段及简短摘要');
+  validId(input.unit); validId(input.task);
+  assert(Array.isArray(input.files) && input.files.length <= 100 && input.files.every(item => typeof item === 'string'), '进度 files 须为项目相对路径数组');
+  const hashes = input.files.map(relative => {
+    const target = safePath(root, relative);
+    assert(!fs.existsSync(target) || fs.statSync(target).isFile(), '进度引用须为普通文件');
+    return { path: relative, hash: fs.existsSync(target) ? crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex') : null };
+  });
+  return mutable(root, run, ({ files, state }) => {
+    taskOf(state, input.task);
+    const previous = fs.readFileSync(files.events, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)).filter(item => item.type === 'progress' && item.unit === input.unit).at(-1);
+    assert(input.stage === 'planned' ? !previous : previous?.stage === 'planned' && previous.task_id === input.task, '工作单元须先 planned 再 done / blocked；已关闭单元使用新编号');
+    persist(root, files, state, 'progress', { unit: input.unit, task_id: input.task, stage: input.stage, summary: input.summary, files: hashes });
+    return { run_id: run, event_seq: state.event_seq, unit: input.unit, stage: input.stage, verification: 'unchecked' };
+  });
+}
 export function events(project, run, after = 0, limit = 50) {
   const root = rootPath(project);
   assert(Number.isInteger(after) && after >= 0 && Number.isInteger(limit) && limit > 0 && limit <= 100, '事件游标与数量无效');
@@ -358,7 +378,7 @@ export function cli(argv) {
   allowArgs(options, ['project', 'run', 'task', 'phase', 'input', 'reason', 'after', 'limit', 'help']);
   const [command] = options._;
   assert(options._.length <= 1, '只能指定一个命令');
-  if (options.help || !command) return { commands: 'create / begin / snapshot / record / fix / resume / stop / status / event / events / complete', usage: 'node scripts/loop.mjs COMMAND --project ROOT [--run ID] [--task ID] [--input FILE]' };
+  if (options.help || !command) return { commands: 'create / begin / snapshot / record / fix / resume / stop / status / event / events / progress / complete', usage: 'node scripts/loop.mjs COMMAND --project ROOT [--run ID] [--task ID] [--input FILE]' };
   const input = () => { assert(typeof options.input === 'string', '此命令需要 --input JSON文件'); return jsonFile(path.resolve(options.input)); };
   if (command === 'create') return create(options.project, input(), options.run);
   if (command === 'begin') return begin(options.project, options.run, options.task, options.phase);
@@ -372,6 +392,7 @@ export function cli(argv) {
   if (command === 'stop') return stop(options.project, options.run, options.reason);
   if (command === 'status') return status(options.project, options.run);
   if (command === 'event') return event(options.project, options.run, input());
+  if (command === 'progress') return progress(options.project, options.run, input());
   if (command === 'events') return events(options.project, options.run, Number(options.after || 0), Number(options.limit || 50));
   if (command === 'complete') return complete(options.project, options.run, input());
   throw new Error('未知命令，运行 --help 查看用法');

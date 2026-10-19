@@ -132,7 +132,9 @@ name 为 index / architecture / decisions / lessons；不存在的详细文档�
 
 知识与交接文件采用 UTF-8；其他编码先保留原文并明确转换，不猜测编码后覆盖。catalog.json 是结构化存储，Markdown 为阅读视图。base_revision 和 expected_hash 防止覆盖并发修改；保存旧正文到 memory/history/。未索引旧资料需要先读、保留有效内容，并在对应文档 patch 加 import_existing: true；初始索引模板例外。已索引正文被手改也必须先读取并明确合并，通过 import_existing 保留有效补充；不直接重建丢弃信息。脚本不能证明 AI 真的处理了全部旧资料。
 
-index 最多 6000 字符，其他文档最多 48000 字符；每文档最多 100 条，单条正文最多 4000 字符，目录 JSON ≤1 MiB。超限整理到项目资料并保存指针，不能以压缩为由丢失约束。相同有效更新返回 unchanged，不增长 revision。
+4.1 起 index/详细文档超过 6000/48000 字符时自动生成短导航，完整正文保存在不可变 pages；schema 2 catalog 只保存分片指针，结构化条目保存在 data，单个聚合 JSON 不再随全部知识增长。每批最多 100 条，总条目数可持续追加；单条正文最多 200000 字符。schema 1 可读，更新时备份并迁移。相同有效更新返回 unchanged，不增长 revision。旧版本脚本不能写 schema 2，请先升级当前入口。
+
+分页读取：`memory.mjs read --project ROOT --document architecture --page 1`；每次最多 8000 字符，依次跟随 next_offset / next_page。精准读取条目用 `--document NAME --entry ID`。search 返回 next_after，传 `--after DOCUMENT:ID` 继续检索；知识变化后重新检索。不要全量读取 catalog/data 或所有分页。
 
 ## 保存与检查交接
 
@@ -148,7 +150,8 @@ index 最多 6000 字符，其他文档最多 48000 字符；每文档最多 100
   "decisions": ["已确认方案，以及选择它的原因"],
   "open_questions": [],
   "next_steps": ["核对实际差异，再继续尚未完成的任务"],
-  "references": [".ai-loop/runs/RUN_ID/spec.json"]
+  "references": [".ai-loop/runs/RUN_ID/spec.json"],
+  "changes": [{"path":"src/api.js","symbols":["handleRequest"],"reason":"修复接口兼容","read_first":"handleRequest 及相邻调用；先核对当前版本"}]
 }
 ```
 
@@ -156,7 +159,31 @@ index 最多 6000 字符，其他文档最多 48000 字符；每文档最多 100
 node BUNDLE/scripts/memory.mjs checkpoint --project ROOT --run RUN_ID --input .ai-loop/checkpoint-update.json
 ```
 
-base_cursor 对应已读取的旧交接游标；event_cursor 仅填本次实际消费到的游标，不能回退或超过事件头。数组必填，next_steps 至少一项，引用须为已有项目内普通文件。交接最多 12000 字符。旧 session 备份到本运行 handoffs/；checkpoint.json 保存结构和 hash，不修改 state、报告或计数。
+base_cursor 对应已读取的旧交接游标；event_cursor 仅填本次实际消费到的游标，不能回退或超过事件头。数组必填，next_steps 至少一项，引用须为已有项目内普通文件。changes 为固定改动定位，保存文件 hash；已删除文件加 deleted:true，symbols 可为空数组。src/api.js 是示例，替换为实际文件；旧调用省略 changes 可兼容，新交接应填写。
+
+超过 12000 字符时 session 改为短导航，全部内容放 handoff-pages，checkpoint.details 保存指针与 hash。用 `memory.mjs read --project ROOT --run RUN_ID --page 1` 和 next_offset/next_page 读取。旧 session 备份到 handoffs/；不修改 state、报告或计数。
+
+## 中断恢复的工作单元
+
+在修改前后调用 `loop.mjs progress --project ROOT --run RUN_ID --input JSON`，输入例如：
+
+```json
+{"unit":"api-1","task":"task1","stage":"planned","summary":"修复接口并验证兼容","files":["src/api.js"]}
+```
+
+改动完成后同 unit 填 stage:done 或 blocked。单元关闭后新工作用新 unit。文件可尚未创建或已删除，保存当时 hash/null。bootstrap 返回未关闭单元和最后摘要，不把 done 当 PASS；直接中断后先核对实际文件、增量事件与证据，无法恢复未落盘内容。
+
+## Codex 全局插件与模型设置
+
+源包执行 `node scripts/build-plugin.mjs` 构建 plugins/ai-loop-engineering，`--check` 核对产物。插件使用自身脚本，目标项目只执行 `plugin.mjs init --project ROOT` 预演并加 --apply 初始化共享记录。已存在旧部署时保留记录和入口，先核对优先级。
+
+`plugin-models.mjs status|list|configure|set|reset --project ROOT`：list 读取原生可用模型和支持强度；configure 可用交互问答、--input JSON 或明确 --preset balanced。默认 --scope global，项目覆盖加 --scope project；set --role dev --model MODEL --effort high 或 set --concurrency N；reset --scope project 恢复全局。默认预演，加 --apply 写入。
+
+全局资料放 CODEX_HOME/ai-loop/models.json 与 CODEX_HOME/agents，项目覆盖放 .ai-loop/models.json 与 .codex/agents；保留历史，不覆盖未登记/人工修改角色。主会话模型用原生选择器，当前代理不热切换，重载后下一次派发生效。预设不是账户可用性保证。
+
+## Windows 所有者预检
+
+`windows.mjs inspect --project ROOT` 只读检查身份和已知受保护目录。Codex 配置写入不能由 CodexSandboxOffline/Online 创建；请由正常用户宿主进程执行，保留平台审批。`repair --project ROOT --target EXACT_DIRECTORY` 只预演明确发现的异常目录自身 owner，加 --apply 前备份 SDDL；不递归、不重置 DACL、不移除 deny。确需管理员授权时由用户处理；没有异常就不改。修复后用普通沙箱命令实测，ACL 检查本身不证明沙箱可用。
 
 有未消费事件返回 events-pending；缺失 checkpoint 的旧运行仍可发现，但需读取旧 session 与必要事件后补交接。正文被改、引用丢失或游标落后均标 needs-check。completed/stopped 的交接可归档整理，不允许借此重开运行。脚本检查结构，语义完整性和真实事件阅读由执行者负责。
 
