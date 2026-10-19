@@ -1,3 +1,4 @@
+import { BUNDLE as SOURCE_ROOT, runtimeContent } from '../scripts/lib.mjs';
 // 手动可选验收；不由 all.mjs 调用。会调用已登录的原生 CLI，遵守其权限和信任。
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,7 +19,7 @@ const project = fs.mkdtempSync(path.join(directory, options.harness + '-'));
 const bundle = path.join(project, 'bundle');
 for (const file of REQUIRED_FILES) {
   fs.mkdirSync(path.dirname(path.join(bundle, file)), { recursive: true });
-  fs.copyFileSync(path.join(source, file), path.join(bundle, file));
+  fs.writeFileSync(path.join(bundle, file), runtimeContent(SOURCE_ROOT, file));
 }
 fs.mkdirSync(path.join(project, 'reports'));
 fs.writeFileSync(path.join(project, 'smoke.txt'), 'AI_LOOP_NATIVE_SMOKE_20261018\n');

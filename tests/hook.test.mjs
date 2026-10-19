@@ -8,7 +8,7 @@ import { after, before, test, describe } from 'node:test';
 import { link } from './support.mjs';
 
 const require = createRequire(import.meta.url);
-const { checkReportPath, evaluateHook, runHook } = require('../hooks/check-report-path.js');
+const { checkReportPath, evaluateHook, runHook } = require('../adapters/project/hooks/check-report-path.js');
 describe('报告路径 hook', () => {
 let fixture;
 let root;

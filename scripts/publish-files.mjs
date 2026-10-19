@@ -3,9 +3,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { BUNDLE, assert, safePath, args, allowArgs, mainModule, printResult } from './lib.mjs';
 
-const directories = ['agents', 'commands', 'hooks', 'scripts', 'templates', 'tests', 'plugin', 'plugins/ai-loop-engineering'];
-const files = ['.gitignore', '.gitattributes', 'AGENTS.md', 'CLAUDE.md', 'MEMORY.md', 'README.md', 'SETUP.md', 'WORKFLOW.md', 'CHANGES.md'];
-const extensions = /\.(?:md|mjs|js|json|yaml|yml|toml|ps1)$/;
+const directories = ['core', 'adapters/project', 'scripts', 'tests', 'plugins/codex', 'dist/codex'];
+const files = ['.gitignore', '.gitattributes', 'AGENTS.md', 'CLAUDE.md', 'README.md', 'SETUP.md', 'CHANGES.md'];
+const extensions = /\.(?:md|mjs|js|json|yaml|yml|toml|ps1|html|css)$/;
 export function publishFiles() {
   const selected = new Set(files.filter(relative => fs.existsSync(safePath(BUNDLE, relative))));
   function walk(relative) {
@@ -20,13 +20,18 @@ export function publishFiles() {
   for (const directory of directories) if (fs.existsSync(safePath(BUNDLE, directory))) walk(directory);
   // 仅发行时映射市场元数据，不在当前源包工作区创建受保护 .agents 目录。
   const mapping = new Map([...selected].map(relative => [relative, relative]));
-  mapping.set('.agents/plugins/marketplace.json', 'plugin/marketplace.json');
+  mapping.set('.agents/plugins/marketplace.json', 'plugins/codex/marketplace.json');
+  for(const name of ['ai-loop-workflow-4.2.0.zip','ai-loop-codex-4.2.0.zip','SHA256SUMS']) {
+    const relative='downloads/'+name;
+    if(fs.existsSync(safePath(BUNDLE,relative))) mapping.set(relative,relative);
+  }
   return [...mapping].sort(([a], [b]) => a.localeCompare(b)).map(([relative, source]) => {
     const bytes = fs.readFileSync(safePath(BUNDLE, source));
-    const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/\r\n/g, '\n');
-    const data = Buffer.from(content);
+    const binary=relative.endsWith('.zip');
+    const content = binary ? bytes.toString('base64') : new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/\r\n/g, '\n');
+    const data = binary ? bytes : Buffer.from(content);
     const sha = crypto.createHash('sha1').update(`blob ${data.length}\0`).update(data).digest('hex');
-    return { path: relative, mode: '100644', type: 'blob', sha, content };
+    return { path: relative, mode: '100644', type: 'blob', sha, content, encoding:binary?'base64':'utf-8' };
   });
 }
 export function cli(argv) {

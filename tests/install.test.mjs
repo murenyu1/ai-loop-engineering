@@ -1,3 +1,4 @@
+import { BUNDLE as SOURCE_ROOT, runtimeContent } from '../scripts/lib.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -18,7 +19,7 @@ function fixture(t) {
   const bundle = path.join(root, '工作流 包');
   for (const name of REQUIRED_FILES) {
     fs.mkdirSync(path.dirname(path.join(bundle, name)), { recursive: true });
-    fs.copyFileSync(new URL('../' + name, import.meta.url), path.join(bundle, name));
+    fs.writeFileSync(path.join(bundle, name), runtimeContent(SOURCE_ROOT, name));
   }
   return { root, bundle, project: root, harness: 'codex', env: { HOME: path.join(root, 'personal') } };
 }

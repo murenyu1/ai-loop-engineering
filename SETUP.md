@@ -1,6 +1,8 @@
 # 配置 AI Loop Engineering
 
-Codex 4.1 全局插件优先：在源包构建 `node scripts/build-plugin.mjs`，用 `scripts/install-plugin.mjs --project ROOT` 预演、加 --apply 注册并安装。插件全局提供核心，目标只初始化 `.ai-loop/`；不适用下文“源包位于目标内部”的项目复制约束。模型用 plugin-models.mjs，global 默认、project 覆盖。安装后新会话核对技能发现、原生角色与实际模型，不把 CLI 返回安装成功当作全部加载通过。
+Codex 4.2 推荐全局插件：先读 README.md 的独立下载和管理面板说明。维护者从仓库 `node scripts/build-release.mjs` 构建；用 `scripts/install-plugin.mjs --project ROOT` 预演、加 --apply 安装。插件提供核心，目标只保存 `.ai-loop/`；不适用下文旧式“源包位于目标内部”的约束。模型面板支持 global 默认、project 覆盖；SessionStart 自动入口需要原生审核信任。安装成功不等于原生加载和实际模型已验证。
+
+以下为 adapters/project/ 保留的旧式项目安装兼容说明。仓库的共用正文现在位于 core/，根 scripts/ 是兼容命令；安装器会从权威源码生成部署，不能把兼容转发脚本单独复制到目标。通用工作流独立 ZIP 不包含这些平台安装器。
 
 Windows 下安装、生成原生角色和插件注册前做 windows.mjs inspect。受保护目录必须由正常用户宿主进程创建；检查发现 CodexSandboxOffline/Online 身份或异常 owner 时停止配置写入。不要为了安装修改 deny、关闭沙箱或批量重置 ACL。修复仅针对明确异常的目录自身，保留 SDDL 备份，再实测普通沙箱命令。
 
