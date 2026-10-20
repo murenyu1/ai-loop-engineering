@@ -1,8 +1,8 @@
-# AI Loop Codex 插件 4.3.1 本地候选
+# AI Loop Codex 插件 4.3.1
 
-本地 4.3.1 修复纯插件项目调度预检和 Windows 沙箱只读身份误报；下方既有 GitHub 下载链接不代表该候选已发布。插件预检使用 `node PLUGIN/scripts/plugin.mjs doctor --project ROOT`，兼容 `doctor.mjs` 在插件项目标记存在时也会选择插件模式。配置允许、原生发现、实际调用和模型证据分别验收。
+4.3.1 修复纯插件项目调度预检和 Windows 沙箱只读身份误报。插件预检使用 `node PLUGIN/scripts/plugin.mjs doctor --project ROOT`；兼容 `doctor.mjs` 也会识别插件项目。配置检查、原生执行、实际模型和界面分别验收。
 
-在 Codex 插件详情页直接管理 AI Loop 模型和工作区，并在不同本地项目使用同一套开发闭环、分页记忆与中断恢复流程。插件包包含运行所需核心，无需另装通用工作流。可从 [GitHub Releases](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.3.0) 单独下载 Codex 插件包。
+在 Codex 插件详情页直接管理 AI Loop 模型和工作区，并在不同本地项目使用同一套开发闭环、分页记忆与中断恢复流程。插件包包含运行所需核心，无需另装通用工作流。可从 [GitHub Releases](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.3.1) 单独下载 Codex 插件包。
 
 ## 安装
 
@@ -37,4 +37,4 @@ node scripts/install-plugin.mjs --project . --apply
 
 每个项目只保存自己的 `.ai-loop/` 运行资料。中断后可恢复已落盘的摘要、未关闭工作单元、事件和改动定位；未记录的聊天内容无法恢复。选择工作区不授予提交、发布或越权权限。Windows 受保护配置需由正常用户宿主创建；不批量调整权限。
 
-通用工作流、源码布局和已发布版本见[项目首页](https://github.com/murenyu1/ai-loop-engineering)；版本包见 [v4.3.0 Releases](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.3.0)，通用工作流与 Codex 插件可分别下载。
+通用工作流、源码布局和已发布版本见[项目首页](https://github.com/murenyu1/ai-loop-engineering)；版本包见 [v4.3.1 Releases](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.3.1)，通用工作流与 Codex 插件可分别下载。

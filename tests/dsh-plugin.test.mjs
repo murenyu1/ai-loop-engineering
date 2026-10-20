@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import { createConfig, projectKey, projectSettings, roleOptions, validateConfig, validateProjects, validateRoles } from '../plugins/dsh/config.mjs';
 
@@ -69,9 +71,18 @@ source = source.replaceAll('import.meta.url', JSON.stringify(new URL('../plugins
 const { apply } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 function fixture(settings = config()) {
-  const skills = [], contexts = [], tools = [], calls = [], pending = [], preflights = [];
+  const skills = [], contexts = [], tools = [], calls = [], pending = [], preflights = [], routes = [];
+  const connection = { requestRejection: () => undefined };
   const provider = { inheritsParentContext: false, prepareContinuable() {}, capabilities: { agentOptions: true, depthLimit: true } };
   const ctx = {
+    inject: (services, setup) => {
+      assert.deepEqual(services, ['webServer', 'connection']);
+      setup({
+        webServer: { register: route => { routes.push(route); return () => {}; } },
+        connection,
+        effect: callback => callback(),
+      });
+    },
     skills: { register: skill => skills.push(skill) },
     systemPrompt: { context: entry => contexts.push(entry) },
     tools: { register: tool => tools.push(tool) },
@@ -91,7 +102,7 @@ function fixture(settings = config()) {
   };
   apply(ctx, settings);
   const parent = { id: 'parent', session: { header: { cwd: root } }, options: { provider: 'parent-provider', model: 'parent-model', reasoningEffort: 'low' } };
-  return { ctx, skills, contexts, tools, calls, pending, preflights, parent, run: (role = 'reviewer', extra = {}) => tools[0].execute({ role, description: '审查改动', prompt: '审查 src/main.mjs 正确性。' }, { agent: parent, signal: signal(), ...extra }) };
+  return { ctx, skills, contexts, tools, calls, pending, preflights, routes, connection, parent, run: (role = 'reviewer', extra = {}) => tools[0].execute({ role, description: '审查改动', prompt: '审查 src/main.mjs 正确性。' }, { agent: parent, signal: signal(), ...extra }) };
 }
 
 test('DSH 技能与动态上下文仅提供必要恢复入口，不写入项目', () => {
@@ -103,6 +114,47 @@ test('DSH 技能与动态上下文仅提供必要恢复入口，不写入项目'
   assert.equal(f.contexts[0].text({ agent: f.parent }), '');
   const file = fs.readFileSync(new URL('../plugins/dsh/index.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(file, /writeFile|appendFile|mkdir|child_process|execFile|spawn\(/);
+  assert.doesNotMatch(file, /ops_bash|callTool\(/);
+});
+
+test('状态路由只允许精确启用项目并要求宿主请求校验', async () => {
+  const f = fixture();
+  const route = f.routes[0];
+  assert.equal(route.path, '/plugins/ai-loop-engineering/state');
+  const response = () => ({ status: 0, body: '', writeHead(code) { this.status = code; }, end(body) { this.body = body; } });
+  let res = response();
+  await route.handler({ method: 'GET', url: '/plugins/ai-loop-engineering/state?project=D%3A%2FProjects%2Fother' }, res);
+  assert.equal(res.status, 403);
+  res = response();
+  await route.handler({ method: 'POST', url: '/plugins/ai-loop-engineering/state?project=D%3A%2FProjects%2Fexample' }, res);
+  assert.equal(res.status, 405);
+  f.connection.requestRejection = () => 401;
+  res = response();
+  await route.handler({ method: 'GET', url: '/plugins/ai-loop-engineering/state?project=D%3A%2FProjects%2Fexample' }, res);
+  assert.equal(res.status, 401);
+});
+
+test('状态路由返回活动与历史运行供前端切换，工作区路径须精确启用', async () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-status-'));
+  try {
+    const loop = await import(new URL('../core/scripts/loop.mjs', import.meta.url));
+    const spec = { goal: 'route test', tasks: [{ id: 'task1', title: '验证状态路由', acceptance: ['返回状态'], review: 'none', checks: [{ id: 'check1', command: 'node --version' }] }] };
+    loop.create(project, spec, 'active-run');
+    loop.create(project, spec, 'history-run');
+    const historyState = path.join(project, '.ai-loop', 'runs', 'history-run', 'state.json');
+    const state = JSON.parse(fs.readFileSync(historyState, 'utf8'));
+    state.status = 'done';
+    fs.writeFileSync(historyState, JSON.stringify(state));
+    const f = fixture(config({ projects: [{ path: project, enabled: true }] }));
+    const res = { status: 0, body: '', writeHead(code) { this.status = code; }, end(body) { this.body = body; } };
+    await f.routes[0].handler({ method: 'GET', url: `/plugins/ai-loop-engineering/state?project=${encodeURIComponent(project)}` }, res);
+    assert.equal(res.status, 200);
+    const result = JSON.parse(res.body);
+    assert.equal(result.run_id, 'active-run');
+    assert.deepEqual(result.runs.map(row => row.run_id).sort(), ['active-run', 'history-run']);
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true });
+  }
 });
 
 test('DSH 独立评审使用原生 spawn、准确模型预检和原生生命周期', async () => {

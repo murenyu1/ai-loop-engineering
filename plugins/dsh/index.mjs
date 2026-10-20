@@ -41,6 +41,38 @@ export function apply(ctx, config) {
     }
   });
 
+  // Read-only browser route. The client uses a same-origin fetch so both the
+  // DSH browser and Electron's dsh-app:// forwarding reach the host route.
+  ctx.inject(['webServer', 'connection'], webCtx => {
+    webCtx.effect(() => webCtx.webServer.register({
+      kind: 'exact', path: '/plugins/ai-loop-engineering/state',
+      handler: async (req, res) => {
+        const rejection = webCtx.connection.requestRejection(req);
+        const send = (code, value) => {
+          res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+          res.end(JSON.stringify(value));
+        };
+        if (rejection !== undefined) return send(rejection, { error: rejection === 401 ? 'unauthorized' : 'forbidden' });
+        if (req.method !== 'GET') return send(405, { error: 'method not allowed' });
+        try {
+          const url = new URL(req.url ?? '/', 'http://dsh.internal');
+          const root = url.searchParams.get('project') ?? '';
+          if (!root || !projectSettings(config, root).enabled) return send(403, { error: '此工作区未启用 AI Loop。' });
+          const loopMod = await import(pathToFileURL(path.join(coreRoot, 'scripts', 'loop.mjs')).href);
+          const runs = loopMod.listRuns(root);
+          const run = url.searchParams.get('run');
+          if (run) return send(200, { ...loopMod.status(root, run), runs });
+          const activeRuns = runs.filter(item => item.status === 'active');
+          if (activeRuns.length === 1) return send(200, { ...loopMod.status(root, activeRuns[0].run_id), runs });
+          if (activeRuns.length === 0 && runs.length === 1) return send(200, { ...loopMod.status(root, runs[0].run_id), runs });
+          return send(200, { runs, message: runs.length === 0 ? '当前工作区暂无运行记录。' : activeRuns.length > 1 ? '存在多个活跃运行，请选择运行。' : '请选择要查看的运行。' });
+        } catch (error) {
+          return send(400, { error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+    }), 'ai-loop: read-only status route');
+  });
+
   const active = new Map();
   ctx.tools.register(defineTool({
     name: 'ai_loop_delegate',
@@ -119,6 +151,8 @@ export function apply(ctx, config) {
       const cwd = parent ? (await ctx.workingDirectory.ensure(parent, exec.signal)) : process.cwd();
       const root = args.project || parent?.session?.header?.cwd || cwd;
       try {
+        const settings = projectSettings(config, root);
+        if (!settings.enabled) throw new Error('此项目未启用 AI Loop，不能读取其运行状态。');
         const loopUrl = pathToFileURL(path.join(coreRoot, 'scripts', 'loop.mjs')).href;
         const loopMod = await import(loopUrl);
         if (!args.run) {
@@ -133,7 +167,7 @@ export function apply(ctx, config) {
         }
         return JSON.stringify(loopMod.status(root, args.run), null, 2);
       } catch (error) {
-        return JSON.stringify({ error: error.message }, null, 2);
+        return JSON.stringify({ error: error instanceof Error ? error.message : String(error) }, null, 2);
       }
     }
   }));

@@ -17,6 +17,7 @@ window.__ModuleLoader__.load({
   const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
   const clone = value => JSON.parse(JSON.stringify(value));
   const numberValid = value => Number.isInteger(value) && value >= 1 && value <= 16;
+  const phaseLabel = phase => ({ done: '已完成', developed: '等待验证', developing: '开发中', verifying: '验证中', reviewing: '评审中', needs_fix: '待修复', blocked: '阻塞', pending: '待开始' }[phase] || phase || '未知');
   const roleValid = role => object(role) && Object.keys(role).every(key => ['provider', 'model', 'reasoningEffort'].includes(key) && typeof role[key] === 'string')
     && Boolean(role.model?.trim()) === Boolean(role.provider?.trim());
   const rolesValid = roles => object(roles) && Object.entries(roles).every(([key, role]) => Object.hasOwn(ROLES, key) && roleValid(role));
@@ -231,6 +232,7 @@ window.__ModuleLoader__.load({
     taskCard: phase => {
       const colors = {
         done: 'rgba(74, 222, 128, 0.25)',
+        developed: 'rgba(96, 165, 250, 0.3)',
         developing: 'rgba(96, 165, 250, 0.35)',
         verifying: 'rgba(250, 204, 21, 0.3)',
         reviewing: 'rgba(192, 132, 252, 0.35)',
@@ -250,6 +252,7 @@ window.__ModuleLoader__.load({
     phaseBadge: phase => {
       const config = {
         done: { label: '✔ 已完成', bg: 'rgba(74, 222, 128, 0.15)', color: '#4ade80' },
+        developed: { label: '等待验证', bg: 'rgba(96, 165, 250, 0.15)', color: '#60a5fa' },
         developing: { label: '⚡ 开发中', bg: 'rgba(96, 165, 250, 0.15)', color: '#60a5fa' },
         verifying: { label: '🧪 验证中', bg: 'rgba(250, 204, 21, 0.15)', color: '#facc15' },
         reviewing: { label: '🔍 评审中', bg: 'rgba(192, 132, 252, 0.15)', color: '#c084fc' },
@@ -269,80 +272,51 @@ window.__ModuleLoader__.load({
     },
   };
 
-  function RunDashboard({ path, ctx }) {
-    const [runInfo, setRunInfo] = React.useState({ loading: false, data: null, error: null });
-    const loadStatus = React.useCallback(async () => {
-      if (!path) { setRunInfo({ loading: false, data: null, error: null }); return; }
-      setRunInfo(s => ({ ...s, loading: true }));
+  async function requestStatus(fetcher, path, run) {
+    const base = typeof document !== 'undefined' && document.baseURI ? document.baseURI : 'http://dsh.internal/';
+    const url = new URL('plugins/ai-loop-engineering/state', base);
+    url.searchParams.set('project', path);
+    if (run) url.searchParams.set('run', run);
+    const response = await fetcher(url.href, { method: 'GET', cache: 'no-store' });
+    const parsed = await response.json().catch(() => ({}));
+    if (!response.ok || parsed.error) throw new Error(parsed.error || `HTTP ${response.status}`);
+    return parsed;
+  }
+
+  function RunDashboard({ path, ctx, projects = [], onProjectChange }) {
+    const [runInfo, setRunInfo] = React.useState({ loading: false, data: null, runs: [], error: null });
+    const [run, setRun] = React.useState('');
+    const requestId = React.useRef(0);
+    const lastPath = React.useRef(null);
+    const loadStatus = React.useCallback(async (selectedRun = run) => {
+      const current = ++requestId.current;
+      if (!path) { setRunInfo({ loading: false, data: null, runs: [], error: null }); return; }
+      setRunInfo(s => ({ ...s, loading: true, error: null }));
       try {
-        // 优先使用原生只读工具 ai_loop_status，无外部命令、免沙箱审批
-        let parsed = null;
-        try {
-          const res = await ctx.remote.session.callTool('ai_loop_status', { project: path });
-          if (res) {
-            const raw = typeof res === 'string' ? res : (res.result || res.stdout || JSON.stringify(res));
-            parsed = JSON.parse(raw);
-          }
-        } catch {
-          parsed = null;
-        }
-
-        // 回退逻辑：如果原生工具未挂载，尝试通过 ops_bash 读取
-        if (!parsed) {
-          const normPath = path.replace(/\\/g, '/');
-          const script = `
-            import fs from 'node:fs';
-            import path from 'node:path';
-            const runsDir = '${normPath}/.ai-loop/runs';
-            if (!fs.existsSync(runsDir)) {
-              console.log(JSON.stringify({ error: '未初始化 .ai-loop 目录' }));
-            } else {
-              const entries = fs.readdirSync(runsDir);
-              let target = null;
-              for (const e of entries) {
-                const s = path.join(runsDir, e, 'state.json');
-                if (fs.existsSync(s)) {
-                  try {
-                    const st = JSON.parse(fs.readFileSync(s, 'utf8'));
-                    if (st.status === 'active') { target = st; break; }
-                    if (!target) target = st;
-                  } catch {}
-                }
-              }
-              if (target) {
-                console.log(JSON.stringify({
-                  run_id: target.run_id,
-                  goal: target.goal,
-                  status: target.status,
-                  tasks: (target.tasks || []).map(t => ({ id: t.id, title: t.title, phase: t.phase, fixes: t.fixes, review: t.review }))
-                }));
-              } else {
-                console.log(JSON.stringify({ error: '当前工作区暂无运行记录' }));
-              }
-            }
-          `.replace(/\n\s+/g, ' ');
-          const res = await ctx.remote.session.callTool('ops_bash', {
-            command: `node --input-type=module -e "${script.replace(/"/g, '\\"')}"`,
-            description: 'Read AI Loop Run Status',
-          });
-          parsed = JSON.parse(res?.stdout || '{}');
-        }
-
-        if (parsed.error) setRunInfo({ loading: false, data: null, error: parsed.error });
-        else if (parsed.run_id) setRunInfo({ loading: false, data: parsed, error: null });
-        else if (Array.isArray(parsed.runs) && parsed.runs.length > 0) {
-          setRunInfo({ loading: false, data: null, error: `存在 ${parsed.runs.length} 个历史运行，暂无活跃运行。` });
-        } else {
-          setRunInfo({ loading: false, data: null, error: '当前工作区暂无运行记录' });
-        }
-      } catch {
-        setRunInfo({ loading: false, data: null, error: '未检测到活跃的 AI Loop 运行' });
+        const parsed = await requestStatus(globalThis.fetch, path, selectedRun);
+        if (current !== requestId.current) return;
+        if (parsed.run_id) setRunInfo(previous => ({ loading: false, data: parsed, runs: Array.isArray(parsed.runs) ? parsed.runs : previous.runs, error: null }));
+        else if (Array.isArray(parsed.runs)) setRunInfo({ loading: false, data: null, runs: parsed.runs, error: parsed.message || null });
+        else setRunInfo({ loading: false, data: null, runs: [], error: '状态接口返回了无法识别的数据。' });
+      } catch (error) {
+        if (current === requestId.current) setRunInfo({ loading: false, data: null, runs: [], error: error instanceof Error ? error.message : String(error) });
       }
-    }, [path, ctx]);
+    }, [path, run]);
 
-    React.useEffect(() => { loadStatus(); }, [loadStatus]);
-
-    if (!path) return null;
+    React.useEffect(() => {
+      if (lastPath.current !== path) {
+        lastPath.current = path;
+        setRun('');
+        setRunInfo({ loading: Boolean(path), data: null, runs: [], error: null });
+        loadStatus('');
+      } else if (run) loadStatus(run);
+    }, [path, run, loadStatus]);
+    React.useEffect(() => {
+      if (!path) return undefined;
+      const timer = setInterval(() => loadStatus(run), 5000);
+      return () => clearInterval(timer);
+    }, [path, run, loadStatus]);
+    React.useEffect(() => () => { requestId.current++; }, []);
 
     const data = runInfo.data;
     return h('div', { style: S.dashCard },
@@ -356,12 +330,16 @@ window.__ModuleLoader__.load({
             type: 'button',
             style: S.btn(false),
             disabled: runInfo.loading,
-            onClick: loadStatus,
+            onClick: () => loadStatus(),
           }, runInfo.loading ? '正在刷新…' : '🔄 刷新看板'),
         ),
       ),
-      runInfo.error || !data ? h('div', { style: { color: 'var(--dsw-alias-label-secondary, #888)', fontSize: 13, padding: '12px 0' } },
-        runInfo.loading ? '正在加载当前运行状态…' : (runInfo.error || '当前工作区暂无活跃运行或无需展示的任务（可使用 /ai-loop 命令启动新需求）。'),
+      h('div', { style: { display: 'grid', gap: 10 } },
+        projects.length ? h('label', { style: S.label }, '工作区', h('select', { value: path, style: S.input, onChange: event => onProjectChange?.(event.target.value) }, h('option', { value: '' }, '请选择工作区'), projects.map(row => h('option', { key: row.path, value: row.path }, row.path)))) : null,
+        runInfo.runs.length ? h('label', { style: S.label }, '选择运行', h('select', { value: run, style: S.input, onChange: event => setRun(event.target.value) }, h('option', { value: '' }, '请选择运行'), runInfo.runs.map(row => h('option', { key: row.run_id, value: row.run_id }, `${row.run_id} · ${row.status || '未知'} · ${row.goal || ''}`)))) : null,
+      ),
+      !path ? h('div', { style: { color: 'var(--dsw-alias-label-secondary, #888)', fontSize: 13, padding: '12px 0' } }, '请选择一个已启用的工作区。') : runInfo.error || !data ? h('div', { style: { color: 'var(--dsw-alias-label-secondary, #888)', fontSize: 13, padding: '12px 0' } },
+        runInfo.loading ? '正在加载当前运行状态…' : (runInfo.error || '当前工作区暂无运行记录。'),
       ) : h('div', { style: { display: 'grid', gap: 14 } },
         h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center', background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.15))', padding: '10px 14px', borderRadius: 8 } },
           h('div', null,
@@ -380,16 +358,32 @@ window.__ModuleLoader__.load({
           (data.tasks || []).map(task => h('div', { key: task.id, style: S.taskCard(task.phase) },
             h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
               h('span', { style: { fontWeight: 600, fontSize: 13 } }, `${task.id}: ${task.title}`),
-              h('span', { style: S.phaseBadge(task.phase) }),
+              h('span', { style: S.phaseBadge(task.phase) }, phaseLabel(task.phase)),
             ),
             h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #888)', display: 'flex', gap: 12 } },
               h('span', null, `评审: ${task.review || 'none'}`),
               h('span', null, `修复轮次: ${task.fixes || 0}`),
+              h('span', null, `依赖: ${(task.dependencies || []).join(', ') || '无'}`),
+              h('span', null, `就绪: ${task.ready ? '是' : '否'}`),
+              task.blocked_reason ? h('span', null, `阻塞原因: ${task.blocked_reason}`) : null,
+              task.owner ? h('span', null, `负责人: ${task.owner}`) : null,
+              task.attempts ? h('span', null, `测试/评审: ${task.attempts.tester || 0}/${task.attempts.reviewer || 0}`) : null,
+              task.managed_execution ? h('span', null, '工作流管理执行') : null,
+              task.in_scope?.length ? h('span', null, `范围: ${task.in_scope.join(', ')}`) : null,
+              task.out_of_scope?.length ? h('span', null, `范围外: ${task.out_of_scope.join(', ')}`) : null,
             ),
           )),
         ),
       ),
     );
+  }
+
+  function SidebarDashboard({ controller, ctx }) {
+    const state = React.useSyncExternalStore(controller.store.subscribe, controller.store.getSnapshot, controller.store.getSnapshot);
+    const projects = state.enabled ? state.projects.filter(row => row.enabled) : [];
+    const [path, setPath] = React.useState(projects.length === 1 ? projects[0].path : '');
+    React.useEffect(() => { if (!projects.some(row => samePath(row.path, path))) setPath(projects.length === 1 ? projects[0].path : ''); }, [state.enabled, state.projects]);
+    return h(RunDashboard, { path, ctx, projects, onProjectChange: setPath });
   }
 
   function CustomSelect({ label, value, choices, onChange, disabled }) {
@@ -682,7 +676,17 @@ window.__ModuleLoader__.load({
     ctx.effect(() => ctx.configForms.whileServed([CONFIG_ID], () => ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
       name: 'plugins.bundle.config', key: PACKAGE,
     }, props => h(Card, { ...props, controller, ctx })))), 'ai-loop: plugin settings');
+    ctx.effect(() => {
+      const disposers = [];
+      disposers.push(ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+        name: 'sidebar.right.pane.tab', key: PACKAGE, inject: sessionId => ({ sessionId }),
+      }, () => h(SidebarDashboard, { controller, ctx }))));
+      disposers.push(ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
+        name: 'sidebar.right.pane.tab.title', key: PACKAGE, inject: () => ({}),
+      }, () => h('span', null, 'AI Loop'))));
+      return () => disposers.forEach(dispose => dispose?.());
+    }, 'ai-loop: right sidebar');
   }
-  return { inject: ['slots', 'configForms', 'remote', 'remote.session'], apply, Controller, samePath, rolesValid, projectsValid };
+  return { inject: ['slots', 'configForms', 'remote', 'remote.session'], apply, Controller, samePath, rolesValid, projectsValid, requestStatus, RunDashboard, SidebarDashboard, useCatalog };
 }
 });

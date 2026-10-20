@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { link } from './support.mjs';
 import os from 'node:os';
 import path from 'node:path';
-import { create, begin, snapshot, record, fix, resume, stop, complete, event, events, status, validateSpec, mail, inbox } from '../scripts/loop.mjs';
+import { create, begin, finish, snapshot, record, fix, resume, stop, complete, event, events, status, validateSpec, mail, inbox } from '../scripts/loop.mjs';
 
 function fixture(t, overrides = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-run-'));
@@ -133,7 +133,8 @@ test('依赖与同工作区串行约束', t => {
 
 test('无依赖关系的独立任务允许在开发阶段并发 developing', t => {
   const tasks = fixtureSpec(); tasks[0].review = 'none';
-  tasks.push({ ...tasks[0], id: 'task2' }); // 无依赖任务
+  tasks[0].in_scope = ['src/a'];
+  tasks.push({ ...tasks[0], id: 'task2', in_scope: ['src/b'] });
   const { root, run } = fixture(t, { tasks });
   begin(root, run, 'task1', 'development');
   assert.equal(status(root, run).tasks[0].phase, 'developing');
@@ -142,6 +143,114 @@ test('无依赖关系的独立任务允许在开发阶段并发 developing', t =
   assert.equal(status(root, run).tasks[1].phase, 'developing');
   // 但当 task1 进入验证时，必须等待环境串行收敛
   assert.throws(() => begin(root, run, 'task1', 'verification'), /其他任务正在执行/);
+});
+
+test('互斥范围任务 finish 后串行验证并完成；finish 状态和重复调用受限', t => {
+  const tasks = fixtureSpec(); tasks[0].review = 'none'; tasks[0].in_scope = ['src/a'];
+  tasks.push({ ...tasks[0], id: 'task2', in_scope: ['src/b'] });
+  const { root, run } = fixture(t, { tasks });
+  begin(root, run, 'task1', 'development');
+  begin(root, run, 'task2', 'development');
+  finish(root, run, 'task1');
+  assert.equal(status(root, run).tasks[0].phase, 'developed');
+  assert.throws(() => finish(root, run, 'task1'), /正在开发/);
+  assert.throws(() => begin(root, run, 'task1', 'verification'), /其他任务正在执行/);
+  finish(root, run, 'task2');
+  begin(root, run, 'task1', 'verification');
+  record(root, run, verification(root, run));
+  begin(root, run, 'task2', 'verification');
+  record(root, run, verification(root, run, { task_id: 'task2' }));
+  complete(root, run, { verification: verification(root, run) });
+  assert.equal(status(root, run).status, 'complete');
+  assert.throws(() => finish(root, run, 'task2'), /已完成或已停止/);
+});
+
+test('finish 拒绝非开发阶段任务，停止运行会阻塞已 finish 任务', t => {
+  const tasks = fixtureSpec(); tasks[0].review = 'none'; tasks.push({ ...tasks[0], id: 'task2' });
+  const { root, run } = fixture(t, { tasks });
+  assert.throws(() => finish(root, run, 'task1'), /正在开发/);
+  begin(root, run, 'task1', 'development');
+  finish(root, run, 'task1');
+  stop(root, run, '停止已完成开发的运行');
+  assert.equal(status(root, run).tasks[0].phase, 'blocked');
+});
+
+test('并行开发默认拒绝未知或重叠范围，状态摘要给出依赖与阻塞原因', t => {
+  const tasks = fixtureSpec(); tasks[0].review = 'none';
+  tasks.push({ ...tasks[0], id: 'task2', depends_on: ['task1'] });
+  const { root, run } = fixture(t, { tasks });
+  const waiting = status(root, run).tasks[1];
+  assert.deepEqual(waiting.dependencies, ['task1']);
+  assert.equal(waiting.ready, false);
+  assert.match(waiting.blocked_reason, /task1/);
+  begin(root, run, 'task1', 'development');
+  assert.throws(() => begin(root, run, 'task2', 'development'), /依赖/);
+  const unknown = fixtureSpec(); unknown[0].review = 'none'; unknown.push({ ...unknown[0], id: 'task2' });
+  const second = fixture(t, { tasks: unknown });
+  begin(second.root, second.run, 'task1', 'development');
+  assert.throws(() => begin(second.root, second.run, 'task2', 'development'), /未知/);
+});
+
+test('托管执行要求当前角色 attempt，拒绝缺失及过期报告，旧契约兼容', t => {
+  const tasks = fixtureSpec(); tasks[0].managed_execution = true;
+  const { root, run } = fixture(t, { tasks });
+  begin(root, run, 'task1', 'development');
+  begin(root, run, 'task1', 'verification');
+  assert.throws(() => record(root, run, verification(root, run)), /attempt/);
+  const current = verification(root, run, { attempt: 1 });
+  record(root, run, current);
+  begin(root, run, 'task1', 'verification');
+  assert.throws(() => record(root, run, current), /attempt/);
+  const fresh = verification(root, run, { attempt: 2 });
+  record(root, run, fresh);
+  assert.equal(status(root, run).tasks[0].phase, 'done');
+});
+
+test('托管批次在 BLOCKED、resume、fix 后递增，拒绝旧 tester 和 reviewer 报告', t => {
+  const tasks = fixtureSpec(); tasks[0].review = 'self'; tasks[0].managed_execution = true;
+  const { root, run } = fixture(t, { tasks });
+  begin(root, run, 'task1', 'development');
+  begin(root, run, 'task1', 'verification');
+  const blocked = verification(root, run, { attempt: 1, status: 'BLOCKED', issues: ['环境未就绪'] });
+  record(root, run, blocked);
+  resume(root, run, 'task1', '验证环境已就绪');
+  begin(root, run, 'task1', 'verification');
+  assert.equal(status(root, run).tasks[0].attempts.tester, 2);
+  assert.throws(() => record(root, run, blocked), /阶段|attempt/);
+  record(root, run, verification(root, run, { attempt: 2 }));
+
+  begin(root, run, 'task1', 'review');
+  assert.throws(() => record(root, run, review(root)), /attempt/);
+  const rejected = review(root, { attempt: 1, status: 'REJECTED', issues: ['需修复'] });
+  record(root, run, rejected);
+  fix(root, run, 'task1');
+  begin(root, run, 'task1', 'verification');
+  record(root, run, verification(root, run, { attempt: 3 }));
+  begin(root, run, 'task1', 'review');
+  assert.equal(status(root, run).tasks[0].attempts.reviewer, 2);
+  assert.throws(() => record(root, run, rejected), /阶段|attempt/);
+  record(root, run, review(root, { attempt: 2 }));
+});
+
+test('范围目录斜杠、Windows 大小写与跨平台盘符路径校验', t => {
+  const tasks = fixtureSpec(); tasks[0].review = 'none'; tasks[0].in_scope = ['src/a/'];
+  tasks.push({ ...tasks[0], id: 'task2', in_scope: ['SRC/A/child'] });
+  const { root, run } = fixture(t, { tasks });
+  begin(root, run, 'task1', 'development');
+  assert.throws(() => begin(root, run, 'task2', 'development'), /范围/);
+  const invalid = fixtureSpec(); invalid[0].in_scope = ['C:/src/a'];
+  assert.throws(() => validateSpec({ goal: '范围路径', tasks: invalid }), /相对路径/);
+});
+
+test('停止运行后 pending 任务不能标记 ready', t => {
+  const tasks = fixtureSpec(); tasks[0].review = 'none'; tasks.push({ ...tasks[0], id: 'task2' });
+  const { root, run } = fixture(t, { tasks });
+  begin(root, run, 'task1', 'development');
+  stop(root, run, '停止检查 ready');
+  const summary = status(root, run);
+  assert.equal(summary.tasks[1].phase, 'pending');
+  assert.equal(summary.tasks[1].ready, false);
+  assert.match(summary.tasks[1].blocked_reason, /stopped/);
 });
 
 test('其他任务正在开发时不能并发评审；过期任务可以重新验证但不清零计数', t => {

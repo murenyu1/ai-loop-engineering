@@ -1,3 +1,10 @@
+# AI Loop Engineering 4.4.0（本地候选）
+
+- 共享核心增加可选任务归属、文件范围及托管验证/评审批次；拒收旧报告，未声明互斥范围时不并行开发，状态摘要包含依赖、就绪和阻塞原因。旧记录兼容。
+- Codex 与通用角色同步任务包、批次、恢复和接管约束，保留真实独立评审、快照证据及修复上限。
+- DSH 使用受鉴权的只读状态路由与右侧栏面板，支持多运行选择、自动刷新与过期响应丢弃；移除 shell 状态回退并保留模型目录设置依赖，原生验收边界见 `docs/development/workflow-sync.md`。
+- 建立 Git 本地源码基线、共享开发交接、只读 dev-status 命令和安全发行清单；修复二进制安装包的 Git 文本归一化规则。远端网络不可达，未同步或发布。
+
 # AI Loop Engineering 4.3.1
 
 - 修复 DSH 插件无法激活：`ai_loop_status` 参数声明里的 `required: false` 被宿主 JSON Schema 编译拒绝（`JsonSchemaError: unsupported JSON schema: parameters.project.required must be true when present`），改为省略该字段；测试桩同步按宿主规则校验参数声明，防止回归。

@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { BUNDLE, VERSION, assert, safePath, args, allowArgs, mainModule, printResult } from './lib.mjs';
 
-const directories = ['core', 'adapters/project', 'scripts', 'tests', 'plugins/codex', 'dist/codex', 'plugins/dsh', 'dist/dsh'];
+const directories = ['core', 'adapters/project', 'scripts', 'tests', 'plugins/codex', 'dist/codex', 'plugins/dsh', 'dist/dsh', 'docs/development'];
 const files = ['.gitignore', '.gitattributes', 'AGENTS.md', 'CLAUDE.md', 'README.md', 'SETUP.md', 'CHANGES.md'];
 const extensions = /\.(?:md|mjs|js|json|yaml|yml|toml|ps1|html|css)$/;
 export function publishFiles() {

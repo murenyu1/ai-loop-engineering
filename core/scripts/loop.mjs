@@ -5,6 +5,8 @@ import { VERSION, BUNDLE, assert, validId, inside, rootPath, safePath, jsonFile,
 
 const now = () => new Date().toISOString();
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
+const scopePath = value => value.replace(/\/+$/, '').toLowerCase();
+const validRelativeScope = value => nonempty(value) && !path.isAbsolute(value) && !/^[a-z]:\//i.test(value) && !value.includes('\\') && !value.replace(/\/+$/, '').split('/').some(part => !part || part === '.' || part === '..');
 const validRevision = value => value?.algorithm === 'sha256' && typeof value.digest === 'string' && /^[a-f0-9]{64}$/.test(value.digest) && Number.isInteger(value.files) && value.files >= 0;
 const sameRevision = (a, b) => a?.algorithm === 'sha256' && b?.algorithm === 'sha256' && a.digest === b.digest && a.files === b.files;
 
@@ -19,6 +21,13 @@ export function validateSpec(input) {
     identifiers.add(task.id);
     assert(nonempty(task.title) && Array.isArray(task.acceptance) && task.acceptance.length && task.acceptance.every(nonempty), '每个任务需要 title 和非空 acceptance');
     assert(['none', 'self', 'independent'].includes(task.review), '每个任务必须明确 review：none / self / independent');
+    if (task.owner !== undefined) assert(nonempty(task.owner), 'owner 须为非空字符串');
+    for (const field of ['in_scope', 'out_of_scope']) if (task[field] !== undefined) {
+      assert(Array.isArray(task[field]) && task[field].length > 0, `${field} 须为非空相对路径数组`);
+      for (const item of task[field]) assert(validRelativeScope(item), `${field} 路径须为规范项目相对路径`);
+      assert(new Set(task[field].map(scopePath)).size === task[field].length, `${field} 路径不能重复`);
+    }
+    assert(task.managed_execution === undefined || typeof task.managed_execution === 'boolean', 'managed_execution 须为布尔值');
     assert(Array.isArray(task.checks) && task.checks.length, '每个任务至少声明一项必需检查；不能空检查通过');
     const checks = new Set();
     for (const check of task.checks) {
@@ -122,14 +131,35 @@ function load(root, run) {
   const spec = validateSpec(jsonFile(files.spec));
   assert(state.spec_hash === crypto.createHash('sha256').update(JSON.stringify(spec)).digest('hex'), '运行方案已被直接改写；先批准新方案并创建新运行');
   assert(state.max_fixes === spec.max_fixes && state.goal === spec.goal && state.tasks.length === spec.tasks.length, '状态与批准方案不一致');
-  const phases = ['pending', 'developing', 'verifying', 'tested', 'reviewing', 'done', 'needs_fix', 'blocked'];
+  const phases = ['pending', 'developing', 'developed', 'verifying', 'tested', 'reviewing', 'done', 'needs_fix', 'blocked'];
   for (const [index, task] of state.tasks.entries()) {
     assert(task.id === spec.tasks[index].id && task.review === spec.tasks[index].review && Number.isInteger(task.fixes) && task.fixes >= 0 && task.fixes <= spec.max_fixes && phases.includes(task.phase), '任务状态或修复计数无效');
   }
   return { files, state, spec };
 }
-function summary(state) {
-  return { run_id: state.run_id, goal: state.goal, status: state.status, stop_reason: state.stop_reason, event_seq: state.event_seq, tasks: state.tasks.map(task => ({ id: task.id, title: task.title, phase: task.phase, fixes: task.fixes, review: task.review, verification: task.verification, assessment: task.assessment, reason: task.reason })) };
+function overlaps(a, b) {
+  return a.some(rawLeft => b.some(rawRight => {
+    const left = scopePath(rawLeft), right = scopePath(rawRight);
+    return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+  }));
+}
+function canDevelopTogether(a, b, definitions) {
+  const left = definitions.find(item => item.id === a.id), right = definitions.find(item => item.id === b.id);
+  return Array.isArray(left?.in_scope) && left.in_scope.length > 0 && Array.isArray(right?.in_scope) && right.in_scope.length > 0 && !overlaps(left.in_scope, right.in_scope);
+}
+function summary(state, definitions = []) {
+  const tasks = state.tasks.map(task => {
+    const definition = definitions.find(item => item.id === task.id) || {};
+    const dependencies = definition.depends_on || [];
+    const unfinished = dependencies.filter(id => state.tasks.find(item => item.id === id)?.phase !== 'done');
+    const active = state.tasks.filter(item => item.id !== task.id && ['developing', 'verifying', 'reviewing'].includes(item.phase));
+    const activeBlocker = active.find(item => item.phase !== 'developing' || !canDevelopTogether(task, item, definitions));
+    const blockedReason = task.phase === 'pending' && unfinished.length ? `依赖任务尚未通过：${unfinished.join(', ')}` : task.phase === 'pending' && activeBlocker ? `任务 ${activeBlocker.id} 正在执行且范围未确认互斥` : task.phase === 'blocked' || task.phase === 'needs_fix' ? task.reason || task.phase : null;
+    const ready = state.status === 'active' && task.phase === 'pending' && unfinished.length === 0 && !activeBlocker;
+    const closedReason = task.phase === 'pending' && state.status !== 'active' ? `运行状态为 ${state.status}` : blockedReason;
+    return { id: task.id, title: task.title, owner: definition.owner, in_scope: definition.in_scope, out_of_scope: definition.out_of_scope, managed_execution: definition.managed_execution === true, attempts: task.attempts || null, dependencies, ready, blocked_reason: closedReason, phase: task.phase, fixes: task.fixes, review: task.review, verification: task.verification, assessment: task.assessment, reason: task.reason };
+  });
+  return { run_id: state.run_id, goal: state.goal, status: state.status, stop_reason: state.stop_reason, event_seq: state.event_seq, tasks };
 }
 function persist(root, files, state, type, detail) {
   state.updated_at = now();
@@ -209,7 +239,7 @@ export function create(project, input, requestedId) {
     atomicWrite(safePath(root, `.ai-loop/runs/${run}/plan.md`), `# ${spec.goal}\n\n本文件记录方案；执行状态以 state.json 为准。创建运行前由 AI 核对用户批准范围。\n\n${spec.tasks.map(task => `## ${task.id}：${task.title}\n\n- 验收：${task.acceptance.join('；')}\n- 依赖：${(task.depends_on || []).join(', ') || '无'}\n- 评审：${task.review}\n- 检查：${task.checks.map(check => check.id).join(', ')}\n`).join('\n')}`);
     atomicWrite(safePath(root, `.ai-loop/runs/${run}/session.md`), '# 会话交接\n\n- 用户意图：见 spec.json 的 goal\n- 当前进度：运行 status 命令获取，不在此复制计数\n- 已确认决策：由 AI 按需补充\n- 未决问题：无\n- 下一步：开始首个无依赖任务\n');
     persist(root, files, state, 'created', { revision });
-    return summary(state);
+    return summary(state, spec.tasks);
   });
 }
 
@@ -223,20 +253,35 @@ export function begin(project, run, id, phase) {
       assert(task.phase === 'pending', '修复须使用 fix 命令，不能通过 begin 重置轮数');
       assert((definition.depends_on || []).every(dependency => taskOf(state, dependency).phase === 'done'), '依赖任务尚未通过');
       assert(state.tasks.every(item => item.id === id || !['verifying', 'reviewing'].includes(item.phase)), '已有任务正在验证或评审，开发须等待证据收敛');
+      for (const other of state.tasks.filter(item => item.id !== id && item.phase === 'developing')) assert(canDevelopTogether(task, other, spec.tasks), '并行开发须声明互不重叠的 in_scope；未知范围默认串行');
+      if (definition.managed_execution) task.attempts ||= { tester: 0, reviewer: 0 };
       task.phase = 'developing';
     } else if (phase === 'verification') {
-      assert(['developing', 'tested', 'done'].includes(task.phase), '只能验证正在开发、已测或已完成的任务；FAIL 后须先 fix');
+      assert(['developing', 'developed', 'tested', 'done'].includes(task.phase), '只能验证已完成开发、已测或已完成的任务；FAIL 后须先 fix');
       assert(state.tasks.every(item => item.id === id || !['developing', 'verifying', 'reviewing'].includes(item.phase)), '快照证据须保证环境稳定串行：其他任务正在执行');
       task.phase = 'verifying'; task.verification = null; task.assessment = null;
+      if (definition.managed_execution) { task.attempts ||= { tester: 0, reviewer: 0 }; task.attempts.tester++; }
     } else {
       assert(task.phase === 'tested' && task.review !== 'none', '评审需要有效测试结果且任务声明需要评审');
       assert(state.tasks.every(item => item.id === id || !['developing', 'verifying', 'reviewing'].includes(item.phase)), '评审证据须保证环境稳定串行：其他任务正在执行');
       assert(sameRevision(task.verification?.revision, snapshot(root, spec.ignore_paths)), '测试证据已过期，请先重新验证');
       task.phase = 'reviewing';
+      if (definition.managed_execution) { task.attempts ||= { tester: 0, reviewer: 0 }; task.attempts.reviewer++; }
     }
     task.reason = null;
     persist(root, files, state, 'begin', { task_id: id, phase });
-    return summary(state);
+    return summary(state, spec.tasks);
+  });
+}
+
+export function finish(project, run, id) {
+  const root = rootPath(project);
+  return mutable(root, run, ({ files, state, spec }) => {
+    const task = taskOf(state, id);
+    assert(task.phase === 'developing', 'finish 仅适用于正在开发的任务');
+    task.phase = 'developed';
+    persist(root, files, state, 'finish', { task_id: id });
+    return summary(state, spec.tasks);
   });
 }
 
@@ -245,13 +290,14 @@ export function record(project, run, report) {
   return mutable(root, run, ({ files, state, spec }) => {
     assert(report && (report.role === 'tester' || report.role === 'reviewer'), '报告 role 须为 tester / reviewer');
     const task = taskOf(state, report.task_id);
+    const definition = spec.tasks.find(item => item.id === task.id);
     assert(task.phase === (report.role === 'tester' ? 'verifying' : 'reviewing'), '报告与当前任务阶段不符');
+    if (definition.managed_execution) assert(Number.isInteger(report.attempt) && report.attempt === task.attempts?.[report.role], '托管任务报告缺少当前 attempt 或已过期');
     const statuses = report.role === 'tester' ? ['PASS', 'FAIL', 'BLOCKED'] : ['APPROVED', 'REJECTED', 'BLOCKED'];
     assert(statuses.includes(report.status), '报告判定无效');
     const blocked = report.status === 'BLOCKED';
     const revision = blocked ? report.revision : snapshot(root, spec.ignore_paths);
     validateReport(report, blocked ? null : revision);
-    const definition = spec.tasks.find(item => item.id === task.id);
     if (report.status === 'PASS') checkEvidence(report, definition.checks, files.directory);
     if (report.status === 'APPROVED') {
       assert(sameRevision(task.verification?.revision, revision), '评审对应的测试已过期');
@@ -259,7 +305,7 @@ export function record(project, run, report) {
     }
     if (['FAIL', 'REJECTED', 'BLOCKED'].includes(report.status)) assert(report.issues.length || report.findings?.length, '失败或阻塞结果须说明问题');
     const reportPath = saveReport(root, files, state, report);
-    const result = { status: report.status, execution: report.execution, revision, revision_confirmed: !blocked, report: reportPath };
+    const result = { status: report.status, execution: report.execution, attempt: report.attempt, revision, revision_confirmed: !blocked, report: reportPath };
     if (report.role === 'tester') task.verification = result;
     else task.assessment = result;
     if (report.status === 'PASS') task.phase = task.review === 'none' ? 'done' : 'tested';
@@ -272,47 +318,47 @@ export function record(project, run, report) {
       state.stop_reason = report.issues.join('; ') || task.reason;
     }
     persist(root, files, state, 'report', { task_id: task.id, role: report.role, status: report.status, report: reportPath });
-    return summary(state);
+    return summary(state, spec.tasks);
   });
 }
 
 export function fix(project, run, id) {
   const root = rootPath(project);
-  return mutable(root, run, ({ files, state }) => {
+  return mutable(root, run, ({ files, state, spec }) => {
     const task = taskOf(state, id);
     assert(task.phase === 'needs_fix', '只能修复被测试或评审拒绝的任务；阻塞需先解决条件');
     assert(task.fixes < state.max_fixes, '修复已达上限，停止并向用户报告，不能重置或静默新开运行');
-    assert(state.tasks.every(item => item.id === id || !['developing', 'verifying', 'reviewing'].includes(item.phase)), '默认串行：其他任务正在执行');
+    assert(state.tasks.every(item => item.id === id || !['developing', 'verifying', 'reviewing'].includes(item.phase) || item.phase === 'developing' && canDevelopTogether(task, item, spec.tasks)), '默认串行：其他任务正在执行或范围未知');
     task.fixes++; task.phase = 'developing'; task.verification = null; task.assessment = null;
     persist(root, files, state, 'fix', { task_id: id, fixes: task.fixes });
-    return summary(state);
+    return summary(state, spec.tasks);
   });
 }
 
 export function resume(project, run, id, reason) {
   const root = rootPath(project);
-  return mutable(root, run, ({ files, state }) => {
+  return mutable(root, run, ({ files, state, spec }) => {
     const task = taskOf(state, id);
     assert(task.phase === 'blocked' && nonempty(reason), '仅可在明确解决阻塞条件后恢复，并提供 reason');
-    assert(state.tasks.every(item => item.id === id || !['developing', 'verifying', 'reviewing'].includes(item.phase)), '默认串行：其他任务正在执行');
+    assert(state.tasks.every(item => item.id === id || !['developing', 'verifying', 'reviewing'].includes(item.phase) || item.phase === 'developing' && canDevelopTogether(task, item, spec.tasks)), '默认串行：其他任务正在执行或范围未知');
     task.phase = 'developing'; task.verification = null; task.assessment = null; task.reason = null;
     persist(root, files, state, 'resumed', { task_id: id, reason });
-    return summary(state);
+    return summary(state, spec.tasks);
   });
 }
 
 export function stop(project, run, reason) {
   const root = rootPath(project);
   assert(nonempty(reason), '停止运行须提供明确 reason');
-  return mutable(root, run, ({ files, state }) => {
+  return mutable(root, run, ({ files, state, spec }) => {
     state.status = 'stopped'; state.stop_reason = reason;
     for (const task of state.tasks) {
-      if (['developing', 'verifying', 'reviewing'].includes(task.phase)) {
+      if (['developing', 'developed', 'verifying', 'reviewing'].includes(task.phase)) {
         task.phase = 'blocked'; task.reason = reason;
       }
     }
     persist(root, files, state, 'stopped', { reason });
-    return summary(state);
+    return summary(state, spec.tasks);
   });
 }
 
@@ -336,7 +382,7 @@ export function complete(project, run, input) {
     const review = requiresReview ? saveReport(root, files, state, { ...input.review, task_id: undefined }) : null;
     state.status = 'complete'; state.delivery = { revision, verification, review };
     persist(root, files, state, 'complete', { revision, verification, review });
-    return summary(state);
+    return summary(state, spec.tasks);
   });
 }
 
@@ -457,14 +503,15 @@ export function status(project, run) {
       assert(false, candidates ? `缺少 --run 参数，可选的运行编号：${candidates}` : '未找到任何运行记录，请先使用 create 命令创建运行');
     }
   }
-  return summary(load(root, run).state);
+  const loaded = load(root, run);
+  return summary(loaded.state, loaded.spec.tasks);
 }
 export function cli(argv) {
   const options = args(argv);
   allowArgs(options, ['project', 'run', 'task', 'phase', 'input', 'reason', 'after', 'limit', 'role', 'after_id', 'help']);
   const [command] = options._;
   assert(options._.length <= 1, '只能指定一个命令');
-  if (options.help || !command) return { commands: 'create / begin / snapshot / record / fix / resume / stop / status / event / events / progress / complete / mail / inbox', usage: 'node scripts/loop.mjs COMMAND --project ROOT [--run ID] [--task ID] [--input FILE]' };
+  if (options.help || !command) return { commands: 'create / begin / finish / snapshot / record / fix / resume / stop / status / event / events / progress / complete / mail / inbox', usage: 'node scripts/loop.mjs COMMAND --project ROOT [--run ID] [--task ID] [--input FILE]' };
   const input = () => {
     assert(typeof options.input === 'string', '此命令需要 --input JSON文件');
     const root = options.project ? rootPath(options.project) : process.cwd();
@@ -472,6 +519,7 @@ export function cli(argv) {
   };
   if (command === 'create') return create(options.project, input(), options.run);
   if (command === 'begin') return begin(options.project, options.run, options.task, options.phase);
+  if (command === 'finish') return finish(options.project, options.run, options.task);
   if (command === 'snapshot') {
     const root = rootPath(options.project);
     return snapshot(root, options.run ? load(root, options.run).spec.ignore_paths : []);

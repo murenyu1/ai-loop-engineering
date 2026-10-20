@@ -1,8 +1,8 @@
 # AI Loop Engineering
 
-4.3.1 修复纯插件项目调度预检和 Windows 沙箱只读身份误报。插件预检使用 `node PLUGIN/scripts/plugin.mjs doctor --project ROOT`；兼容 `doctor.mjs` 也会识别插件项目。配置检查、原生执行、实际模型和界面分别验收。
+4.4.0 本地候选增加跨平台任务契约、DSH 工作流面板与 Git 交接。候选源码与下列已发布版本分开；真实宿主验收和远端同步状态见 [当前交接](docs/development/workflow-sync.md)。
 
-让 AI 按“计划 → 开发 → 验证 → 评审 → 交接”推进项目，并从已保存的记录恢复中断任务。当前版本为 **4.3.1**，通用核心需要 Node.js 18+，不依赖第三方 npm 包；原生插件使用对应宿主提供的运行接口。
+让 AI 按“计划 → 开发 → 验证 → 评审 → 交接”推进项目，并从已保存的记录恢复中断任务。当前源码候选版本为 **4.4.0**，通用核心需要 Node.js 18+，不依赖第三方 npm 包；原生插件使用对应宿主提供的运行接口。
 
 ## 选择适合你的版本
 
@@ -92,3 +92,6 @@ node scripts/publish-files.mjs --list
 Windows 配置写入前会检查所有者，避免由 CodexSandboxOffline/Online 身份创建受保护配置。请从正常用户终端运行配置入口；不改 `settings.json`，不批量重置 ACL。已有异常需用 `windows.mjs inspect` 定位，再只对确认异常的目录做有备份的精确修复；插件不能保证操作系统或其他程序永远不产生权限问题。
 
 旧项目安装和迁移见 [SETUP.md](SETUP.md)，版本记录见 [CHANGES.md](CHANGES.md)。文件完整性、插件详情页可见性、钩子信任、原生角色发现和真实模型调用分别验收。
+## 两端维护与接手
+
+DSH、Codex 与通用工作流共享 `core/`。源码维护与跨客户端交接从 [开发入口](docs/development/README.md) 开始；在仓库根执行 `node scripts/dev-status.mjs` 查看本地版本。`.ai-loop/` 保存本机运行资料，共享决策和验证摘要随 Git 提交。首次远端历史接续尚待联网完成，具体限制见开发入口。

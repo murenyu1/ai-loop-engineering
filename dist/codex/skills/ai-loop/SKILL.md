@@ -18,4 +18,6 @@ description: 用户要求使用 AI Loop 工作流开发、验证、评审、记�
 
 插件命令：`scripts/plugin.mjs init|doctor --project ROOT`；运行/交接接口见 `scripts/README.md`。模型与强度选择、全局默认、项目覆盖和恢复默认使用同插件 ai-loop-models 技能。安装一次不代表每个聊天强制加载，也不授予额外权限。
 
+任务调度使用共享核心的 owner、in_scope/out_of_scope、dependencies 与 ready/blocked_reason；范围未知不并行写入。新任务选择 managed_execution 时，tester/reviewer 报告必须带核心当前角色 attempt 和代码 revision。先确认旧执行者停止再接管，不能只重派。磁盘 mail/inbox 保存语义交接，不替代原生消息、任务状态或真实独立评审。
+
 插件设置直接读取 Codex 本机工作区列表，用户选择只读，应用开关后才保存启用状态，新工作区默认停用；不要求手填路径或单独登记。受信任的 SessionStart 钩子仅为用户启用的精确根目录提供恢复入口，不负责候选发现。必须尊重新命令意图，先恢复必要资料再行动。首次使用恢复入口需在 Codex 原生 `/hooks` 审核并信任钩子，不修改信任缓存或绕过审核。插件设置的实际显示与点击保存仍需在客户端页面验收，不能以自动测试代替。
