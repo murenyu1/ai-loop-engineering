@@ -1,9 +1,9 @@
 {
-  "version": "4.3.0",
+  "version": "4.3.1",
   "files": [
     {
       "path": ".codex-plugin/plugin.json",
-      "hash": "36b3aa30a5dd67ca9b9cb14e24d0cf5cb9a7365e723d0ffba5221037dc3cea14"
+      "hash": "ba0f3470d7decf65c7c26e2a8a5ea83903dbce4a3e024c0897412d588275dcb5"
     },
     {
       "path": ".mcp.json",
@@ -47,15 +47,15 @@
     },
     {
       "path": "plugin.json",
-      "hash": "cf8bc3f9b1a12c07bb67db3961243924199304c4ea79f60a6c3d1d708c0438cc"
+      "hash": "fb9e7185b4094b6a83ee9a0322f3eeaea17e9b59e48c185c53ce238a593830d5"
     },
     {
       "path": "README.md",
-      "hash": "017d930fe23c53685745ec4f70a0c9980437673f1a1f10cc1b3d940a8d6ca07c"
+      "hash": "3a859b282110f62cdd5d95a804ff212bf779088e1a94415fbe95a306bd580de5"
     },
     {
       "path": "ROUTING.md",
-      "hash": "4fbdf9bd2e292af9900a403f9efd0427727e58d3dfff99794bd6ffa2c770d908"
+      "hash": "9a4222182d1b1235881f216ec9a3fc253d7b946c44297c79cd36ca855456434a"
     },
     {
       "path": "scripts/adapters.mjs",
@@ -75,7 +75,7 @@
     },
     {
       "path": "scripts/doctor.mjs",
-      "hash": "0d5c6061a5b4f69525a26b24be0ffc515d68b0518ac1f954d7abaea97664721a"
+      "hash": "dff7edf600f2870d71a766cfb97b9331500a7d5370695f8da7f23c64bf474f6e"
     },
     {
       "path": "scripts/executable.mjs",
@@ -83,7 +83,7 @@
     },
     {
       "path": "scripts/install-plugin.mjs",
-      "hash": "e6896def2af914b704f5f4d83cfbacd4aea20f82394e8aea8a365e47f9fdec06"
+      "hash": "1057afc3ec3bf9b8f7950108d11088ffd7cfd6760c1c94995c23ba4887f6d675"
     },
     {
       "path": "scripts/install.mjs",
@@ -91,7 +91,7 @@
     },
     {
       "path": "scripts/lib.mjs",
-      "hash": "f662ceddc5ddd4872f57b93e3b01112b7c76c49a4be6028e0455ff23c47ceddd"
+      "hash": "5e3cceb8c8c2e53d7d4c45533dcf1f0b5bcc9709cb550af1fd5d8f7f78db79ca"
     },
     {
       "path": "scripts/loop.mjs",
@@ -115,7 +115,7 @@
     },
     {
       "path": "scripts/native-settings.mjs",
-      "hash": "d9bd0629061a0ab4786715faf1e93c175b9998953a7dfd09fb047cedbed25d04"
+      "hash": "3307e527ca85f2e6837abf05f4558fc980647a3ed5563b134218e35eb76e2c77"
     },
     {
       "path": "scripts/plugin-models.mjs",
@@ -123,11 +123,11 @@
     },
     {
       "path": "scripts/plugin.mjs",
-      "hash": "fc30f270ac38fafdd140ae96448b79cd9160197117636319b2c4748f6350871f"
+      "hash": "4df6c4ccc6fc90ad17ec4cd24cb1b216a41e94a122d1732e03b934a2223faabc"
     },
     {
       "path": "scripts/profiles.mjs",
-      "hash": "d1b49c7e7981cc1755caee0a7f9957cf6bae601a4128867ce00269ae2f1440f8"
+      "hash": "0754111fddb498f3cfbb3d3565d22617e3b1e4692a08885c7dbfd8db52c07127"
     },
     {
       "path": "scripts/README.md",
@@ -143,7 +143,7 @@
     },
     {
       "path": "scripts/settings-server.mjs",
-      "hash": "d5243ef640d37b88cf1bf648a755511b2d32b4e149c602127fd2b2680372f090"
+      "hash": "37b621fa06faecda497c577217d3fe23719fe66c7466e8f384aa1c862ca4ddb8"
     },
     {
       "path": "scripts/source.mjs",
@@ -155,7 +155,7 @@
     },
     {
       "path": "scripts/windows.mjs",
-      "hash": "a32c3f6c1ee86116fbcde0d8b515a0323b181a3a90388e97e9a0997aa7500f61"
+      "hash": "e208e04e32ef5b45b0a2b5967cc5e5eb4cb5802184ff4decefe794be53565a84"
     },
     {
       "path": "scripts/workspaces.mjs",

@@ -42,7 +42,7 @@ export function installPlugin(project, options = {}) {
   }
   stage(marketplaceFile, marketplaceContent);
   if (!options.apply) return { status: 'dry-run', changes: changes.map(item => item.path), removed, native_commands: ['codex plugin marketplace add LOCAL_MARKETPLACE --json', 'codex plugin add ai-loop-engineering@ai-loop-engineering --json'], scope: 'global-user', settings_json: 'unchanged' };
-  const owners = inspectWindows(root, { home });
+  const owners = inspectWindows(root, { home, purpose: 'configure' });
   assert(['ready', 'not-windows'].includes(owners.status), '所有者预检未通过；请在正常用户宿主进程安装插件，不在沙箱账户下写入受保护配置');
   for (const item of changes) atomicWrite(item.path, item.content);
   for (const file of removed) fs.unlinkSync(file);

@@ -1,35 +1,22 @@
 # 插件原生代理调度
 
-模型与强度从 plugin-models.mjs status 读取；不在此复制个人配置。
+插件模式仅从已安装插件读取核心、技能与角色。项目内保存 .ai-loop 资料，不要求旧版 install.json、项目 .codex 工作流副本或 .agents 技能。
 
-## 调度与上下文
+## 派发前检查
 
-本工作流明确要求：已批准的 standard/full 任务使用原生 loop-* 子代理执行开发、验证和必要评审。主代理负责需求、计划、调度、难点定位、证据与最终验收；简单 lite 任务可直接处理，不为每个机械步骤启动代理。子代理不得继续派发。最多同时运行配置中的并发数；同一工作区开发、测试与评审按依赖串行，只读研究可安全并行。
+1. 从当前插件执行 scripts/plugin.mjs doctor --project ROOT。结果 dispatch=blocked 时停止，报告 issues 与 windows.issues，不换入口绕过。scripts/doctor.mjs 在有效插件项目标记下也会走相同检查。
+2. doctor 校验插件摘要、全局模型或项目覆盖与目录实际所有者。只读检查可在 CodexSandboxOffline/Online 下执行；其 warnings 仅提醒配置写入须回到正常宿主用户。真实目录所有者异常和 ACL 不可读仍会阻断。正常沙箱身份不等于所有者异常，不据此重置权限。
+3. dispatch=requires-native-verification 仅说明配置允许进入原生验收。检查当前原生工具能否选择对应 loop-*；不可用就报告并等待原生重载，不用通用角色或独立 CLI 冒充当前会话子代理。
+4. 模型与强度从 scripts/plugin-models.mjs status --project ROOT 读取；固定角色配置优先，不声称派发参数必定覆盖。实际模型、执行结果和界面分别记录，未知保持 unverified。
 
-启用分工时同时生成原生 ai-loop 技能：Codex `.agents/skills/ai-loop/SKILL.md`，Claude Code `.claude/skills/ai-loop/SKILL.md`。该技能明确请求原生委派，避免仅列出角色却没有调用要求。新会话可显式调用 Codex `$ai-loop` 或 Claude Code `/ai-loop`；也可直接要求“使用原生子代理按 AI Loop 工作流完成任务”。
+## 分工与运行
 
-先运行本部署 `scripts/doctor.mjs --project ROOT --harness HARNESS`；有 CLI 时加 `--probe --native` 检查真实配置层/provider，dispatch=blocked 时停止派发。再用原生工具确认角色已发现。Codex 选择 loop-* 原生角色；只有工具明确支持模型参数且未加载固定角色配置时才显式传入模型/强度，使用新上下文与完整任务包，不依赖全历史 fork 后换模型。Claude Code 使用 Agent/Task 等当前客户端实际提供的原生工具选择对应 subagent_type，不能仅靠 prompt 自称角色，也不以 Bash 启动独立 CLI 代替当前会话的原生子代理。禁止静默降级为同代理自检，独立评审要求不变。
+主代理负责需求、计划、调度、难点与最终验收。standard/full 的已批准任务使用原生 loop-* 分工；lite 可由主代理处理。子代理不继续派发。同一工作区开发、测试、评审依次执行，只读任务可安全并行，遵守配置并发上限。
 
-派发任务包包含：项目绝对路径、角色与运行路径、任务编号、目标、批准范围、必要用户/项目/技能规则、输入路径与摘要、依赖、revision、验收命令。只返回角色 JSON 摘要与证据路径，长日志存文件；不复制整段聊天、全部角色和历史。
+任务包包含项目绝对路径、插件角色路径、目标、批准范围、必要项目规则、输入与验收。派发后记录真实原生标识并等待结果；客户端没有关闭接口时不把关闭作为验收条件，不用 interrupt 冒充关闭。原生工具状态为实时依据，agents.mjs 台账只记录最后观察。
 
-## 用户选择与中途切换
+## 配置与切换
 
-安装前展示 main/planner/reviewer/dev/tester/scribe 各自模型、强度与并发数，询问使用预设还是逐项自定义。不能把推荐值说成已确认值。可用本部署 `models.mjs configure` 的逐项问答，或由 AI 收集选择后提供 JSON；非交互调用必须明确给 preset/input。
+模型设置通过插件 ai-loop-models 技能或 scripts/plugin-models.mjs 预演和应用；受保护配置写入、安装与所有者修复必须由正常宿主用户执行。只读 doctor 不授予写入权限，不更改沙箱策略或任何 deny。
 
-用户可随时说“把开发代理换成 MODEL，思考强度 high”。主代理执行 `models.mjs set --project ROOT --harness HARNESS --role dev --model MODEL --effort high` 预演，按已有授权加 `--apply`。支持 main 及五个子角色；`--effort inherit` 省略强度（Codex main 必须明确）。模型支持的强度、账户可用模型须在当前客户端核对，配置校验不证明可调用。
-
-更改默认作用于原生重载后的下一次派发。Codex 固定角色文件会影响模型解析，不能承诺仅传 spawn.model 就覆盖角色；未证实热加载时新会话确认。Claude Code 已有 agents 目录通常监测改动；首次建目录、add-dir 等情形需重开；环境变量与调用参数仍可能覆盖。主代理模型用客户端原生选择器切换；Claude Code 主模型建议不会写 settings.json。
-
-对正在运行的代理：先说明当前执行者保持原配置；用户要求立即切换时，在安全边界停止，保存 checkpoint、已做工作和证据，重载后以新代理接续同任务。用 replaces 关联原记录；不能清零修复计数、重建运行或降低验收。真正支持运行中模型切换的客户端，须有原生调用结果才报告生效。遇到 deny 立即停止，不通过重派或换模型绕过。
-
-执行者遇到架构判断、需求不清或首次针对性修复仍失败时返回 PARTIAL/BLOCKED 与证据；主代理先定位、拆小，再交回执行者。必要升级只针对难点，不把所有角色永久换成强模型，不自动放宽重试预算。
-
-## 运行状态与分层验收
-
-- 原生发现：新会话核对 loop-*。Codex 项目信任、配置层与 profile；Claude Code `/agents`、版本与设置来源。未知版本不承诺兼容。
-- 原生执行：真实调用后保存 native_id。Codex 子代理面板或 CLI `/subagents`；Claude Code `/tasks` 查看状态及可用的模型/强度信息。完成条目可能移除，需保存 transcript；界面显示受客户端版本影响。
-- 本地台账：通过 `agents.mjs record/status` 记录 requested/running/waiting/completed/failed/stopped、配置摘要和切换关系。主代理在派发、返回、阻塞、停止时更新，并向用户简短说明角色与状态；此文件是最后观察，不冒充实时 UI。
-- 模型与界面证据：只记录原生返回/日志/UI 能观察到的模型、强度、可见性，保存项目运行 reports 内的证据；不能要求代理自报“我是什么模型”作为证明。台账仅做证据关联，不自动验证内容语义。无法获得实际模型时保持 unverified。
-- 安装 `--check` 只验文件和配置；doctor 不调用模型。必须将配置一致、原生发现、实际执行、模型证据、UI 可见分别报告。测试 PASS/独立评审仍由 loop.mjs 的原证据门控制。
-
-模型和思考强度决定成本与延迟，但无真实用量不能报告节省比例。可靠上下文指标接近 80% 时提醒并保存交接，指标不可得不编造百分比。
+修改默认只影响原生重载后的后续派发，当前执行者不热切换。主会话模型使用 Codex 原生选择器；必要时保存交接并接续同一任务，不清零修复计数。钩子信任通过 Codex 原生审核，不修改信任缓存。

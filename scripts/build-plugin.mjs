@@ -14,7 +14,7 @@ export function buildPlugin(output, options = {}) {
   const manifest = JSON.parse(text('plugin/plugin.json').toString());
   assert(manifest.version === VERSION, '插件版本与核心不一致');
   planned.set('plugin.json', Buffer.from(JSON.stringify(manifest, null, 2) + '\n'));
-  planned.set('ROUTING.md', Buffer.concat([Buffer.from('# 插件原生代理调度\n\n模型与强度从 plugin-models.mjs status 读取；不在此复制个人配置。\n\n'),text('templates/routing.md')]));
+  planned.set('ROUTING.md', text('plugin/ROUTING.md'));
   const compatibility = { name: manifest.name, version: manifest.version, description: manifest.description, author: manifest.author, skills: './skills/', hooks: './hooks/hooks.json', mcpServers: './.mcp.json', ...manifest.extensions['com.openai'] };
   planned.set('.codex-plugin/plugin.json', Buffer.from(JSON.stringify(compatibility, null, 2) + '\n'));
   for (const name of ['ai-loop', 'ai-loop-models']) planned.set(`skills/${name}/SKILL.md`, text(`plugin/skills/${name}/SKILL.md`));

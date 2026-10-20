@@ -25,8 +25,8 @@ export function initialize(project, options = {}) {
   if (options.apply) for (const change of changes) atomicWrite(change.path, change.content);
   return { status: options.apply ? 'initialized' : 'dry-run', changes: changes.map(item => item.path), legacy_deployment: fs.existsSync(safePath(root, '.ai-loop/install.json')), warning: '保留旧入口和运行记录；首次使用核对入口冲突，已有验证需按实际代码与核心版本核对' };
 }
-export function pluginDoctor(project) {
-  const root = rootPath(project), windows = inspectWindows(root), issues = [];
+export function pluginDoctor(project, options = {}) {
+  const root = rootPath(project), windows = inspectWindows(root, { home: options.home, purpose: 'inspect' }), issues = [];
   const lockPath = path.join(BUNDLE, 'bundle.json');
   if (!fs.existsSync(lockPath)) issues.push('缺少打包摘要；请从源包 build-plugin 生成插件');
   else {
@@ -36,7 +36,7 @@ export function pluginDoctor(project) {
       if (!fs.existsSync(target) || digest(fs.readFileSync(target)) !== item.hash) issues.push('插件文件缺失或变化：' + item.path);
     }
   }
-  const models = resolveProfile(root);
+  const models = resolveProfile(root, { home: options.home });
   if (!models.profile) issues.push('未配置全局或项目子代理模型；使用 ai-loop-models 设置');
   else {
     if (models.scope === 'global') for (const role of ['planner', 'reviewer', 'dev', 'tester', 'scribe']) if (fs.existsSync(safePath(root, `.codex/agents/loop-${role}.toml`))) issues.push('项目原生角色会覆盖全局设置，先迁移或登记项目覆盖：loop-' + role);
@@ -47,7 +47,8 @@ export function pluginDoctor(project) {
     }
     if (path.resolve(models.bundle) !== path.resolve(BUNDLE)) issues.push('原生代理引用了其他插件路径；用模型 configure 预演后更新，再重载');
   }
-  return { version: VERSION, status: issues.length || windows.issues.length ? 'needs-check' : 'configured', issues, windows, models: { scope: models.scope, path: models.path, profile: models.profile }, memory: bootstrap(root), native_discovery: 'unverified', execution: 'unverified', effective_model: 'unverified', ui_visibility: 'unverified' };
+  const blocked = issues.length > 0 || windows.issues.length > 0;
+  return { version: VERSION, mode: 'plugin', status: blocked ? 'needs-check' : 'configured', configuration: issues.length ? 'fail' : 'pass', dispatch: blocked ? 'blocked' : 'requires-native-verification', issues, windows, models: { scope: models.scope, path: models.path, profile: models.profile }, memory: bootstrap(root), native_discovery: 'unverified', execution: 'unverified', effective_model: 'unverified', ui_visibility: 'unverified' };
 }
 export function cli(argv) {
   const options = args(argv); allowArgs(options, ['project', 'apply', 'help']);

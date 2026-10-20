@@ -5,14 +5,16 @@ import { spawnSync } from 'node:child_process';
 import { assert, rootPath, safePath, atomicWrite, args, allowArgs, mainModule, printResult } from './lib.mjs';
 
 const sandboxAccount = name => /\\CodexSandbox(?:Offline|Online)$/i.test(name || '');
-export function assessOwners(data) {
-  const issues = [];
-  if (sandboxAccount(data.user)) issues.push({ type: 'sandbox-creator', action: '请在正常用户宿主进程执行配置写入，避免沙箱账户成为受保护目录所有者' });
+export function assessOwners(data, options = {}) {
+  const issues = [], warnings = [];
+  const purpose = options.purpose || 'inspect';
+  assert(['inspect', 'configure'].includes(purpose), 'Windows 预检 purpose 须为 inspect / configure');
+  if (sandboxAccount(data.user)) (purpose === 'configure' ? issues : warnings).push({ type: 'sandbox-creator', action: '请在正常用户宿主进程执行配置写入，避免沙箱账户成为受保护目录所有者' });
   for (const item of data.paths) {
     if (item.error) issues.push({ type: 'acl-unreadable', path: item.path, detail: item.error });
     else if (item.exists && sandboxAccount(item.owner)) issues.push({ type: 'sandbox-owner', path: item.path, owner: item.owner, action: '先备份 ACL，再由宿主当前用户修复此目录自身的 owner；不递归重置 ACL' });
   }
-  return { ...data, status: issues.length ? 'needs-repair' : 'ready', issues, sandbox_execution: 'unverified' };
+  return { ...data, purpose, status: issues.length ? 'needs-repair' : 'ready', issues, warnings, sandbox_execution: 'unverified' };
 }
 const probe = String.raw`
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
@@ -38,7 +40,7 @@ export function inspectWindows(project, options = {}) {
   for (const relative of ['.codex', '.agents', '.git']) safePath(root, relative);
   const home = path.resolve(options.home || process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
   for (const relative of ['.sandbox-bin', 'agents', 'plugins', 'plugins/local']) safePath(home, relative);
-  return assessOwners(JSON.parse(runPS(probe, { AI_LOOP_PROJECT: root, AI_LOOP_USERHOME: home })));
+  return assessOwners(JSON.parse(runPS(probe, { AI_LOOP_PROJECT: root, AI_LOOP_USERHOME: home })), options);
 }
 export function repairOwner(project, target, options = {}) {
   assert(process.platform === 'win32', '所有者修复仅适用于 Windows');

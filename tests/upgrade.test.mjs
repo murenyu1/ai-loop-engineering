@@ -12,6 +12,7 @@ import { initialize } from '../scripts/plugin.mjs';
 import { buildPlugin } from '../scripts/build-plugin.mjs';
 import { pathToFileURL } from 'node:url';
 import { publishFiles } from '../scripts/publish-files.mjs';
+import { spawnSync } from 'node:child_process';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-upgrade-'));
@@ -116,7 +117,7 @@ test('插件项目只初始化共享记录，可兼容已失效的旧源包路�
 
 test('所有者检查区分沙箱创建者、异常目录和正常用户，不修改任何 ACL', () => {
   assert.equal(assessOwners({ user: 'PC\\Rainwood', paths: [{ path: '.codex', exists: true, owner: 'PC\\CodexSandboxOffline' }] }).issues[0].type, 'sandbox-owner');
-  assert.equal(assessOwners({ user: 'PC\\CodexSandboxOffline', paths: [] }).issues[0].type, 'sandbox-creator');
+  assert.equal(assessOwners({ user: 'PC\\CodexSandboxOffline', paths: [] }, { purpose: 'configure' }).issues[0].type, 'sandbox-creator');
   assert.equal(assessOwners({ user: 'PC\\Rainwood', paths: [{ path: '.codex', exists: true, owner: 'PC\\Rainwood' }] }).status, 'ready');
 });
 
@@ -160,4 +161,45 @@ test('GitHub 发行清单只包含源包、插件和市场，不包含本机运�
   assert.ok(files.some(item => item.path === 'dist/codex/plugin.json'));
   assert.ok(files.every(item => !/(?:^|\/)(?:\.release|\.ai-loop|\.validation|\.env|node_modules)(?:\/|$)/.test(item.path)));
   assert.ok(files.every(item => !item.path.endsWith('.log')));
+});
+
+
+test('沙箱账户只读预检不误阻断，配置写入与真实 owner/ACL 异常仍阻断', () => {
+  const data = { user: 'PC\\CodexSandboxOffline', paths: [{ path: '.codex', exists: true, owner: 'PC\\Rainwood' }] };
+  const read = assessOwners(data);
+  assert.equal(read.status, 'ready');
+  assert.deepEqual(read.issues, []);
+  assert.equal(read.warnings[0].type, 'sandbox-creator');
+  assert.equal(assessOwners(data, { purpose: 'configure' }).status, 'needs-repair');
+  assert.equal(assessOwners({ user: 'PC\\Rainwood', paths: [{ path: '.codex', exists: true, owner: 'PC\\CodexSandboxOnline' }] }).issues[0].type, 'sandbox-owner');
+  assert.equal(assessOwners({ user: 'PC\\Rainwood', paths: [{ path: '.codex', exists: true, error: 'access denied' }] }).issues[0].type, 'acl-unreadable');
+  assert.throws(() => assessOwners(data, { purpose: 'unknown' }), /purpose/);
+});
+
+test('纯插件项目的兼容 doctor 识别全局角色，损坏配置与篡改插件仍阻断', async t => {
+  const root = fixture(t), home = path.join(root, 'personal'); fs.mkdirSync(home);
+  const relative = '.release/doctor-test-' + path.basename(root), target = buildPlugin(relative).output;
+  t.after(() => { assert.ok(target.startsWith(path.resolve('.release') + path.sep)); fs.rmSync(target, { recursive: true, force: true }); });
+  const runtime = await import(pathToFileURL(path.join(target, 'scripts/plugin.mjs')).href);
+  runtime.initialize(root, { apply: true });
+  configureProfile(root, balanced('codex'), { home, bundle: target, apply: true });
+  assert.equal(fs.existsSync(path.join(root, '.ai-loop/install.json')), false);
+  assert.equal(fs.existsSync(path.join(root, '.codex')), false);
+  const routing = fs.readFileSync(path.join(target, 'ROUTING.md'), 'utf8');
+  assert.match(routing, /scripts\/plugin\.mjs doctor/);
+  assert.doesNotMatch(routing, /先运行本部署.*scripts\/doctor\.mjs/);
+  const run = () => spawnSync(process.execPath, [path.join(target, 'scripts/doctor.mjs'), '--project', root, '--harness', 'codex'], { env: { ...process.env, CODEX_HOME: home }, encoding: 'utf8', timeout: 20000, windowsHide: true });
+  const good = run(); assert.equal(good.status, 0, good.stderr);
+  const report = JSON.parse(good.stdout);
+  assert.equal(report.mode, 'plugin'); assert.equal(report.configuration, 'pass');
+  assert.equal(report.dispatch, 'requires-native-verification'); assert.deepEqual(report.issues, []);
+  assert.equal(report.execution, 'unverified'); assert.equal(report.models.scope, 'global');
+  const agent = path.join(home, 'agents/loop-dev.toml'), before = fs.readFileSync(agent, 'utf8');
+  fs.appendFileSync(agent, '# artificial mutation');
+  const bad = JSON.parse(run().stdout);
+  assert.equal(bad.dispatch, 'blocked'); assert.ok(bad.issues.some(item => item.includes('原生模型文件')));
+  fs.writeFileSync(agent, before);
+  fs.appendFileSync(path.join(target, 'MEMORY.md'), '# artificial mutation');
+  const damaged = JSON.parse(run().stdout);
+  assert.equal(damaged.dispatch, 'blocked'); assert.ok(damaged.issues.some(item => item.includes('插件文件缺失或变化')));
 });

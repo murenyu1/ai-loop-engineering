@@ -1,5 +1,5 @@
 {
-  "version": "4.3.0",
+  "version": "4.3.1",
   "harness": "dsh",
   "files": [
     {
@@ -40,7 +40,7 @@
     },
     {
       "path": "core/README.md",
-      "hash": "f514442981b0329a914402e34abef0312c340d1942c3a21b0fdfe02a8d6fa55b"
+      "hash": "ba2ddfba9b44cb1971a98456c3615bbd44de392c065952dc3d6acf71d4378de0"
     },
     {
       "path": "core/ROUTING.md",
@@ -48,7 +48,7 @@
     },
     {
       "path": "core/scripts/lib.mjs",
-      "hash": "c91357c33ca4d24c9df317c4a05a9284319529bc658e4dfdd1e58ed1f8612181"
+      "hash": "1e2db3dcaca8242d976f89fade56a43d4ecf74ee693943130b4ec4cee2bb00af"
     },
     {
       "path": "core/scripts/loop.mjs",
@@ -88,7 +88,7 @@
     },
     {
       "path": "package.json",
-      "hash": "0748633f7967d312052d2799b79a5b6f3e7dc916e7369a7445732ecd24e69029"
+      "hash": "c6dbc82267254727cb958594e6ab06804e82002e5ba50c5a766eee94a953c6b4"
     },
     {
       "path": "README.md",

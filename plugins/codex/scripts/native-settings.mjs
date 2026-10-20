@@ -209,7 +209,7 @@ export function createSettingsManager(options = {}) {
   async function apply() {
     assert(!probeMode, '模型探测进程禁止写入配置');
     const project = allowedProject();
-    const info = inspectWindows(project, { home });
+    const info = inspectWindows(project, { home, purpose: 'configure' });
     assert(['ready', 'not-windows'].includes(info.status), 'Windows 目录所有者检查未通过，停止写入');
     const modelsResult = await readModels(project, effective());
     assert(!modelsResult.error, `无法读取本机模型列表：${modelsResult.error}`);
@@ -233,7 +233,7 @@ export function createSettingsManager(options = {}) {
   function toggleWorkspace() {
     assert(!probeMode, '模型探测进程禁止写入配置');
     const project = allowedProject();
-    const info = inspectWindows(project, { home });
+    const info = inspectWindows(project, { home, purpose: 'configure' });
     assert(['ready', 'not-windows'].includes(info.status), 'Windows 目录所有者检查未通过，停止修改');
     const current = readCodexWorkspaces(home).workspaces.find(item => item.root === project);
     assert(current, '所选工作区已不可用');
@@ -248,7 +248,7 @@ export function createSettingsManager(options = {}) {
     assert(!probeMode, '模型探测进程禁止写入配置');
     assert(scope === 'project', '请先将范围切换为“仅当前工作区”');
     const project = allowedProject();
-    const info = inspectWindows(project, { home });
+    const info = inspectWindows(project, { home, purpose: 'configure' });
     assert(['ready', 'not-windows'].includes(info.status), 'Windows 目录所有者检查未通过，停止恢复');
     const current = resolveProfile(project, { home, scope: 'project' });
     const base = bases.get(key());

@@ -1,9 +1,11 @@
+import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { install } from './install.mjs';
 import { installed } from './models.mjs';
 import { capabilities, selectHarness } from './adapters.mjs';
-import { assert, safePath, args, allowArgs, mainModule, codexExecutable, VERSION } from './lib.mjs';
+import { assert, safePath, args, allowArgs, mainModule, codexExecutable, VERSION, BUNDLE, sourceRelative, rootPath, jsonFile } from './lib.mjs';
 import { inspectWindows } from './windows.mjs';
 
 export function diagnose(options) {
@@ -54,7 +56,7 @@ export function diagnose(options) {
   };
 }
 export async function inspectNative(project, harness) {
-  const { root } = installed(project, harness);
+  const root = rootPath(project);
   if (harness === 'claude-code') {
     const result = spawnSync('claude', ['auth', 'status', '--text'], { cwd: root, encoding: 'utf8', timeout: 10000, windowsHide: true, shell: false });
     const address = /^Anthropic base URL:\s*(\S+)/mi.exec(result.stdout || '')?.[1];
@@ -111,8 +113,26 @@ export async function cli(argv) {
   allowArgs(options, ['project', 'harness', 'probe', 'native', 'help']);
   assert(!options._.length && [options.probe, options.native].every(value => value === undefined || value === true), '参数无效');
   if (options.help) return { usage: 'doctor.mjs --project ROOT --harness codex|claude-code [--probe] [--native]' };
-  const report = diagnose(options);
-  report.dispatch = report.configuration === 'pass' ? 'requires-native-verification' : 'blocked';
+  const harness = selectHarness(options.harness), root = rootPath(options.project);
+  const marker = safePath(root, '.ai-loop/plugin.json');
+  let report;
+  if (harness === 'codex' && fs.existsSync(marker)) {
+    const metadata = jsonFile(marker);
+    assert(metadata.schema_version === 1 && metadata.plugin === 'ai-loop-engineering', '插件标记无效，停止预检');
+    const modulePath = safePath(BUNDLE, sourceRelative(BUNDLE, 'scripts/plugin.mjs'));
+    assert(fs.existsSync(modulePath), '插件项目须从已安装插件执行预检，不能使用旧项目部署副本');
+    const { pluginDoctor } = await import(pathToFileURL(modulePath).href);
+    report = { ...pluginDoctor(root), harness, capabilities: capabilities(harness), runtime: null };
+    if (options.probe) {
+      const executable = codexExecutable();
+      const child = spawnSync(executable, ['--version'], { encoding: 'utf8', timeout: 10000, windowsHide: true, shell: false });
+      report.runtime = { executable, exit_code: child.status, version_output: child.stdout?.trim() || null, error: child.error?.message || child.stderr?.trim() || null };
+      if (child.status !== 0) { report.dispatch = 'blocked'; report.issues.push('CLI 版本探测失败；不能据此宣称该客户端可运行'); }
+    }
+  } else {
+    report = diagnose(options);
+    report.dispatch = report.configuration === 'pass' && !report.windows?.issues.length ? 'requires-native-verification' : 'blocked';
+  }
   if (options.native) {
     try {
       report.native = await inspectNative(options.project, report.harness);

@@ -1,9 +1,9 @@
-import { mainModule } from './lib.mjs';
+import { mainModule, VERSION } from './lib.mjs';
 import { createSettingsManager } from './native-settings.mjs';
 
 export const PROTOCOL_VERSION = '2025-11-25';
 export const SERVER_NAME = 'ai-loop-engineering-settings';
-export const SERVER_VERSION = '4.3.0';
+export const SERVER_VERSION = VERSION;
 export const READ_TOOL = 'ai_loop.settings.read';
 export const UPDATE_TOOL = 'ai_loop.settings.update';
 const MAX_LINE_BYTES = 1024 * 1024;

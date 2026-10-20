@@ -64,7 +64,7 @@ export function configureProfile(project, profile, options = {}) {
   const record = { schema_version: 1, profile, profile_hash: routeHash(profile), native, bundle: deployment };
   stage(location.relative, JSON.stringify(record, null, 2) + '\n');
   if (options.apply && changes.length) {
-    const info = inspectWindows(project, { home });
+    const info = inspectWindows(project, { home, purpose: 'configure' });
     assert(info.status === 'ready' || info.status === 'not-windows', 'Windows 所有者预检未通过，先修复后写入；不能在沙箱账户中创建受保护目录');
     locked(root, scope === 'global' ? 'global-models' : 'models', () => {
       for (const change of changes) assert((fs.existsSync(change.file) ? fs.readFileSync(change.file, 'utf8') : null) === change.before, '模型配置在预演期间变化，停止覆盖');
@@ -92,7 +92,7 @@ export function resetProjectProfile(project, options = {}) {
     assert(fs.existsSync(target) && (expected === null || hash(fs.readFileSync(target)) === expected), '项目模型配置被修改或丢失；停止恢复默认：' + relative);
   }
   if (options.apply) {
-    const owners = inspectWindows(root, { home: options.home || userHome() });
+    const owners = inspectWindows(root, { home: options.home || userHome(), purpose: 'configure' });
     assert(['ready', 'not-windows'].includes(owners.status), 'Windows 所有者检查未通过，先处理再撤销原生项目配置');
     locked(root, 'models', () => {
     // 只撤销本工具拥有的项目覆盖；先备份所有文件，再删除。
