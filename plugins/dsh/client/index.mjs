@@ -1,0 +1,686 @@
+/** Browser-only factory. The release wraps it in DSH's lazy CommonJS loader. */
+export function createPlugin(require) {
+  const React = require('react');
+  const { SettingsForm, SettingsFormModel } = require('@deepseek-ai/dsh-client-ui-primitives');
+  const h = React.createElement;
+  const PACKAGE = 'dsh-plugin-ai-loop-engineering';
+  const CONFIG_ID = 'ai-loop-engineering';
+  const ROLES = {
+    planner: { name: '计划 (Planner)', desc: '任务规划与规格拆解' },
+    dev: { name: '开发 (Dev)', desc: '核心代码实现与修复' },
+    tester: { name: '测试 (Tester)', desc: '编写用例与执行验证' },
+    reviewer: { name: '评审 (Reviewer)', desc: '独立架构与代码审核' },
+    scribe: { name: '记录 (Scribe)', desc: '记忆库与交接持久化' },
+  };
+  const emptyRole = () => ({ provider: '', model: '', reasoningEffort: '' });
+  const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const clone = value => JSON.parse(JSON.stringify(value));
+  const numberValid = value => Number.isInteger(value) && value >= 1 && value <= 16;
+  const roleValid = role => object(role) && Object.keys(role).every(key => ['provider', 'model', 'reasoningEffort'].includes(key) && typeof role[key] === 'string')
+    && Boolean(role.model?.trim()) === Boolean(role.provider?.trim());
+  const rolesValid = roles => object(roles) && Object.entries(roles).every(([key, role]) => Object.hasOwn(ROLES, key) && roleValid(role));
+  const projectsValid = projects => Array.isArray(projects) && projects.every(project => object(project)
+    && typeof project.path === 'string' && project.path.length > 0 && typeof project.enabled === 'boolean'
+    && (project.maxConcurrent === undefined || numberValid(project.maxConcurrent))
+    && (project.roles === undefined || rolesValid(project.roles)));
+  const jsonField = (field, fallback, valid) => ({
+    field,
+    format: value => JSON.stringify(value ?? fallback),
+    parse: text => {
+      try { const value = JSON.parse(text); return valid(value) ? { kind: 'set', value } : undefined; }
+      catch { return undefined; }
+    },
+  });
+
+  class Controller {
+    constructor(scope) {
+      this.form = new SettingsFormModel(scope, [
+        jsonField('enabled', false, value => typeof value === 'boolean'),
+        { field: 'maxConcurrent', format: value => String(value ?? 3), parse: text => numberValid(Number(text)) ? { kind: 'set', value: Number(text) } : undefined },
+        jsonField('roles', {}, rolesValid), jsonField('projects', [], projectsValid),
+      ]);
+      this.actions = this.form.actions();
+      this.store = this.form.bind(() => ({
+        ...this.form.shell(),
+        enabled: JSON.parse(this.form.field('enabled').text),
+        maxConcurrent: this.form.field('maxConcurrent').text,
+        roles: JSON.parse(this.form.field('roles').text),
+        projects: JSON.parse(this.form.field('projects').text),
+      }));
+    }
+    edit(field, value) { this.actions.edit(field, JSON.stringify(value)); }
+    setRole(role, value, path) {
+      const state = this.store.getSnapshot();
+      if (path === '') this.edit('roles', { ...state.roles, [role]: value });
+      else this.updateProject(path, project => ({ ...project, roles: { ...project.roles, [role]: value } }));
+    }
+    updateProject(path, update) {
+      const rows = clone(this.store.getSnapshot().projects);
+      const index = rows.findIndex(row => samePath(row.path, path));
+      const row = index < 0 ? { path, enabled: false } : rows[index];
+      const next = update(row);
+      if (index >= 0) rows[index] = next;
+      else rows.push(next);
+      this.edit('projects', rows);
+    }
+    removeProject(path) { this.edit('projects', this.store.getSnapshot().projects.filter(row => !samePath(row.path, path))); }
+    resetRole(role, path) {
+      if (path === '') this.setRole(role, emptyRole(), '');
+      else this.updateProject(path, project => {
+        const roles = { ...project.roles };
+        delete roles[role];
+        const next = { ...project };
+        if (Object.keys(roles).length) next.roles = roles;
+        else delete next.roles;
+        return next;
+      });
+    }
+    dispose() { this.form.dispose(); }
+  }
+
+  function samePath(left, right) {
+    const normalize = path => {
+      const value = (path || '').replace(/\\/g, '/').replace(/\/+$/, '') || (path ? '/' : '');
+      return /^[A-Za-z]:\//.test(value) || value.startsWith('//') ? value.toLowerCase() : value;
+    };
+    return normalize(left) === normalize(right);
+  }
+
+  function useCatalog(ctx) {
+    const [state, setState] = React.useState({ status: 'loading', groups: [], partial: false });
+    const [revision, retry] = React.useState(0);
+    React.useEffect(() => {
+      let active = true;
+      let generation = 0;
+      const load = async () => {
+        const current = ++generation;
+        setState({ status: 'loading', groups: [], partial: false });
+        try {
+          const response = await ctx.remote.session.modelCatalog();
+          if (!active || current !== generation) return;
+          if (!response.ok) throw new Error('模型目录读取失败');
+          setState({ status: 'ready', groups: response.value.groups, partial: response.value.failures.length > 0 });
+        } catch {
+          if (active && current === generation) setState({ status: 'error', groups: [], partial: false });
+        }
+      };
+      load();
+      const offs = [
+        ctx.remote?.$on?.('llm/adapters-updated', load),
+        ctx.remote?.$on?.('settings/document-updated', load),
+        ctx.on?.('connection/reset', load),
+      ].filter(Boolean);
+      return () => { active = false; generation += 1; offs.forEach(off => off()); };
+    }, [ctx, revision]);
+    return { ...state, retry: () => retry(value => value + 1) };
+  }
+
+  const S = {
+    card: {
+      background: 'var(--dsw-alias-bg-layer-1, #1e1e24)',
+      border: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.08))',
+      borderRadius: 10,
+      padding: '16px 20px',
+      display: 'grid',
+      gap: 16,
+      marginBottom: 16,
+    },
+    cardHeader: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.06))',
+      paddingBottom: 12,
+    },
+    title: {
+      margin: 0,
+      fontSize: 15,
+      fontWeight: 600,
+      color: 'var(--dsw-alias-label-primary, #ffffff)',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+    },
+    subtitle: {
+      margin: 0,
+      fontSize: 12,
+      color: 'var(--dsw-alias-label-secondary, #999)',
+      lineHeight: 1.5,
+    },
+    badge: active => ({
+      fontSize: 11,
+      fontWeight: 500,
+      padding: '2px 8px',
+      borderRadius: 12,
+      background: active ? 'rgba(74, 222, 128, 0.12)' : 'rgba(156, 163, 175, 0.12)',
+      color: active ? 'var(--dsw-alias-state-success-primary, #4ade80)' : 'var(--dsw-alias-label-secondary, #9ca3af)',
+      border: `1px solid ${active ? 'rgba(74, 222, 128, 0.25)' : 'rgba(156, 163, 175, 0.2)'}`,
+    }),
+    row: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 12,
+    },
+    input: {
+      font: 'inherit',
+      fontSize: 13,
+      color: 'var(--dsw-alias-label-primary, inherit)',
+      background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.25))',
+      border: '1px solid var(--dsw-alias-border-l2, rgba(255,255,255,0.15))',
+      borderRadius: 6,
+      padding: '7px 10px',
+      outline: 'none',
+      transition: 'border-color 0.2s',
+      minWidth: 140,
+    },
+    btn: (primary = false) => ({
+      font: 'inherit',
+      fontSize: 12,
+      fontWeight: 500,
+      cursor: 'pointer',
+      padding: '6px 14px',
+      borderRadius: 6,
+      border: primary ? 'none' : '1px solid var(--dsw-alias-border-l2, rgba(255,255,255,0.15))',
+      background: primary ? 'var(--dsw-alias-brand-primary, #2563eb)' : 'var(--dsw-alias-bg-layer-2, rgba(255,255,255,0.05))',
+      color: primary ? '#ffffff' : 'var(--dsw-alias-label-primary, inherit)',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      transition: 'all 0.15s ease',
+    }),
+    roleGrid: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+      gap: 14,
+    },
+    roleCard: {
+      background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.18))',
+      border: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.06))',
+      borderRadius: 8,
+      padding: '12px 14px',
+      display: 'grid',
+      gap: 10,
+    },
+    roleHeader: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    label: {
+      display: 'grid',
+      gap: 4,
+      fontSize: 12,
+      color: 'var(--dsw-alias-label-secondary, #aaa)',
+    },
+    dashCard: {
+      background: 'var(--dsw-alias-bg-layer-1, #1e1e24)',
+      border: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.08))',
+      borderRadius: 10,
+      padding: '16px 20px',
+      display: 'grid',
+      gap: 14,
+      marginBottom: 16,
+    },
+    taskGrid: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+      gap: 12,
+    },
+    taskCard: phase => {
+      const colors = {
+        done: 'rgba(74, 222, 128, 0.25)',
+        developing: 'rgba(96, 165, 250, 0.35)',
+        verifying: 'rgba(250, 204, 21, 0.3)',
+        reviewing: 'rgba(192, 132, 252, 0.35)',
+        needs_fix: 'rgba(248, 113, 113, 0.35)',
+        blocked: 'rgba(239, 68, 68, 0.35)',
+        pending: 'rgba(255, 255, 255, 0.08)',
+      };
+      return {
+        background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.2))',
+        border: `1px solid ${colors[phase] || colors.pending}`,
+        borderRadius: 8,
+        padding: '12px 14px',
+        display: 'grid',
+        gap: 8,
+      };
+    },
+    phaseBadge: phase => {
+      const config = {
+        done: { label: '✔ 已完成', bg: 'rgba(74, 222, 128, 0.15)', color: '#4ade80' },
+        developing: { label: '⚡ 开发中', bg: 'rgba(96, 165, 250, 0.15)', color: '#60a5fa' },
+        verifying: { label: '🧪 验证中', bg: 'rgba(250, 204, 21, 0.15)', color: '#facc15' },
+        reviewing: { label: '🔍 评审中', bg: 'rgba(192, 132, 252, 0.15)', color: '#c084fc' },
+        needs_fix: { label: '⚠️ 待修复', bg: 'rgba(248, 113, 113, 0.15)', color: '#f87171' },
+        blocked: { label: '⛔ 阻塞', bg: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' },
+        pending: { label: '⏳ 待开始', bg: 'rgba(156, 163, 175, 0.12)', color: '#9ca3af' },
+      };
+      const c = config[phase] || { label: phase, bg: 'rgba(255,255,255,0.1)', color: '#ccc' };
+      return {
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '2px 8px',
+        borderRadius: 10,
+        background: c.bg,
+        color: c.color,
+      };
+    },
+  };
+
+  function RunDashboard({ path, ctx }) {
+    const [runInfo, setRunInfo] = React.useState({ loading: false, data: null, error: null });
+    const loadStatus = React.useCallback(async () => {
+      if (!path) { setRunInfo({ loading: false, data: null, error: null }); return; }
+      setRunInfo(s => ({ ...s, loading: true }));
+      try {
+        // 优先使用原生只读工具 ai_loop_status，无外部命令、免沙箱审批
+        let parsed = null;
+        try {
+          const res = await ctx.remote.session.callTool('ai_loop_status', { project: path });
+          if (res) {
+            const raw = typeof res === 'string' ? res : (res.result || res.stdout || JSON.stringify(res));
+            parsed = JSON.parse(raw);
+          }
+        } catch {
+          parsed = null;
+        }
+
+        // 回退逻辑：如果原生工具未挂载，尝试通过 ops_bash 读取
+        if (!parsed) {
+          const normPath = path.replace(/\\/g, '/');
+          const script = `
+            import fs from 'node:fs';
+            import path from 'node:path';
+            const runsDir = '${normPath}/.ai-loop/runs';
+            if (!fs.existsSync(runsDir)) {
+              console.log(JSON.stringify({ error: '未初始化 .ai-loop 目录' }));
+            } else {
+              const entries = fs.readdirSync(runsDir);
+              let target = null;
+              for (const e of entries) {
+                const s = path.join(runsDir, e, 'state.json');
+                if (fs.existsSync(s)) {
+                  try {
+                    const st = JSON.parse(fs.readFileSync(s, 'utf8'));
+                    if (st.status === 'active') { target = st; break; }
+                    if (!target) target = st;
+                  } catch {}
+                }
+              }
+              if (target) {
+                console.log(JSON.stringify({
+                  run_id: target.run_id,
+                  goal: target.goal,
+                  status: target.status,
+                  tasks: (target.tasks || []).map(t => ({ id: t.id, title: t.title, phase: t.phase, fixes: t.fixes, review: t.review }))
+                }));
+              } else {
+                console.log(JSON.stringify({ error: '当前工作区暂无运行记录' }));
+              }
+            }
+          `.replace(/\n\s+/g, ' ');
+          const res = await ctx.remote.session.callTool('ops_bash', {
+            command: `node --input-type=module -e "${script.replace(/"/g, '\\"')}"`,
+            description: 'Read AI Loop Run Status',
+          });
+          parsed = JSON.parse(res?.stdout || '{}');
+        }
+
+        if (parsed.error) setRunInfo({ loading: false, data: null, error: parsed.error });
+        else if (parsed.run_id) setRunInfo({ loading: false, data: parsed, error: null });
+        else if (Array.isArray(parsed.runs) && parsed.runs.length > 0) {
+          setRunInfo({ loading: false, data: null, error: `存在 ${parsed.runs.length} 个历史运行，暂无活跃运行。` });
+        } else {
+          setRunInfo({ loading: false, data: null, error: '当前工作区暂无运行记录' });
+        }
+      } catch {
+        setRunInfo({ loading: false, data: null, error: '未检测到活跃的 AI Loop 运行' });
+      }
+    }, [path, ctx]);
+
+    React.useEffect(() => { loadStatus(); }, [loadStatus]);
+
+    if (!path) return null;
+
+    const data = runInfo.data;
+    return h('div', { style: S.dashCard },
+      h('div', { style: S.cardHeader },
+        h('div', null,
+          h('h3', { style: S.title }, '📊 AI Loop 运行状态与任务拓扑看板'),
+          h('p', { style: S.subtitle }, '实时监控当前工作区的闭环推进、DAG 任务执行阶段与独立角色协作。'),
+        ),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+          h('button', {
+            type: 'button',
+            style: S.btn(false),
+            disabled: runInfo.loading,
+            onClick: loadStatus,
+          }, runInfo.loading ? '正在刷新…' : '🔄 刷新看板'),
+        ),
+      ),
+      runInfo.error || !data ? h('div', { style: { color: 'var(--dsw-alias-label-secondary, #888)', fontSize: 13, padding: '12px 0' } },
+        runInfo.loading ? '正在加载当前运行状态…' : (runInfo.error || '当前工作区暂无活跃运行或无需展示的任务（可使用 /ai-loop 命令启动新需求）。'),
+      ) : h('div', { style: { display: 'grid', gap: 14 } },
+        h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center', background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.15))', padding: '10px 14px', borderRadius: 8 } },
+          h('div', null,
+            h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #999)', display: 'block' } }, '运行编号 (Run ID)'),
+            h('code', { style: { fontSize: 13, fontWeight: 600, color: 'var(--dsw-alias-brand-primary, #60a5fa)' } }, data.run_id),
+          ),
+          h('div', null,
+            h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #999)', display: 'block' } }, '总目标 (Goal)'),
+            h('div', { style: { fontSize: 13, fontWeight: 500 } }, data.goal),
+          ),
+          h('div', { style: { marginLeft: 'auto' } },
+            h('span', { style: S.badge(data.status === 'active') }, data.status ? data.status.toUpperCase() : 'UNKNOWN'),
+          ),
+        ),
+        h('div', { style: S.taskGrid },
+          (data.tasks || []).map(task => h('div', { key: task.id, style: S.taskCard(task.phase) },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+              h('span', { style: { fontWeight: 600, fontSize: 13 } }, `${task.id}: ${task.title}`),
+              h('span', { style: S.phaseBadge(task.phase) }),
+            ),
+            h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #888)', display: 'flex', gap: 12 } },
+              h('span', null, `评审: ${task.review || 'none'}`),
+              h('span', null, `修复轮次: ${task.fixes || 0}`),
+            ),
+          )),
+        ),
+      ),
+    );
+  }
+
+  function CustomSelect({ label, value, choices, onChange, disabled }) {
+    const options = choices.some(o => o.id === value) || !value ? choices : [...choices, { id: value, name: `${value}（当前不可用）` }];
+    return h('label', { style: S.label },
+      label,
+      h('select', {
+        value,
+        disabled,
+        style: S.input,
+        onChange: e => onChange(e.target.value),
+      }, options.map(o => h('option', { key: o.id, value: o.id }, o.name))),
+    );
+  }
+
+  function RoleCard({ role, path, state, controller, catalog, disabled }) {
+    const project = state.projects.find(row => samePath(row.path, path));
+    const own = path === '' ? state.roles[role] : project?.roles?.[role];
+    const value = { ...emptyRole(), ...state.roles[role], ...own };
+    const update = patch => controller.setRole(role, { ...value, ...patch }, path);
+    const group = catalog.groups.find(item => item.id === value.provider);
+    const model = group?.models.find(item => item.id === value.model);
+    const inherit = [{ id: '', name: '继承父智能体' }];
+    const meta = ROLES[role] || { name: role, desc: '' };
+    const hasOverride = path !== '' ? Boolean(own) : Boolean(value.model);
+
+    return h('div', { style: S.roleCard },
+      h('div', { style: S.roleHeader },
+        h('div', null,
+          h('div', { style: { fontWeight: 600, fontSize: 13, color: 'var(--dsw-alias-label-primary, inherit)' } }, meta.name),
+          meta.desc ? h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #888)' } }, meta.desc) : null,
+        ),
+        h('button', {
+          type: 'button',
+          style: S.btn(false),
+          disabled: disabled || !hasOverride,
+          onClick: () => controller.resetRole(role, path),
+        }, path ? '重置继承' : '恢复默认'),
+      ),
+      h('div', { style: { display: 'grid', gap: 8 } },
+        h(CustomSelect, {
+          label: '模型提供方',
+          value: value.provider ?? '',
+          choices: [...inherit, ...catalog.groups.map(item => ({ id: item.id, name: item.name }))],
+          disabled: disabled || catalog.status !== 'ready',
+          onChange: provider => update({ provider, model: '', reasoningEffort: '' }),
+        }),
+        h(CustomSelect, {
+          label: '模型选择',
+          value: value.model ?? '',
+          choices: [...inherit, ...(group?.models ?? []).map(item => ({ id: item.id, name: item.name }))],
+          disabled: disabled || !group,
+          onChange: modelId => update({ model: modelId, reasoningEffort: '' }),
+        }),
+        h(CustomSelect, {
+          label: '思考/推理强度',
+          value: value.reasoningEffort ?? '',
+          choices: [{ id: '', name: '使用继承值或默认' }, ...(model?.reasoning?.efforts ?? [])],
+          disabled: disabled || !model,
+          onChange: reasoningEffort => update({ reasoningEffort }),
+        }),
+      ),
+    );
+  }
+
+  function Card(props) {
+    const { controller, ctx, useWorkspaces } = props;
+    const state = React.useSyncExternalStore(controller.store.subscribe, controller.store.getSnapshot, controller.store.getSnapshot);
+    const [path, setPath] = React.useState('');
+    const [newPathInput, setNewPathInput] = React.useState('');
+    const [query, setQuery] = React.useState('');
+
+    let workspacesItems = [];
+    if (typeof useWorkspaces === 'function') {
+      try {
+        const snap = useWorkspaces(s => s);
+        if (snap && Array.isArray(snap.items)) workspacesItems = snap.items;
+      } catch {
+        workspacesItems = [];
+      }
+    }
+
+    React.useEffect(() => {
+      const off = ctx.on?.('connection/reset', () => { controller.actions.discard(); setPath(''); });
+      return () => { if (typeof off === 'function') off(); };
+    }, [ctx, controller]);
+
+    const catalog = useCatalog(ctx);
+    const disabled = !state.writable || state.saving;
+    const project = state.projects.find(row => samePath(row.path, path));
+
+    const pathMap = new Map();
+    for (const w of workspacesItems) pathMap.set(w.path, w.title || w.path);
+    for (const p of state.projects) {
+      if (![...pathMap.keys()].some(k => samePath(k, p.path))) {
+        pathMap.set(p.path, `${p.path}（已配置）`);
+      }
+    }
+
+    const filtered = [...pathMap].filter(([val, title]) => `${title} ${val}`.toLowerCase().includes(query.toLowerCase()));
+
+    const handleAddCustomPath = () => {
+      const trimmed = newPathInput.trim();
+      if (!trimmed) return;
+      controller.updateProject(trimmed, row => ({ ...row, enabled: true }));
+      setPath(trimmed);
+      setNewPathInput('');
+    };
+
+    return h(SettingsForm, {
+      state,
+      labels: {
+        unavailable: 'AI Loop 插件未加载，暂时无法配置。',
+        readOnly: '当前部署的插件设置为只读模式。',
+        saveFailed: '保存失败或配置已在其他位置更新。请保留当前修改，或放弃后重新读取。',
+        save: '保存配置',
+        saving: '保存中…',
+      },
+      onSave: () => controller.actions.save(),
+      onDiscard: controller.actions.discard,
+    },
+    // 1. 全局工作流总控卡片
+    h('div', { style: S.card },
+      h('div', { style: S.cardHeader },
+        h('div', null,
+          h('h3', { style: S.title }, '⚡ AI Loop 核心总控'),
+          h('p', { style: S.subtitle }, '统一管理 AI Loop 闭环执行引擎、子代理派发与原生工具挂载。'),
+        ),
+        h('span', { style: S.badge(state.enabled) }, state.enabled ? '已激活' : '已停用'),
+      ),
+      h('div', { style: S.row },
+        h('label', { style: { display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13, fontWeight: 500 } },
+          h('input', {
+            type: 'checkbox',
+            checked: state.enabled,
+            disabled,
+            style: { width: 16, height: 16, accentColor: 'var(--dsw-alias-brand-primary, #2563eb)' },
+            onChange: e => controller.edit('enabled', e.target.checked),
+          }),
+          '启用 AI Loop 全局主开关',
+        ),
+      ),
+      h('p', { style: S.subtitle }, '提示：全局开关与具体项目开关同时启用后生效。新创建的工作区默认停用，避免非目标项目意外触发子代理。'),
+    ),
+
+    // 2. 配置范围与项目选择卡片
+    h('div', { style: S.card },
+      h('div', { style: S.cardHeader },
+        h('div', null,
+          h('h3', { style: S.title }, '📁 配置范围与项目绑定'),
+          h('p', { style: S.subtitle }, '选择针对全局默认配置生效，还是针对指定工作区进行参数覆盖。'),
+        ),
+        path ? h('span', { style: S.badge(project?.enabled) }, project?.enabled ? '项目已启用' : '项目已停用') : null,
+      ),
+      h('div', { style: S.row },
+        h('label', { style: { ...S.label, flex: '1 1 200px' } },
+          '按名称/路径过滤项目',
+          h('input', {
+            type: 'search',
+            value: query,
+            placeholder: '输入关键词搜索…',
+            style: S.input,
+            onChange: e => setQuery(e.target.value),
+          }),
+        ),
+        h('label', { style: { ...S.label, flex: '1 1 240px' } },
+          '当前配置生效目标',
+          h('select', {
+            value: path,
+            disabled: state.saving,
+            style: S.input,
+            onChange: e => setPath(e.target.value),
+          },
+          h('option', { value: '' }, '🌐 全局默认配置 (所有项目通用)'),
+          filtered.map(([id, name]) => h('option', { key: id, value: id }, name))),
+        ),
+      ),
+      // 添加自定义项目路径
+      h('div', { style: { ...S.row, marginTop: 4, background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.15))', padding: '10px 12px', borderRadius: 8 } },
+        h('input', {
+          type: 'text',
+          placeholder: '输入绝对路径手动绑定项目 (例如 D:/Projects/my-app)',
+          value: newPathInput,
+          style: { ...S.input, flex: '1 1 300px' },
+          onChange: e => setNewPathInput(e.target.value),
+        }),
+        h('button', {
+          type: 'button',
+          style: S.btn(true),
+          disabled: !newPathInput.trim() || disabled,
+          onClick: handleAddCustomPath,
+        }, '+ 添加并启用项目'),
+      ),
+      path ? h('div', { style: { ...S.row, justifyContent: 'space-between', background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.2))', padding: '10px 14px', borderRadius: 8 } },
+        h('div', { style: { display: 'grid', gap: 4 } },
+          h('div', { style: { fontSize: 13, fontWeight: 600 } }, '当前选定项目：'),
+          h('code', { style: { fontSize: 12, color: 'var(--dsw-alias-brand-primary, #60a5fa)', overflowWrap: 'anywhere' } }, path),
+          h('label', { style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, cursor: 'pointer', fontSize: 13 } },
+            h('input', {
+              type: 'checkbox',
+              checked: project?.enabled ?? false,
+              disabled,
+              style: { accentColor: 'var(--dsw-alias-brand-primary, #2563eb)' },
+              onChange: e => controller.updateProject(path, row => ({ ...row, enabled: e.target.checked })),
+            }),
+            '在此项目中激活 AI Loop 工作流与子代理',
+          ),
+        ),
+        h('button', {
+          type: 'button',
+          style: { ...S.btn(false), color: 'var(--dsw-alias-state-error-primary, #f87171)', borderColor: 'rgba(248,113,113,0.3)' },
+          disabled: disabled || !project,
+          onClick: () => { controller.removeProject(path); setPath(''); },
+        }, '移除项目覆盖'),
+      ) : null,
+    ),
+
+    // 3. 运行看板（针对选定项目呈现 DAG 与实时进度）
+    path ? h(RunDashboard, { path, ctx }) : null,
+
+    // 4. 并发限制与角色模型矩阵卡片
+    h('div', { style: S.card },
+      h('div', { style: S.cardHeader },
+        h('div', null,
+          h('h3', { style: S.title }, path ? '⚙️ 项目独立模型与并发覆盖' : '🌐 全局默认模型与并发配置'),
+          h('p', { style: S.subtitle }, '精确指派 5 大闭环角色的执行模型与推理深度，支持继承父代理或恢复全局设置。'),
+        ),
+        h('button', {
+          type: 'button',
+          style: S.btn(false),
+          disabled: catalog.status === 'loading',
+          onClick: catalog.retry,
+        }, catalog.status === 'loading' ? '正在刷新模型…' : '🔄 刷新可用模型'),
+      ),
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 16 } },
+        h('label', { style: { ...S.label, maxWidth: 220 } },
+          path ? '项目最大并发子代理数' : '全局最大并发子代理数',
+          h('input', {
+            type: 'number',
+            min: 1,
+            max: 16,
+            placeholder: path ? '留空继承全局默认' : '默认 3 (1-16)',
+            value: path ? project?.maxConcurrent ?? '' : state.maxConcurrent,
+            disabled,
+            style: S.input,
+            onChange: e => {
+              const text = e.target.value;
+              if (!path) controller.actions.edit('maxConcurrent', text);
+              else if (text === '' || numberValid(Number(text))) {
+                controller.updateProject(path, row => {
+                  const next = { ...row };
+                  if (text === '') delete next.maxConcurrent;
+                  else next.maxConcurrent = Number(text);
+                  return next;
+                });
+              }
+            },
+          }),
+        ),
+        state.invalid ? h('p', { style: { color: 'var(--dsw-alias-state-error-primary, #f87171)', fontSize: 12, margin: 0 } }, '⚠️ 并发上限须为 1–16 的整数；提供方与模型需成对选择。') : null,
+      ),
+      // 5 大角色卡片网格
+      h('div', { style: S.roleGrid },
+        ...Object.keys(ROLES).map(role => h(RoleCard, {
+          key: `${path}:${role}`,
+          role,
+          path,
+          state,
+          controller,
+          catalog,
+          disabled,
+        })),
+      ),
+    ),
+
+    // 底部操作栏辅助
+    h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 12 } },
+      h('button', {
+        type: 'button',
+        style: S.btn(false),
+        disabled: state.saving || !state.dirty,
+        onClick: controller.actions.discard,
+      }, '放弃所有修改'),
+    ));
+  }
+
+  function apply(ctx) {
+    const controller = new Controller(ctx.configForms.get(CONFIG_ID));
+    ctx.effect(() => () => controller.dispose(), 'ai-loop: configuration form');
+    ctx.effect(() => ctx.configForms.whileServed([CONFIG_ID], () => ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
+      name: 'plugins.bundle.config', key: PACKAGE,
+    }, props => h(Card, { ...props, controller, ctx })))), 'ai-loop: plugin settings');
+  }
+  return { inject: ['slots', 'configForms', 'remote', 'remote.session'], apply, Controller, samePath, rolesValid, projectsValid };
+}

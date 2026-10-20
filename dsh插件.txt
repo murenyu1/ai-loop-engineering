@@ -1,0 +1,51 @@
+主人，这个工作流的 DSH 插件所有相关源码、核心依赖与构建配置都在当前项目 D:\Projects\ai-loop-engineering 下。
+
+以下是插件文件的完整位置分布，以及建议传给 Codex 的文件地址清单：
+
+一、插件文件的完整分布与位置
+模块类别	物理绝对路径	说明
+DSH 插件源码主目录	D:\Projects\ai-loop-engineering\plugins\dsh\	插件的本体源码
+├─ 后端服务入口	plugins\dsh\index.mjs	Cordis 插件入口，注册 ai_loop_delegate / ai_loop_status 工具、技能与项目上下文
+├─ 前端 GUI 源码	plugins\dsh\client\index.mjs	Web / UI 组件（React），目前挂载在插件设置页卡片
+├─ 配置模型与 Schema	plugins\dsh\config.mjs	基于 Schemastery 的插件配置定义与校验
+├─ 插件清单	plugins\dsh\package.json	插件包名 dsh-plugin-ai-loop-engineering、依赖与版本
+└─ 插件自带技能	plugins\dsh\skills\	ai-loop 和 ai-loop-models 技能定义
+共享工作流核心 (Core)	D:\Projects\ai-loop-engineering\core\	插件打包时会整体打包进插件内部的引擎核心
+├─ 角色提示词	core\agents\loop-*.md	planner / dev / tester / reviewer / scribe 五大角色 prompt
+├─ 核心协议规范	core\WORKFLOW.md, core\MEMORY.md	工作流运转与记忆机制
+└─ 执行与记忆脚本	core\scripts\loop.mjs, core\scripts\memory.mjs	工作流 DAG 执行器与记忆库操作脚本
+构建与打包脚本	scripts\build-dsh.mjs<br>scripts\build-dsh-client.mjs	将 plugins/dsh 和 core 构建为独立 DSH 插件包的脚本
+自动化测试	tests\dsh-plugin.test.mjs	DSH 插件加载、工具定义与配置的测试用例
+DSH 桌面已安装副本	C:\Users\Rainwood\.dsh\profiles\desktop\node_modules\dsh-plugin-ai-loop-engineering\	当前 DSH 运行时实际读取加载的目录
+DSH 全局配置文件	C:\Users\Rainwood\.dsh\profiles\desktop\cordis.patch.yml	桌面端配置插件启用状态与角色模型映射的 YAML
+二、建议传给 Codex 的文件清单
+根据 Codex 的具体开发任务，你可以将以下路径整理提供给 Codex：
+
+方案 A：如果要让 Codex 进行【全量插件开发】（推荐直接提供以下整包目录）
+插件源码根目录：
+D:\Projects\ai-loop-engineering\plugins\dsh
+工作流核心目录（插件打包会内嵌此目录）：
+D:\Projects\ai-loop-engineering\core
+构建与测试脚本：
+D:\Projects\ai-loop-engineering\scripts\build-dsh.mjs
+D:\Projects\ai-loop-engineering\scripts\build-dsh-client.mjs
+D:\Projects\ai-loop-engineering\tests\dsh-plugin.test.mjs
+方案 B：如果 Codex 专门负责【右侧栏工作流 GUI 开发】（重点文件）
+如果要让 Codex 把 Web 页面改造成像 dsh-agent-team / dsh-better-sidebar 那样的右侧栏面板，请把这几个关键文件给它：
+
+当前前端界面实现：
+D:\Projects\ai-loop-engineering\plugins\dsh\client\index.mjs（当前有 686 行 React 代码，内含 DAG 看板 RunDashboard、角色矩阵卡片和并发配置）
+前端打包脚本：
+D:\Projects\ai-loop-engineering\scripts\build-dsh-client.mjs
+插件后端与状态工具接口：
+D:\Projects\ai-loop-engineering\plugins\dsh\index.mjs（包含了 ai_loop_status 工具实现与向 UI 提供的数据格式）
+DSH 右侧栏插件官方/优秀实现参考样例：
+C:\Users\Rainwood\.dsh\profiles\desktop\node_modules\dsh-better-sidebar\lib\client.js
+三、传给 Codex 时需要附带的技术备忘（让它少走弯路）
+建议顺便把这 3 点提醒 Codex：
+
+右侧栏插槽名称：当前插件前端是通过 ctx.slots.inject('plugins.bundle.config', ...) 挂在设置页。如果要挂在右侧栏，DSH 系统的右侧栏插槽名为：
+侧边栏 Tab 标签：sidebar.right.pane.tab.title
+侧边栏内容面板：sidebar.right.pane.tab （可直接参考 dsh-better-sidebar 的注入写法）。
+构建方式：修改 plugins/dsh/client/index.mjs 后，需通过 node scripts/build-dsh.mjs --pack 重建 dist/dsh/client.js 和 tgz 安装包。
+Schema 约束：定义 DSH 工具时（defineTool），参数 required 属性只能省略或设为 true，不能写 required: false，否则 DSH 会在启动时直接报 JsonSchemaError 导致插件标红异常。

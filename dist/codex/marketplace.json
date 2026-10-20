@@ -1,0 +1,9 @@
+{
+  "name": "ai-loop-engineering",
+  "plugins": [{
+    "name": "ai-loop-engineering",
+    "source": { "source": "local", "path": "./dist/codex" },
+    "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+    "category": "Productivity"
+  }]
+}

@@ -1,0 +1,291 @@
+# 本地工具接口
+
+需要 Node.js 18+，仅使用标准库。命令在目标项目根目录执行；安装与测试时，将 `BUNDLE` 替换为 install.json.source 的原始源包路径；开发运行时替换为当前 harness 注册表中的 home 部署路径。`ROOT` 为项目绝对路径。这里的占位符不是环境变量或固定目录名。
+脚本不调用模型、不执行报告中的验证命令、不安装依赖、不修改 settings.json。执行前仍须遵守项目权限与已批准范围；遇到配置 deny 停止。
+
+## 安装
+
+Codex / Claude Code 可选 `--model-routing balanced` 或 `--routing PROJECT_RELATIVE_JSON`。前者采用 SETUP 的推荐分工，后者逐角色自定义，两者不能同时提供。先让用户选择，再预演；基础安装保留原模型。Codex 原生定义在 `.codex/agents/loop-*.toml`；Claude Code 在 `.claude/agents/loop-*.md`；本部署生成 ROUTING.md。清单 model_routing 保存请求配置与摘要，native_files 管理原生文件；后续升级保留选择。
+
+```text
+node BUNDLE/scripts/install.mjs --project ROOT --harness codex
+node BUNDLE/scripts/install.mjs --project ROOT --harness codex --apply
+node BUNDLE/scripts/install.mjs --project ROOT --harness codex --check
+```
+
+`--harness` 支持 codex / claude-code / cursor / pi / dsh / generic / auto。默认预演，--apply 写入，--check 只读。AI 优先根据用户指定和会话身份提供明确参数；auto 只采用唯一环境提示，不看已有目录猜测。
+
+Codex 以 .codex/config.toml 的 developer_instructions 指向 .codex/ai-loop/AGENTS.md；Claude 以 .claude/rules/ai-loop.md 指向 .claude/ai-loop；Cursor 以 .cursor/rules/ai-loop.mdc 的 alwaysApply 指向其部署；Pi 合并 .pi/APPEND_SYSTEM.md。DSH 使用显式 .dsh/ai-loop/ENTRY.md。generic 必须指定如 --entry .mytool/rules/ai-loop.md 的工具子目录入口，默认显式读取。
+
+正常安装不改根 AGENTS.md / CLAUDE.md，只配置当前工具。schema 2 清单 harnesses 为注册表，各记录独立 home、entry、loader、version、files 摘要和 entries 管理块摘要；loading 仍为 unverified。源包和已部署文件不能相互包含；不从部署副本反向安装。
+
+schema 1 使用 --migrate 预演与应用，迁移全部已知旧平台，备份原清单与根入口，移除未改动的旧管理块，保留块外规则与 runs。旧 generic 需单独映射。孤立块、修改过的正文、符号链接、目录冲突和路径越界均停止。个人指令覆盖风险、原生规则碰撞及加载验收按 SETUP 处理；不修改 settings.json。
+
+## 模型问答、切换与诊断
+
+```text
+node BUNDLE/scripts/models.mjs configure --project ROOT --harness codex
+node BUNDLE/scripts/models.mjs configure --project ROOT --harness codex --input .ai-loop/routing-input.json --apply
+node BUNDLE/scripts/models.mjs status --project ROOT --harness codex
+node BUNDLE/scripts/models.mjs set --project ROOT --harness codex --role dev --model MODEL --effort high --apply
+node BUNDLE/scripts/doctor.mjs --project ROOT --harness codex --probe --native
+```
+
+首次 configure 从原始源包执行；安装后使用当前部署脚本，工具会定位清单 source 作为升级来源。configure 无 input/preset 时需交互终端，逐项询问；非交互环境先由 AI 收集用户选择。所有写入默认预演，加 --apply 才应用。set 支持 main 和五个子角色，可只修改模型或强度；`--effort inherit` 省略角色强度，Codex main 必须明确。主模型建议不等于当前主会话已经切换；Claude Code 用原生选择器设置，不写 settings.json。
+
+JSON 示例（请求值；不是模型支持清单）：
+
+```json
+{
+  "schema_version": 1,
+  "harness": "codex",
+  "concurrency": 3,
+  "main": {"model": "gpt-6.1-sol", "effort": "medium"},
+  "roles": {
+    "planner": {"model": "gpt-6.1-sol", "effort": "high"},
+    "reviewer": {"model": "gpt-6.1-sol", "effort": "high"},
+    "dev": {"model": "gpt-6-luna", "effort": "high"},
+    "tester": {"model": "gpt-6-luna", "effort": "high"},
+    "scribe": {"model": "gpt-6-luna", "effort": "high"}
+  }
+}
+```
+
+effort 可为 null 表示省略。Codex 接受 minimal/low/medium/high/xhigh/max/ultra；Claude Code 接受 low/medium/high/xhigh/max。这里只校验字段形状与平台枚举，不保证任意模型或客户端支持全部强度。模型 ID 允许用户的自定义 provider 标识；须用当前平台核对可用性。Claude 的 FORCE / EFFORT 环境覆盖、Codex 的配置层/profile/信任会影响实际值。
+
+doctor 验文件一致性，--probe 运行 CLI --version；--native 只读检查 Codex 本地 config/read 配置层和 skills/list，或读取 Claude provider 来源。Codex project layer 有 disabledReason 时返回 dispatch_blocked，不能继续派发；不改变项目的信任。输出只保留必要诊断字段，不导出全量个人 provider 配置或凭据。原生子代理发现、实际调用、有效推理模型与 UI 仍需分别验收；不能用配置值证明模型调用。不同平台能力通过 capabilities 单独报告；未实现平台不导出猜测字段。
+
+启用分工时额外生成 ai-loop 原生技能：Codex `.agents/skills/ai-loop/SKILL.md`；Claude Code `.claude/skills/ai-loop/SKILL.md`。显式调用 `$ai-loop` / `/ai-loop` 可加载明确的委派要求；不覆盖用户已有同名技能。
+
+## 代理运行台账
+
+```text
+node BUNDLE/scripts/agents.mjs record --project ROOT --run RUN_ID --input .ai-loop/agent-event.json
+node BUNDLE/scripts/agents.mjs status --project ROOT --run RUN_ID
+```
+
+首次输入：
+
+```json
+{"id":"dev-1","harness":"codex","role":"dev","task":"task1","state":"requested","summary":"准备派发批准任务"}
+```
+
+原生工具真实启动后，记录返回的 ID：
+
+```json
+{"id":"dev-1","native_id":"替换为真实原生代理ID","state":"running","summary":"原生工具已返回启动结果"}
+```
+
+状态转换：requested → running/failed/stopped；running → waiting/completed/failed/stopped；waiting → running/failed/stopped；终态不能恢复。completed 只表示代理返回，不表示验证 PASS。身份和请求配置在首次记录后固定，不能手改成“已切换”；接续创建新 id，通过 replaces 指向已停止或完成的同任务同角色记录。
+
+可选 observation 示例：`{"source":"native-log","path":".ai-loop/runs/RUN_ID/reports/native.json","model":"原生记录显示的模型","effort":"high","visible":true}`。source 只接受 native-log/native-ui，证据必须为项目内非空文件，保存其 hash；不得以模型自述充当证明。字段来自调度者观察，工具不自动解析证据语义，标记 reported-with-evidence，不宣称模型已验证。台账保存在运行 agents.json，不改 loop.mjs 的任务状态、修复计数或验证门。
+
+切换配置和原生代理文件属于实际项目变更，会影响快照；切换后原源码证据需按原流程重新核对适用性。运行中的代理默认不变，安全停止和 checkpoint 后才以新配置接续；重载要求见 ROUTING.md。Codex 子代理状态界面提供实时状态，台账仅为最后观察记录。
+
+## 项目记忆与启动
+
+以下 BUNDLE 为当前平台部署 home；不要把知识复制到各平台。完整职责与恢复顺序见 [MEMORY.md](../MEMORY.md)。
+
+```text
+node BUNDLE/scripts/memory.mjs bootstrap --project ROOT
+node BUNDLE/scripts/memory.mjs bootstrap --project ROOT --intent continue
+node BUNDLE/scripts/memory.mjs bootstrap --project ROOT --intent continue --run RUN_ID
+node BUNDLE/scripts/memory.mjs bootstrap --project ROOT --intent new
+node BUNDLE/scripts/memory.mjs inspect --project ROOT
+node BUNDLE/scripts/memory.mjs search --project ROOT --query "接口 兼容" --limit 8
+```
+
+bootstrap 默认 inspect，仅返回共享记忆状态、索引路径、active 运行短摘要和交接问题。continue 唯一候选时定位，多个候选返回 needs_choice；显式指定关闭运行返回 do-not-resume。选择并不执行开发或自动 resume；先核对当前项目，snapshot_status 始终 unchecked。--limit 为 1–30，默认 10；有 next_after 时用 --after 续读。new 不自动继续旧任务。
+
+inspect 返回 revision、文档 hash 与来源问题，不输出全部知识。search 合并完全相同的条目并保留其他文档指针，返回有限条目，单次摘录约束为 8000 字符，可能截断；核对重要原文。字符数不等于 token 数。
+
+## 增量保存知识
+
+先读取相关原文和 inspect 的 revision/hash，再保存输入 JSON，例如 .ai-loop/memory-update.json：
+
+```json
+{
+  "base_revision": 0,
+  "documents": [{
+    "name": "index",
+    "expected_hash": "替换为 inspect 返回的当前文件 hash；文件不存在时为 null",
+    "summary": "项目目标、重要约束与资料入口的短概览",
+    "entries": [{
+      "id": "compatibility",
+      "title": "保留现有接口",
+      "text": "用户确认本次开发须保持现有接口兼容。",
+      "scope": "当前接口模块",
+      "status": "confirmed",
+      "sources": [{"type": "user", "text": "本次用户明确确认接口兼容要求"}]
+    }]
+  }]
+}
+```
+
+```text
+node BUNDLE/scripts/memory.mjs save --project ROOT --input .ai-loop/memory-update.json
+```
+
+name 为 index / architecture / decisions / lessons；不存在的详细文档按需创建。summary 首次必填，更新可省略；entries 为按稳定 id 合并的增量，不默认删除未提供条目。撤销条目标为 superseded。状态为 confirmed / observed / unverified / superseded；有效事实须有来源，猜测必须 unverified。
+
+来源格式：file 带项目相对 path，保存时计算摘要；event 带 run 和正整数 seq；user 带实际记录的 text；url 带无凭据的 HTTP(S) url。不得引用知识库自身形成循环；外部链接仅记录，不由脚本联网验证。来源变化要求 AI 核对结论，不自动证明事实已失效或仍成立。
+
+知识与交接文件采用 UTF-8；其他编码先保留原文并明确转换，不猜测编码后覆盖。catalog.json 是结构化存储，Markdown 为阅读视图。base_revision 和 expected_hash 防止覆盖并发修改；保存旧正文到 memory/history/。未索引旧资料需要先读、保留有效内容，并在对应文档 patch 加 import_existing: true；初始索引模板例外。已索引正文被手改也必须先读取并明确合并，通过 import_existing 保留有效补充；不直接重建丢弃信息。脚本不能证明 AI 真的处理了全部旧资料。
+
+4.1 起 index/详细文档超过 6000/48000 字符时自动生成短导航，完整正文保存在不可变 pages；schema 2 catalog 只保存分片指针，结构化条目保存在 data，单个聚合 JSON 不再随全部知识增长。每批最多 100 条，总条目数可持续追加；单条正文最多 200000 字符。schema 1 可读，更新时备份并迁移。相同有效更新返回 unchanged，不增长 revision。旧版本脚本不能写 schema 2，请先升级当前入口。
+
+分页读取：`memory.mjs read --project ROOT --document architecture --page 1`；每次最多 8000 字符，依次跟随 next_offset / next_page。精准读取条目用 `--document NAME --entry ID`。search 返回 next_after，传 `--after DOCUMENT:ID` 继续检索；知识变化后重新检索。不要全量读取 catalog/data 或所有分页。
+
+## 保存与检查交接
+
+从 bootstrap --run RUN_ID 的 selected.run.checkpoint 获取 expected_hash、event_cursor 与 event_head；用 loop events 分批读取实际未消费的事件。输入 .ai-loop/checkpoint-update.json：
+
+```json
+{
+  "expected_session_hash": "替换为 checkpoint.expected_hash；文件缺失时为 null",
+  "base_cursor": 0,
+  "event_cursor": 1,
+  "intent": "继续用户已确认的本次开发目标",
+  "constraints": ["仍有效的范围和限制"],
+  "decisions": ["已确认方案，以及选择它的原因"],
+  "open_questions": [],
+  "next_steps": ["核对实际差异，再继续尚未完成的任务"],
+  "references": [".ai-loop/runs/RUN_ID/spec.json"],
+  "changes": [{"path":"src/api.js","symbols":["handleRequest"],"reason":"修复接口兼容","read_first":"handleRequest 及相邻调用；先核对当前版本"}]
+}
+```
+
+```text
+node BUNDLE/scripts/memory.mjs checkpoint --project ROOT --run RUN_ID --input .ai-loop/checkpoint-update.json
+```
+
+base_cursor 对应已读取的旧交接游标；event_cursor 仅填本次实际消费到的游标，不能回退或超过事件头。数组必填，next_steps 至少一项，引用须为已有项目内普通文件。changes 为固定改动定位，保存文件 hash；已删除文件加 deleted:true，symbols 可为空数组。src/api.js 是示例，替换为实际文件；旧调用省略 changes 可兼容，新交接应填写。
+
+超过 12000 字符时 session 改为短导航，全部内容放 handoff-pages，checkpoint.details 保存指针与 hash。用 `memory.mjs read --project ROOT --run RUN_ID --page 1` 和 next_offset/next_page 读取。旧 session 备份到 handoffs/；不修改 state、报告或计数。
+
+## 中断恢复的工作单元
+
+在修改前后调用 `loop.mjs progress --project ROOT --run RUN_ID --input JSON`，输入例如：
+
+```json
+{"unit":"api-1","task":"task1","stage":"planned","summary":"修复接口并验证兼容","files":["src/api.js"]}
+```
+
+改动完成后同 unit 填 stage:done 或 blocked。单元关闭后新工作用新 unit。文件可尚未创建或已删除，保存当时 hash/null。bootstrap 返回未关闭单元和最后摘要，不把 done 当 PASS；直接中断后先核对实际文件、增量事件与证据，无法恢复未落盘内容。
+
+## Codex 插件原生设置 4.3.0
+
+Codex 插件 4.3.0通过本地 stdio MCP 的 `openai/settings` 在插件详情页提供原生设置。打开设置时只读 Codex 本机项目列表与旧 AI Loop 工作区配置，下拉框显示项目名称和根目录；选择即可查看配置，不再提供路径输入或单独登记动作。用户可分别应用启用开关、模型/思考深度/并发，界面范围显示“全局默认／仅当前工作区”，选择工作区默认项目范围；可切换全局默认并恢复项目继承。新项目默认停用，模型保存不会启用恢复入口。模型和强度须来自当前原生模型列表，保存前会复核。
+
+`codex-workspaces.mjs` 隔离桌面格式兼容：只提取 `CODEX_HOME/.codex-global-state.json` 中的 `local-projects`、`project-order` 及旧根目录数组；不写回，不遍历会话历史。列表缺失、损坏或未知格式明确报错，旧登记仍可选择。失效目录和链接被过滤；动作保存前重新检查所选根目录仍在列表。
+
+主会话模型仍由 Codex 原生选择器控制。配置在原生重载后的下一次派发生效，运行中的代理不热切换。工作区恢复入口只对用户启用的精确根目录生效，需在 Codex `/hooks` 审核信任；设置页读取工作区列表不依赖该钩子。安装不改 `settings.json` 或信任缓存。
+
+Codex 当前客户端的功能开关可能影响原生设置区是否显示。字段和保存效果须在实际插件详情页验收；脚本或协议测试不等于 UI 验收。不要修改私有开关、`settings.json` 或信任缓存来强制显示。
+
+从仓库构建插件：`node scripts/build-plugin.mjs`，用 `--check` 核对产物。插件使用自己的脚本，目标项目只需执行 `plugin.mjs init --project ROOT` 预演，并在允许时加 `--apply` 初始化共享记录；已有旧部署时先核对优先级。
+
+底层配置脚本 `plugin-models.mjs status|list|configure|set|reset --project ROOT` 可用于诊断或兼容操作，选项以该脚本的 `--help` 为准。写入前预演，确认范围和字段后才应用。全局资料位于 CODEX_HOME/ai-loop/models.json 与 CODEX_HOME/agents，项目覆盖位于 .ai-loop/models.json 与 .codex/agents；保留历史，不覆盖未登记或人工修改角色。配置值不能证明原生角色发现、模型推理或插件页面显示已通过。
+
+## Windows 所有者预检
+
+`windows.mjs inspect --project ROOT` 只读检查身份和已知受保护目录。Codex 配置写入不能由 CodexSandboxOffline/Online 创建；请由正常用户宿主进程执行，保留平台审批。`repair --project ROOT --target EXACT_DIRECTORY` 只预演明确发现的异常目录自身 owner，加 --apply 前备份 SDDL；不递归、不重置 DACL、不移除 deny。确需管理员授权时由用户处理；没有异常就不改。修复后用普通沙箱命令实测，ACL 检查本身不证明沙箱可用。
+
+有未消费事件返回 events-pending；缺失 checkpoint 的旧运行仍可发现，但需读取旧 session 与必要事件后补交接。正文被改、引用丢失或游标落后均标 needs-check。completed/stopped 的交接可归档整理，不允许借此重开运行。脚本检查结构，语义完整性和真实事件阅读由执行者负责。
+
+## 创建运行
+
+先保存批准方案到项目 `.ai-loop/request.json`，不放源包或参与代码快照的源码目录。
+
+```json
+{
+  "goal": "完成用户要求的修改",
+  "max_fixes": 3,
+  "ignore_paths": [],
+  "tasks": [{
+    "id": "task1",
+    "title": "实现目标行为",
+    "acceptance": ["正常与失败路径符合已确认要求"],
+    "review": "self",
+    "depends_on": [],
+    "checks": [{"id": "regression", "command": "项目中实际可执行的验证命令", "expected_exit": 0}]
+  }]
+}
+```
+
+```text
+node BUNDLE/scripts/loop.mjs create --project ROOT --input .ai-loop/request.json
+node BUNDLE/scripts/loop.mjs status --project ROOT --run RUN_ID
+node BUNDLE/scripts/loop.mjs begin --project ROOT --run RUN_ID --task task1 --phase development
+node BUNDLE/scripts/loop.mjs begin --project ROOT --run RUN_ID --task task1 --phase verification
+node BUNDLE/scripts/loop.mjs snapshot --project ROOT --run RUN_ID
+```
+
+工具返回 run_id；也可通过 create 的 `--run ID` 指定未使用的编号。任务、运行与检查编号均为 1–64 个字母、数字、点、下划线或连字符，以字母或数字开头。
+review：none 不要求任务评审，self 允许诚实自检，independent 要求真实独立评审。共享检查可复用同一 id，但命令与预期退出码必须相同。
+快照覆盖普通文件内容、路径和执行位；排除 `.git`、`.ai-loop`、原始源包与已注册平台部署正文；根规则及部署外原生配置仍绑定快照，核心升级后评估旧证据适用性。把明确的生成目录写入 ignore_paths；排除项属于方案，不能在验证后改写。快照遇到符号链接或权限错误会停止，先明确范围，不自动跟随或忽略。
+创建前批准方案；脚本不能代替人类审批。plan.md 可补充设计说明，spec.json 固定本运行的验收配置，state.json 只能通过工具更新。
+
+## 保存证据与修复
+
+由 harness 执行真实验证，并捕获退出码与日志；日志放本运行的 reports/ 内。不要用管道最后一段的退出码代替验证程序退出码。
+验证前后 snapshot 应一致；从输出原样复制 revision。报告 JSON 保存到 `.ai-loop/request-report.json`，示例如下：
+
+```json
+{
+  "role": "tester",
+  "task_id": "task1",
+  "status": "PASS",
+  "execution": "self",
+  "revision": {"algorithm": "sha256", "digest": "替换为完整快照摘要", "files": 1},
+  "checks": [{
+    "id": "regression",
+    "command": "与方案中的实际命令一致",
+    "environment": "实际环境与工具版本",
+    "exit_code": 0,
+    "log": "reports/regression.log"
+  }],
+  "issues": []
+}
+```
+
+```text
+node BUNDLE/scripts/loop.mjs record --project ROOT --run RUN_ID --input .ai-loop/request-report.json
+node BUNDLE/scripts/loop.mjs begin --project ROOT --run RUN_ID --task task1 --phase review
+```
+
+reviewer 报告包含 role、task_id、status（APPROVED / REJECTED / BLOCKED）、execution、revision、findings、issues。BLOCKER 的 severity 使用大写 `BLOCKER`。同一代理的 APPROVED 只代表自检；independent 的真实身份需由 harness 和主代理核对，工具不能证明隔离事实。
+
+```text
+node BUNDLE/scripts/loop.mjs fix --project ROOT --run RUN_ID --task task1
+node BUNDLE/scripts/loop.mjs resume --project ROOT --run RUN_ID --task task1 --reason "阻塞条件已如何解决"
+node BUNDLE/scripts/loop.mjs stop --project ROOT --run RUN_ID --reason "命中权限拒绝或用户要求停止"
+```
+
+fix 仅用于 FAIL/REJECTED，每任务总修复次数 0–3，由方案确定；重开会话不重置。修复后重新 begin verification，PASS 后重新评审。resume 仅恢复普通阻塞，保留修复计数。权限拒绝报告使用 BLOCKED 和 `permission_denied: true`，运行进入 stopped，不能 resume。
+
+BLOCKED 可携带上一已知 revision；快照不可获取时使用 `null`。工具不为阻塞结果重新计算快照，并标记 `revision_confirmed: false`，该结果不能作为通过证据。恢复后必须重新获取快照并验证。
+`stop` 可在运行任意活跃阶段持久化停止原因，不读取代码快照；停止后的运行不能 resume。状态目录本身不可写时也停止操作并报告，不能换方式突破权限。
+
+## 事件与交付
+
+事件输入为 `{"type":"decision","summary":"已确认的决策与原因"}`；type 为 requirement / decision / rejected / question / handoff。日常阶段无需手工重复写事件。
+
+```text
+node BUNDLE/scripts/loop.mjs event --project ROOT --run RUN_ID --input .ai-loop/event.json
+node BUNDLE/scripts/loop.mjs events --project ROOT --run RUN_ID --after 0 --limit 50
+node BUNDLE/scripts/loop.mjs complete --project ROOT --run RUN_ID --input .ai-loop/delivery.json
+```
+
+events 仅返回游标之后的有限事件，用返回的 next_cursor 续读；记录员通过 memory checkpoint 保存实际消费游标和 session 正文，跨会话续用；不直接编辑元信息，不复制执行状态和修复计数。
+delivery.json 包含 `verification`（最终快照的 tester PASS 报告）及必要时的 `review`（同快照 reviewer APPROVED 报告），最终报告省略 task_id。verification 须覆盖 spec 所有检查；可复用同快照且已覆盖全部必需检查的证据，仅补缺失项。存在 independent 任务时最终 review 也须独立。
+代码快照变化会拒绝旧报告；代码未变且完整证据仍有效时无需重复执行同一检查。complete 仍检查所有任务已通过，随后禁止修改已完成运行。
+
+## 检查与故障
+
+```text
+node BUNDLE/tests/all.mjs
+```
+
+测试仅放在原始源包，不部署。所有用例在同一 Node 进程中运行，不启动模型或其它 harness。覆盖重复安装、规则保留、路径安全、轮数与依赖、过期/缺失证据、自检与独立评审、权限拒绝和恢复。
+操作冲突出现锁文件时先确认进程是否仍活跃，不自动删除锁；事件和状态不一致时停止并保留资料人工恢复。脚本只验证数据与状态契约，不能代替平台文件系统隔离或证明 AI 没有伪造报告。
