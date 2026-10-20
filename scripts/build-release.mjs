@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { deflateRawSync } from 'node:zlib';
 import { BUNDLE, VERSION, safePath, atomicWrite, assert, mainModule, printResult } from './lib.mjs';
 import { buildPlugin } from './build-plugin.mjs';
+import { packDsh } from './build-dsh.mjs';
 
 export function filesUnder(directory) {
   const result=[];
@@ -47,6 +48,7 @@ export function buildRelease() {
     atomicWrite(safePath(BUNDLE,'downloads/'+name),bytes);
     results.push({name,files:files.length,bytes:bytes.length,sha256:crypto.createHash('sha256').update(bytes).digest('hex')});
   }
+  results.push(packDsh());
   atomicWrite(safePath(BUNDLE,'downloads/SHA256SUMS'),results.map(item=>`${item.sha256}  ${item.name}`).join('\n')+'\n');
   return {version:VERSION,packages:results};
 }

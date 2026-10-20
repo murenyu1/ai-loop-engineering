@@ -1,0 +1,110 @@
+{
+  "version": "4.3.0",
+  "harness": "dsh",
+  "files": [
+    {
+      "path": "client.js",
+      "hash": "d8cfce592dc59f56f5fa6c98bd3695e8b3fbc46d2caa9f79e3358e74deabd8c3"
+    },
+    {
+      "path": "config.mjs",
+      "hash": "78ea1d8cc658630ce58b832bfa17ceedc6b18efddf206b2aa384aedde866a930"
+    },
+    {
+      "path": "cordis.patch.yml",
+      "hash": "520daabdb544f0406e711eeb776dabc47ebc07382bb6e016eda08fe34ec4ee9a"
+    },
+    {
+      "path": "core/agents/loop-dev.md",
+      "hash": "11ed896fb2b69fd001ac56e945ec556598f8ee5d22ced5f73bf12fde84999eb3"
+    },
+    {
+      "path": "core/agents/loop-planner.md",
+      "hash": "832723c1423dd8e8095110f84f7f7c198db022c89356d8a4240f6384fb3aef95"
+    },
+    {
+      "path": "core/agents/loop-reviewer.md",
+      "hash": "525edc644abf9b0d8125a97e27b12d8b73e85edf1b0ce8b67d83c458a2e4bc74"
+    },
+    {
+      "path": "core/agents/loop-scribe.md",
+      "hash": "86721cb6970bbfa22956f866d8505d296f4c9d51a39a458d38d4c10e69b202cf"
+    },
+    {
+      "path": "core/agents/loop-tester.md",
+      "hash": "9276041add42e8c1df91085a219867324ad38eb576c1d30afa28009d57c79b90"
+    },
+    {
+      "path": "core/MEMORY.md",
+      "hash": "6ca0641342c14376aa7125fde1da90f44f048bac71171ccf3fa4777ae545978c"
+    },
+    {
+      "path": "core/README.md",
+      "hash": "f514442981b0329a914402e34abef0312c340d1942c3a21b0fdfe02a8d6fa55b"
+    },
+    {
+      "path": "core/ROUTING.md",
+      "hash": "fbbb5f07d31973c833807c17ff35083973744b7a9c2c66c3303e1d6f2066a2ae"
+    },
+    {
+      "path": "core/scripts/lib.mjs",
+      "hash": "c91357c33ca4d24c9df317c4a05a9284319529bc658e4dfdd1e58ed1f8612181"
+    },
+    {
+      "path": "core/scripts/loop.mjs",
+      "hash": "9a9456c31c916572910a3bf4a8c94776950af7723ef30830f9c56f31c0b9b460"
+    },
+    {
+      "path": "core/scripts/memory-store.mjs",
+      "hash": "9f324febb1aeb656ca9fedf2f36bb0fc4a0774ed8dfa29f592b285e3e9f2e806"
+    },
+    {
+      "path": "core/scripts/memory.mjs",
+      "hash": "97260d07297e2859df6b243be4a2b7e81bbce1528b1842bbc7e7335855818c44"
+    },
+    {
+      "path": "core/scripts/README.md",
+      "hash": "f4ae24983757bae68719c189f79a403a74b70c32d0633b2e98e892d00c3c4e9d"
+    },
+    {
+      "path": "core/SETUP.md",
+      "hash": "a49574b12c210e6fc4262d7f1c88829ac3b5b41d0c4fbf268bb38c43cb2f57ba"
+    },
+    {
+      "path": "core/templates/memory-index.md",
+      "hash": "d63a168ce886ad27704ae40a2f68e3acb4ecfda563e7ba7313454cdaa2b92284"
+    },
+    {
+      "path": "core/templates/routing.md",
+      "hash": "3f209f78d3a129d9a1bad4f3b9934bc1337ebef22229949a47180feaa6feb250"
+    },
+    {
+      "path": "core/WORKFLOW.md",
+      "hash": "895c100d18baae3523f3a78b6a5a93dde864bb3bc389725ed700f703d3be526a"
+    },
+    {
+      "path": "index.mjs",
+      "hash": "752dba105e09cc05b992999788a653d2096bcc2ceea58d67aba05487a1f4173b"
+    },
+    {
+      "path": "package.json",
+      "hash": "0748633f7967d312052d2799b79a5b6f3e7dc916e7369a7445732ecd24e69029"
+    },
+    {
+      "path": "README.md",
+      "hash": "2bebd3b68a8461fbce2c81aa283ecaf75833250125d332eecb43cd125afec72c"
+    },
+    {
+      "path": "ROUTING.md",
+      "hash": "db69c5f0cfbd27d6f28cccae9879ebf193dd65b4b7e68095a85b5559ee3518a3"
+    },
+    {
+      "path": "skills/ai-loop-models/SKILL.md",
+      "hash": "470057264fed35e57484fa32dc124a9864953e2f6f15179fc12957bc65b2338b"
+    },
+    {
+      "path": "skills/ai-loop/SKILL.md",
+      "hash": "9efccafe1cb84cbc72e92c2ed635443a40204add19347faa4a9ca38fe2f84c9d"
+    }
+  ]
+}

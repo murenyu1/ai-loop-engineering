@@ -1,5 +1,7 @@
 # 配置 AI Loop Engineering
 
+DeepSeek Harness 原生插件见 [plugins/dsh/README.md](plugins/dsh/README.md)，针对本机 0.2.1-rc.2 接口适配，从共用 `core/` 构建独立 `.tgz`。它与下文旧式 `--harness dsh` 显式入口安装器是两种路径；插件通过 DSH 原生管理器加载，项目只保存 `.ai-loop/`。插件的宿主加载、界面和实际模型调用须分别验收。
+
 Codex 4.3.0 使用插件详情页的原生 `openai/settings` 设置区；[GitHub Releases](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.3.0) 提供通用工作流和 Codex 插件独立下载，原生页面可见性需在客户端验收。查看仓库 README 的下载和使用说明。维护者从仓库 `node scripts/build-release.mjs` 构建；用 `scripts/install-plugin.mjs --project ROOT` 预演、加 --apply 安装。插件提供核心，目标只保存 `.ai-loop/`；不适用下文旧式“源包位于目标内部”的约束。原生设置支持全局默认、项目覆盖、模型/思考深度/并发和恢复继承，并提供 Codex 工作区自动列表、直接选择与启停。SessionStart 自动入口需要在 Codex 原生 `/hooks` 审核信任。安装成功不等于设置页可见、原生加载或实际模型已验证。
 
 以下为 adapters/project/ 保留的旧式项目安装兼容说明。仓库的共用正文现在位于 core/，根 scripts/ 是兼容命令；安装器会从权威源码生成部署，不能把兼容转发脚本单独复制到目标。通用工作流独立 ZIP 不包含这些平台安装器。

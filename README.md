@@ -1,6 +1,6 @@
 # AI Loop Engineering
 
-让 AI 按“计划 → 开发 → 验证 → 评审 → 交接”推进项目，并从已保存的记录恢复中断任务。当前版本为 **4.3.0**，需要 Node.js 18+，不依赖第三方 npm 包。
+让 AI 按“计划 → 开发 → 验证 → 评审 → 交接”推进项目，并从已保存的记录恢复中断任务。当前版本为 **4.3.0**，通用核心需要 Node.js 18+，不依赖第三方 npm 包；原生插件使用对应宿主提供的运行接口。
 
 ## 选择适合你的版本
 
@@ -8,6 +8,7 @@
 |---|---|---|
 | 在不同 AI 开发工具中使用共用流程 | [通用工作流 4.3.0](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.3.0/ai-loop-workflow-4.3.0.zip) | 共用流程、角色、状态和分页记忆工具；不含 Codex 插件 |
 | 在 Codex 中一次安装，并在插件详情页设置 | [Codex 插件 4.3.0](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.3.0/ai-loop-codex-4.3.0.zip) | Codex 插件、原生设置、工作区管理和所需核心 |
+| 在 DeepSeek Harness 中使用原生插件 | [DSH 插件 4.3.0 预览版](https://github.com/murenyu1/ai-loop-engineering/releases/download/dsh-v4.3.0/ai-loop-dsh-4.3.0.tgz)，见 [安装说明](plugins/dsh/README.md) | 面向 0.2.1-rc.2 的插件、原生角色调度、设置和所需核心 |
 | 修改工作流或开发其他客户端插件 | 本仓库源码 | core、平台适配器、插件源码、测试和构建工具 |
 
 两个包在 [v4.3.0 Releases](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.3.0) 的 Assets 中分别提供下载。Codex 用户只需插件包；其他工具可选通用工作流包。校验文件为 [SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.3.0/SHA256SUMS)。GitHub 自动提供的 Source code 压缩包包含仓库源码，主要供开发维护使用。
@@ -45,6 +46,8 @@ Codex 插件的模型设置通过本地 stdio MCP 的 `openai/settings` 集成�
 
 ## 通用工作流
 
+DeepSeek Harness 用户可从 [DSH 独立预览发布](https://github.com/murenyu1/ai-loop-engineering/releases/tag/dsh-v4.3.0) 下载 `.tgz` 和该包的 SHA256SUMS，用 DSH 插件管理器安装到实际使用的 profile；也可按 [DSH 插件说明](plugins/dsh/README.md) 从源码构建。DSH 预览发布与上述 Codex / 通用工作流发布分别提供下载。
+
 下载并解压通用工作流 ZIP 到固定目录，不必复制进每个项目。让当前 AI：
 
 > 使用这里的 AI Loop 工作流完成当前需求。先读取目标项目规则和工作流目录中的 `WORKFLOW.md`，再按阶段读取角色与记忆协议，并遵守当前工具的权限规则。
@@ -63,7 +66,9 @@ node scripts/memory.mjs bootstrap --project 项目绝对路径
 core/                  共用流程、角色、记忆协议与平台无关状态工具
 adapters/project/      多客户端项目安装兼容适配器
 plugins/codex/         Codex 插件源代码、技能、MCP 设置和钩子
+plugins/dsh/           DeepSeek Harness 原生插件、角色调度和设置
 dist/codex/            从插件源码构建的可安装目录
+dist/dsh/              DSH 可安装目录，发行时打包为 tgz
 scripts/               构建、发行和上传清单工具
 tests/                 维护者检查
 downloads/             本机生成的通用包、插件包与校验文件
@@ -76,6 +81,7 @@ downloads/             本机生成的通用包、插件包与校验文件
 ```text
 node tests/all.mjs
 node scripts/build-release.mjs
+node scripts/build-dsh.mjs --pack
 node scripts/publish-files.mjs --list
 ```
 

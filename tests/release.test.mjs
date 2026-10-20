@@ -23,7 +23,7 @@ function unpack(file,root) {
   }
   assert.equal(bytes.readUInt32LE(pos),0x02014b50);return names;
 }
-test('独立发行包可复现、精简核心没有 Codex 依赖、两个包均可在仓库外运行',t=>{
+test('独立发行包可复现、通用与 Codex ZIP 可在仓库外运行',t=>{
   assert.throws(()=>buildPlugin('core/unexpected-output'),/输出仅允许/);
   const first=buildRelease(),second=buildRelease();assert.deepEqual(first,second);
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'ai-loop-release-'));
@@ -32,6 +32,7 @@ test('独立发行包可复现、精简核心没有 Codex 依赖、两个包均�
   for(const item of first.packages) {
     const zip=path.join(BUNDLE,'downloads',item.name),bytes=fs.readFileSync(zip);
     assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),item.sha256);
+    if (!item.name.endsWith('.zip')) continue;
     const target=path.join(root,item.name);fs.mkdirSync(target);
     const names=unpack(zip,target);
     assert.ok(names.includes('README.md'));
