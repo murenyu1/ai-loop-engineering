@@ -1,6 +1,6 @@
-# AI Loop Codex 插件 4.4.2 候选
+# AI Loop Codex 插件 4.4.3 候选
 
-当前源码候选为 4.4.2，尚未发布；下文 4.3.1 下载链接指向已发布历史版本。候选版本从本仓库构建，不能使用历史下载替代本次更新。插件预检使用 `node PLUGIN/scripts/plugin.mjs doctor --project ROOT`；兼容 `doctor.mjs` 也会识别插件项目。配置检查、原生执行、实际模型和界面分别验收。
+当前源码候选为 4.4.3，尚未发布；下文 4.3.1 下载链接指向已发布历史版本。候选版本从本仓库构建，不能使用历史下载替代本次更新。插件预检使用 `node PLUGIN/scripts/plugin.mjs doctor --project ROOT`；兼容 `doctor.mjs` 也会识别插件项目。配置检查、原生执行、实际模型和界面分别验收。
 
 在 Codex 插件详情页直接管理 AI Loop 模型和工作区，并在不同本地项目使用同一套开发闭环、分页记忆与中断恢复流程。插件包包含运行所需核心，无需另装通用工作流。可从 [GitHub Releases](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.3.1) 单独下载 Codex 插件包。
 

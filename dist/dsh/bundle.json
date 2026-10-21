@@ -1,5 +1,5 @@
 {
-  "version": "4.4.2",
+  "version": "4.4.3",
   "harness": "dsh",
   "files": [
     {
@@ -48,7 +48,7 @@
     },
     {
       "path": "core/scripts/lib.mjs",
-      "hash": "6a94e462908b2347112cff373d0106f49d87e48b0981bd228d9525935a8b21f9"
+      "hash": "d58a6fcbebffe8b25f93c9f72ab7b45ab4bed4f17dc9dd1f6fe6afe9761db57c"
     },
     {
       "path": "core/scripts/loop.mjs",
@@ -88,11 +88,11 @@
     },
     {
       "path": "package.json",
-      "hash": "256afa0fe346e94872e222c5e8312613241ed93510d7d090fd2eda91688b09f3"
+      "hash": "8876b43d1e4b44b4ae94d3a1d8f03c2347ffb51e8bf814beda66f7e69f5c27f0"
     },
     {
       "path": "README.md",
-      "hash": "e88236ac4867b14c518a49932a59b613b9dac4799cde7c8d24377cc57b1a955d"
+      "hash": "c2a7930c748c92703fabf912d581ae56dba474a9536065389203e49a711e586b"
     },
     {
       "path": "ROUTING.md",
