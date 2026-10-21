@@ -403,7 +403,7 @@ window.__ModuleLoader__.load({
     const project = state.projects.find(row => samePath(row.path, path));
     const own = path === '' ? state.roles[role] : project?.roles?.[role];
     const value = { ...emptyRole(), ...state.roles[role], ...own };
-    const update = patch => controller.setRole(role, { ...value, ...patch }, path);
+    const update = patch => controller.setRole(role, path === '' ? { ...value, ...patch } : { ...own, ...patch }, path);
     const group = catalog.groups.find(item => item.id === value.provider);
     const model = group?.models.find(item => item.id === value.model);
     const inherit = [{ id: '', name: '继承父智能体' }];
@@ -436,7 +436,9 @@ window.__ModuleLoader__.load({
           value: value.model ?? '',
           choices: [...inherit, ...(group?.models ?? []).map(item => ({ id: item.id, name: item.name }))],
           disabled: disabled || !group,
-          onChange: modelId => update({ model: modelId, reasoningEffort: '' }),
+          onChange: modelId => update(modelId
+            ? { provider: value.provider, model: modelId, reasoningEffort: '' }
+            : { provider: '', model: '', reasoningEffort: '' }),
         }),
         h(CustomSelect, {
           label: '思考/推理强度',
@@ -687,6 +689,6 @@ window.__ModuleLoader__.load({
       return () => disposers.forEach(dispose => dispose?.());
     }, 'ai-loop: right sidebar');
   }
-  return { inject: ['slots', 'configForms', 'remote', 'remote.session'], apply, Controller, samePath, rolesValid, projectsValid, requestStatus, RunDashboard, SidebarDashboard, useCatalog };
+  return { inject: ['slots', 'configForms', 'remote', 'remote.session'], apply, Controller, samePath, rolesValid, projectsValid, requestStatus, RunDashboard, SidebarDashboard, useCatalog, RoleCard };
 }
 });

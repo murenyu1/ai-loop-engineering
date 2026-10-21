@@ -103,9 +103,11 @@
 
 所有 harness 共用项目 `.ai-loop/`。长期知识放 memory/index.md、architecture.md、decisions.md、lessons.md，按主题读取；只创建必要文档，详细内容优先引用项目原有资料。契约见 MEMORY.md。
 
-超过视图预算时由记忆工具分片，短导航加分页续读，不靠增大上下文或丢弃旧条目解决。schema 1 记录可读，首次更新迁移；旧入口升级前不能用旧版脚本写 schema 2 目录。
+超过视图预算时由记忆工具分片，短导航加分页续读，不靠增大上下文或丢弃旧条目解决。这里的 schema 指记忆目录：schema 1 记忆记录可读，首次更新迁移；旧入口升级前不能用旧版记忆脚本写 schema 2 目录。
 
-Codex 插件模式使用全局核心与项目独立记录。模型设置用插件 plugin-models.mjs：global 默认、project 覆盖、reset 恢复默认；主会话模型由原生选择器控制，当前代理不热切换。项目已有旧入口时先核对优先级，不能混用两套核心。
+运行 state 的 schema 与记忆目录独立：新运行使用 schema 2 阻止旧核心误写，已有运行按核心兼容检查处理。升级操作保留运行编号、计数和证据，不手改 state；先停止参与该运行的旧执行者，再执行核心提供的迁移命令。
+
+插件模式使用包内核心与项目独立记录。Codex 模型设置用插件 plugin-models.mjs：global 默认、project 覆盖、reset 恢复默认；DSH 使用其原生插件设置，不调用 Codex 脚本。主会话模型由宿主原生选择器控制，当前代理不热切换。项目已有旧入口时先核对优先级，不能混用两套核心。
 
 运行 `.ai-loop/runs/<run_id>/` 中，spec/plan 是方案，state 是权威阶段、计数和结果指针，reports 是实际证据，events 是增量事件，session/checkpoint 是语义交接与消费游标。不得直接编辑状态或计数来恢复。
 

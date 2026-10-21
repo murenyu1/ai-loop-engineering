@@ -124,11 +124,24 @@ function paths(root, run) {
   const directory = safePath(root, `.ai-loop/runs/${run}`);
   return { directory, state: safePath(root, `.ai-loop/runs/${run}/state.json`), spec: safePath(root, `.ai-loop/runs/${run}/spec.json`), events: safePath(root, `.ai-loop/runs/${run}/events.jsonl`), mailbox: safePath(root, `.ai-loop/runs/${run}/mailbox`) };
 }
+function versionParts(value) {
+  if (typeof value !== 'string' || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(value)) return null;
+  return value.split(/[+-]/, 1)[0].split('.').map(Number);
+}
+function compareVersions(left, right) {
+  const a = versionParts(left), b = versionParts(right);
+  if (!a || !b) return null;
+  for (let index = 0; index < 3; index++) if (a[index] !== b[index]) return a[index] - b[index];
+  return 0;
+}
 function load(root, run) {
   const files = paths(root, run);
   const state = jsonFile(files.state);
-  assert(state.schema_version === 1 && state.run_id === run && Array.isArray(state.tasks), '运行状态格式错误');
+  assert([1, 2].includes(state.schema_version) && state.run_id === run && Array.isArray(state.tasks), '运行状态格式错误');
+  const versionOrder = compareVersions(state.version, VERSION);
+  assert(versionOrder !== null && versionOrder <= 0, '运行由较新核心创建；请先升级当前核心');
   const spec = validateSpec(jsonFile(files.spec));
+  if (state.schema_version === 2) assert(compareVersions(state.version, '4.4.0') >= 0, 'schema 2 运行版本不匹配');
   assert(state.spec_hash === crypto.createHash('sha256').update(JSON.stringify(spec)).digest('hex'), '运行方案已被直接改写；先批准新方案并创建新运行');
   assert(state.max_fixes === spec.max_fixes && state.goal === spec.goal && state.tasks.length === spec.tasks.length, '状态与批准方案不一致');
   const phases = ['pending', 'developing', 'developed', 'verifying', 'tested', 'reviewing', 'done', 'needs_fix', 'blocked'];
@@ -173,10 +186,39 @@ function mutable(root, run, action) {
   return locked(root, `run-${validId(run)}`, () => {
     const loaded = load(root, run);
     assert(loaded.state.status === 'active', '运行已完成或已停止；不能继续修改状态');
+    assert(loaded.state.schema_version === 2 || compareVersions(loaded.state.version, '4.4.0') < 0 &&
+      !loaded.spec.tasks.some(task => ['owner', 'in_scope', 'out_of_scope', 'managed_execution'].some(field => Object.hasOwn(task, field))) &&
+      !loaded.state.tasks.some(task => task.phase === 'developed' || Object.hasOwn(task, 'attempts')),
+    'schema 1 运行须先迁移才能由当前核心写入');
     const lines = fs.readFileSync(loaded.files.events, 'utf8').trim().split('\n').filter(Boolean);
     const last = lines.length ? JSON.parse(lines.at(-1)).seq : 0;
     assert(last === loaded.state.event_seq, '事件与状态不一致；停止并人工恢复，不重置轮数');
     return action(loaded);
+  });
+}
+export function migrate(project, run, confirmNoActiveExecutors = false) {
+  const root = rootPath(project);
+  assert(confirmNoActiveExecutors === true, '迁移前必须确认没有仍在写入的旧执行者；传入 true 后重试');
+  return locked(root, `run-${validId(run)}`, () => {
+    const { files, state, spec } = load(root, run);
+    assert(state.schema_version === 1, '仅 schema 1 运行需要迁移');
+    const originalEvents = fs.readFileSync(files.events, 'utf8');
+    const lines = originalEvents.trim().split('\n').filter(Boolean);
+    const last = lines.length ? JSON.parse(lines.at(-1)).seq : 0;
+    assert(last === state.event_seq, '事件与状态不一致；停止并人工恢复，不重置计数');
+    const backup = safePath(files.directory, 'state.schema1.backup.json');
+    fs.writeFileSync(backup, fs.readFileSync(files.state), { flag: 'wx', mode: 0o600 });
+    const migrated = { ...state, schema_version: 2, version: VERSION, updated_at: now(), event_seq: state.event_seq + 1 };
+    const event = { seq: migrated.event_seq, time: migrated.updated_at, type: 'migrated', from_schema: 1, to_schema: 2, from_version: state.version };
+    try {
+      atomicWrite(files.events, `${originalEvents}${JSON.stringify(event)}\n`);
+      writeJson(files.state, migrated);
+    } catch (error) {
+      try { atomicWrite(files.events, originalEvents); fs.unlinkSync(backup); }
+      catch (rollbackError) { throw new Error(`迁移失败且事件回滚也失败；原状态备份保留在 ${backup}。原错误：${error.message}；回滚错误：${rollbackError.message}`); }
+      throw error;
+    }
+    return summary(migrated, spec.tasks);
   });
 }
 function taskOf(state, id) {
@@ -230,7 +272,7 @@ export function create(project, input, requestedId) {
     const revision = snapshot(root, spec.ignore_paths);
     fs.mkdirSync(safePath(root, `.ai-loop/runs/${run}/reports`), { recursive: true });
     fs.mkdirSync(safePath(root, `.ai-loop/runs/${run}/mailbox`), { recursive: true });
-    const state = { schema_version: 1, version: VERSION, run_id: run, goal: spec.goal, status: 'active', created_at: now(), updated_at: now(), event_seq: 0,
+    const state = { schema_version: 2, version: VERSION, run_id: run, goal: spec.goal, status: 'active', created_at: now(), updated_at: now(), event_seq: 0,
       spec_hash: crypto.createHash('sha256').update(JSON.stringify(spec)).digest('hex'), max_fixes: spec.max_fixes, base_revision: revision,
       tasks: spec.tasks.map(task => ({ id: task.id, title: task.title, review: task.review, phase: 'pending', fixes: 0, verification: null, assessment: null, reason: null })) };
     writeJson(files.spec, spec);
@@ -277,6 +319,7 @@ export function begin(project, run, id, phase) {
 export function finish(project, run, id) {
   const root = rootPath(project);
   return mutable(root, run, ({ files, state, spec }) => {
+    assert(state.schema_version === 2, 'schema 1 运行须先显式迁移，再使用 developed 阶段');
     const task = taskOf(state, id);
     assert(task.phase === 'developing', 'finish 仅适用于正在开发的任务');
     task.phase = 'developed';
@@ -508,10 +551,10 @@ export function status(project, run) {
 }
 export function cli(argv) {
   const options = args(argv);
-  allowArgs(options, ['project', 'run', 'task', 'phase', 'input', 'reason', 'after', 'limit', 'role', 'after_id', 'help']);
+  allowArgs(options, ['project', 'run', 'task', 'phase', 'input', 'reason', 'after', 'limit', 'role', 'after-id', 'confirm-no-active-executors', 'help']);
   const [command] = options._;
   assert(options._.length <= 1, '只能指定一个命令');
-  if (options.help || !command) return { commands: 'create / begin / finish / snapshot / record / fix / resume / stop / status / event / events / progress / complete / mail / inbox', usage: 'node scripts/loop.mjs COMMAND --project ROOT [--run ID] [--task ID] [--input FILE]' };
+  if (options.help || !command) return { commands: 'create / begin / finish / snapshot / record / fix / resume / stop / migrate / status / event / events / progress / complete / mail / inbox', usage: 'node scripts/loop.mjs COMMAND --project ROOT [--run ID] [--task ID] [--input FILE]' };
   const input = () => {
     assert(typeof options.input === 'string', '此命令需要 --input JSON文件');
     const root = options.project ? rootPath(options.project) : process.cwd();
@@ -528,13 +571,14 @@ export function cli(argv) {
   if (command === 'fix') return fix(options.project, options.run, options.task);
   if (command === 'resume') return resume(options.project, options.run, options.task, options.reason);
   if (command === 'stop') return stop(options.project, options.run, options.reason);
+  if (command === 'migrate') return migrate(options.project, options.run, options['confirm-no-active-executors'] === true);
   if (command === 'status') return status(options.project, options.run);
   if (command === 'event') return event(options.project, options.run, input());
   if (command === 'progress') return progress(options.project, options.run, input());
   if (command === 'events') return events(options.project, options.run, Number(options.after || 0), Number(options.limit || 50));
   if (command === 'complete') return complete(options.project, options.run, input());
   if (command === 'mail') return mail(options.project, options.run, input());
-  if (command === 'inbox') return inbox(options.project, options.run, { role: options.role, task_id: options.task, after_id: options.after_id });
+  if (command === 'inbox') return inbox(options.project, options.run, { role: options.role, task_id: options.task, after_id: options['after-id'] });
   throw new Error('未知命令，运行 --help 查看用法');
 }
 if (mainModule(import.meta.url)) printResult(() => cli(process.argv.slice(2)));

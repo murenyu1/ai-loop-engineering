@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { link } from './support.mjs';
 import os from 'node:os';
 import path from 'node:path';
-import { create, begin, finish, snapshot, record, fix, resume, stop, complete, event, events, status, validateSpec, mail, inbox } from '../scripts/loop.mjs';
+import { create, begin, finish, snapshot, record, fix, resume, stop, complete, event, events, status, validateSpec, mail, inbox, cli } from '../scripts/loop.mjs';
 
 function fixture(t, overrides = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-run-'));
@@ -29,6 +29,8 @@ function developAndTest(root, run) {
 
 test('无Git的完整流程与新会话读取，运行和报告不会污染代码摘要', t => {
   const { root, run } = fixture(t);
+  const state = JSON.parse(fs.readFileSync(path.join(root, `.ai-loop/runs/${run}/state.json`), 'utf8'));
+  assert.equal(state.schema_version, 2);
   const before = snapshot(root);
   developAndTest(root, run);
   assert.equal(status(root, run).tasks[0].phase, 'tested');
@@ -39,6 +41,95 @@ test('无Git的完整流程与新会话读取，运行和报告不会污染代�
   assert.equal(status(root, run).status, 'complete');
   assert.throws(() => fix(root, run, 'task1'), /已完成/);
   assert.throws(() => create(root, { goal: '新需求', tasks: fixtureSpec() }, run), /已存在/);
+});
+
+test('新核心兼容读取安全旧 schema 1 运行', t => {
+  const { root, run } = fixture(t);
+  const statePath = path.join(root, `.ai-loop/runs/${run}/state.json`);
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  state.schema_version = 1;
+  state.version = '4.3.1';
+  fs.writeFileSync(statePath, JSON.stringify(state));
+  assert.equal(status(root, run).tasks[0].phase, 'pending');
+  begin(root, run, 'task1', 'development');
+  assert.equal(status(root, run).tasks[0].phase, 'developing');
+  const beforeFinish = fs.readFileSync(statePath, 'utf8');
+  assert.throws(() => finish(root, run, 'task1'), /先显式迁移/);
+  assert.equal(fs.readFileSync(statePath, 'utf8'), beforeFinish);
+  cli(['migrate', '--project', root, '--run', run, '--confirm-no-active-executors']);
+  finish(root, run, 'task1');
+  assert.equal(status(root, run).tasks[0].phase, 'developed');
+});
+
+test('4.2.x 和 4.1.x 的安全 schema 1 运行仍允许写入', t => {
+  for (const version of ['4.2.9', '4.1.9']) {
+    const { root, run } = fixture(t);
+    const statePath = path.join(root, `.ai-loop/runs/${run}/state.json`);
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    state.schema_version = 1;
+    state.version = version;
+    fs.writeFileSync(statePath, JSON.stringify(state));
+    event(root, run, { type: 'decision', summary: `旧版 ${version} 仍可安全写入` });
+    assert.equal(status(root, run).event_seq, 2);
+  }
+});
+
+test('拒绝用旧 schema 1 包装的新核心契约，防止旧核心改写新运行', t => {
+  const tasks = fixtureSpec();
+  tasks[0].managed_execution = true;
+  const { root, run } = fixture(t, { tasks });
+  const statePath = path.join(root, `.ai-loop/runs/${run}/state.json`);
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  state.schema_version = 1;
+  state.version = '4.3.1';
+  fs.writeFileSync(statePath, JSON.stringify(state));
+  assert.equal(status(root, run).tasks[0].phase, 'pending');
+  assert.throws(() => event(root, run, { type: 'decision', summary: '旧schema新契约只读' }), /schema 1.*先迁移/);
+
+  const managedTasks = fixtureSpec();
+  managedTasks[0].managed_execution = true;
+  const newer = fixture(t, { tasks: managedTasks });
+  const newerStatePath = path.join(newer.root, `.ai-loop/runs/${newer.run}/state.json`);
+  const report = verification(newer.root, newer.run, { attempt: 1, status: 'FAIL', issues: ['保留的旧报告'] });
+  begin(newer.root, newer.run, 'task1', 'development');
+  begin(newer.root, newer.run, 'task1', 'verification');
+  record(newer.root, newer.run, report);
+  fix(newer.root, newer.run, 'task1');
+  const oldState = JSON.parse(fs.readFileSync(newerStatePath, 'utf8'));
+  oldState.schema_version = 1;
+  oldState.version = '4.4.0';
+  fs.writeFileSync(newerStatePath, JSON.stringify(oldState));
+  assert.equal(status(newer.root, newer.run).tasks[0].phase, 'developing');
+  assert.throws(() => event(newer.root, newer.run, { type: 'decision', summary: '阻止旧schema写入' }), /schema 1.*先迁移/);
+  assert.throws(() => cli(['migrate', '--project', newer.root, '--run', newer.run]), /确认没有仍在写入/);
+  const beforeMigrationText = fs.readFileSync(newerStatePath, 'utf8');
+  const beforeMigration = JSON.parse(beforeMigrationText);
+  const eventsPath = path.join(newer.root, `.ai-loop/runs/${newer.run}/events.jsonl`);
+  const beforeEventsText = fs.readFileSync(eventsPath, 'utf8');
+  const oldEventCount = beforeEventsText.trim().split('\n').length;
+  const renameSync = fs.renameSync;
+  fs.renameSync = function (source, target, ...args) {
+    if (path.resolve(target) === path.resolve(newerStatePath)) throw new Error('injected state rename failure');
+    return renameSync.call(fs, source, target, ...args);
+  };
+  try {
+    assert.throws(() => cli(['migrate', '--project', newer.root, '--run', newer.run, '--confirm-no-active-executors']), /injected state rename failure/);
+  } finally {
+    fs.renameSync = renameSync;
+  }
+  assert.equal(fs.readFileSync(newerStatePath, 'utf8'), beforeMigrationText);
+  assert.equal(fs.readFileSync(eventsPath, 'utf8'), beforeEventsText);
+  assert.equal(fs.existsSync(path.join(newer.root, `.ai-loop/runs/${newer.run}/state.schema1.backup.json`)), false);
+  cli(['migrate', '--project', newer.root, '--run', newer.run, '--confirm-no-active-executors']);
+  const migratedState = JSON.parse(fs.readFileSync(newerStatePath, 'utf8'));
+  assert.equal(migratedState.schema_version, 2);
+  assert.equal(migratedState.run_id, beforeMigration.run_id);
+  assert.equal(migratedState.tasks[0].fixes, beforeMigration.tasks[0].fixes);
+  assert.deepEqual(migratedState.tasks[0].attempts, beforeMigration.tasks[0].attempts);
+  assert.deepEqual(migratedState.tasks[0].verification, beforeMigration.tasks[0].verification);
+  assert.equal(fs.readFileSync(path.join(newer.root, `.ai-loop/runs/${newer.run}/state.schema1.backup.json`), 'utf8'), beforeMigrationText);
+  assert.equal(events(newer.root, newer.run, oldEventCount).events[0].type, 'migrated');
+  event(newer.root, newer.run, { type: 'decision', summary: '迁移后允许写入' });
 });
 function fixtureSpec() { return [{ id: 'task1', title: '实现', acceptance: ['验收'], review: 'none', checks: [{ id: 'test', command: '真实验证命令' }] }]; }
 
@@ -334,6 +425,18 @@ test('结构化角色信箱投递与定向过滤', t => {
   // 包含作为 from_role 或 to_role 的 2 封交互邮件
   assert.equal(devBox.count, 2);
   assert.equal(devBox.messages[1].type, 'defect');
+});
+
+test('inbox CLI 使用 --after-id 读取指定邮件之后的增量', t => {
+  const { root, run } = fixture(t);
+  for (let index = 0; index < 3; index++) mail(root, run, {
+    task_id: 'task1', from_role: 'dev', to_role: 'tester', type: 'handoff',
+    subject: `邮件${index}`, payload: null,
+  });
+  const result = cli(['inbox', '--project', root, '--run', run, '--role', 'tester', '--task', 'task1', '--after-id', 'mail-00003']);
+  assert.equal(result.count, 1);
+  assert.equal(result.messages[0].id, 'mail-00004');
+  assert.throws(() => cli(['inbox', '--project', root, '--run', run, '--after_id', 'mail-00002']), /非法参数/);
 });
 
 test('方案直接修改、循环依赖和目录逃逸都拒绝', t => {

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createSettingsManager } from '../plugins/codex/scripts/native-settings.mjs';
 import { balanced } from '../scripts/routing.mjs';
-import { configureProfile, resolveProfile } from '../plugins/codex/scripts/profiles.mjs';
+import { configureProfile, resetProjectProfile, resolveProfile } from '../plugins/codex/scripts/profiles.mjs';
 import { listWorkspaces } from '../scripts/workspaces.mjs';
 import { link } from './support.mjs';
 
@@ -241,6 +241,24 @@ test('project scope 可显式应用并安全恢复到全局继承', async t => {
   assert.equal(resolveProfile(project, { home, scope: 'project' }).profile, null);
   assert.equal(resolveProfile(project, { home }).scope, 'global');
   assert.deepEqual(listWorkspaces(home), [], '保存模型和恢复继承不登记或启用工作区');
+});
+
+test('损坏全局fallback时恢复项目默认失败且项目配置保持原样', t => {
+  const home = temp(), project = temp();
+  t.after(() => { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(project, { recursive: true, force: true }); });
+  configureProfile(project, balanced('codex'), { home, scope: 'global', apply: true });
+  const local = balanced('codex'); local.roles.dev.model = 'gpt-6.1-sol';
+  configureProfile(project, local, { home, scope: 'project', apply: true });
+
+  const record = resolveProfile(project, { home, scope: 'project' });
+  const files = [...Object.keys(record.native), '.ai-loop/models.json'];
+  const before = new Map(files.map(relative => [relative, fs.readFileSync(path.join(project, relative))]));
+  fs.writeFileSync(path.join(home, 'ai-loop/models.json'), '{broken');
+
+  assert.throws(() => resetProjectProfile(project, { home, apply: true }), SyntaxError);
+  for (const [relative, content] of before) {
+    assert.deepEqual(fs.readFileSync(path.join(project, relative)), content, `${relative} 必须保持原样`);
+  }
 });
 
 test('有项目模型草稿时，全局继承变化仍拒绝覆盖', async t => {

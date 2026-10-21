@@ -85,6 +85,7 @@ export function configureProfile(project, profile, options = {}) {
 export function resetProjectProfile(project, options = {}) {
   const root = rootPath(project), record = resolveProfile(root, { ...options, scope: 'project' });
   if (!record.profile) return { status: 'unchanged', scope: 'project' };
+  const fallback = resolveProfile(root, { ...options, scope: 'global' }).profile;
   const metadataHash = hash(fs.readFileSync(record.path));
   const files = [...Object.entries(record.native), ['.ai-loop/models.json', null]];
   for (const [relative, expected] of files) {
@@ -112,5 +113,5 @@ export function resetProjectProfile(project, options = {}) {
     }
     });
   }
-  return { status: options.apply ? 'reset' : 'dry-run', changes: files.map(([relative]) => relative), fallback: resolveProfile(root, { ...options, scope: 'global' }).profile, applies_to: 'next-dispatch-after-native-reload' };
+  return { status: options.apply ? 'reset' : 'dry-run', changes: files.map(([relative]) => relative), fallback, applies_to: 'next-dispatch-after-native-reload' };
 }

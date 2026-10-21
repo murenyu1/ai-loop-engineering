@@ -1,10 +1,10 @@
 {
-  "version": "4.4.0",
+  "version": "4.4.2",
   "harness": "dsh",
   "files": [
     {
       "path": "client.js",
-      "hash": "07580e6169b6a0d395e7633690febde31ad13f411d3fe73abc03b3a4e276a7f1"
+      "hash": "bf354d79120238986c3603782086e9243109c76990e1a3135a94121e2d9fa913"
     },
     {
       "path": "config.mjs",
@@ -16,7 +16,7 @@
     },
     {
       "path": "core/agents/loop-dev.md",
-      "hash": "e68d5736130bcadc0bf83078edddd27803266f18b279d359088ffe5e83884c41"
+      "hash": "fd8cdc5e1111712367f2ff23439d8e756143c0d20dd8ed1a83d53730af37cac7"
     },
     {
       "path": "core/agents/loop-planner.md",
@@ -24,7 +24,7 @@
     },
     {
       "path": "core/agents/loop-reviewer.md",
-      "hash": "1efa6e6672ef11e05ffafac5c2124b71603dcd97133f9b0afc89ee184fb535c5"
+      "hash": "d533970f338c225a74a0a6d3201b6ada95c3669c33734b7481b4b262a85608e8"
     },
     {
       "path": "core/agents/loop-scribe.md",
@@ -32,7 +32,7 @@
     },
     {
       "path": "core/agents/loop-tester.md",
-      "hash": "ae7830d6aacce4c38d97a913be11cfd3f270360c9abceeb350847bb3a11cab85"
+      "hash": "bfb773b05c71b3e0ac0758a89041c8ea73ce73773e66b43f50c7e03da4475cd9"
     },
     {
       "path": "core/MEMORY.md",
@@ -48,11 +48,11 @@
     },
     {
       "path": "core/scripts/lib.mjs",
-      "hash": "6d349114788688bde202a33b527466674cd84987a7b847761b2b748532c9b095"
+      "hash": "6a94e462908b2347112cff373d0106f49d87e48b0981bd228d9525935a8b21f9"
     },
     {
       "path": "core/scripts/loop.mjs",
-      "hash": "ca3404b689eac41b09cdebfc8af00b463efbbf69f2d46d2209b7d9df395096c8"
+      "hash": "98cdc34e09254d0df4bab0d6f582f6c81e7b5774717773f75c80b322f36733ce"
     },
     {
       "path": "core/scripts/memory-store.mjs",
@@ -64,7 +64,7 @@
     },
     {
       "path": "core/scripts/README.md",
-      "hash": "a7df039f525247127fcc196257cc3bf78f750107d121abe5d945a16a163929b3"
+      "hash": "59194bbb64c1bd72c2ef6b8a53311902b0ebef5b1cf64223125379c385747958"
     },
     {
       "path": "core/SETUP.md",
@@ -80,7 +80,7 @@
     },
     {
       "path": "core/WORKFLOW.md",
-      "hash": "62dadf488e5d30d62649074252d5c9545c2c8ade3e73aad7d8077c6ba427f385"
+      "hash": "676eb6089cef81cc8495652de345da9df0d5015648b99e96a30aba61f192058b"
     },
     {
       "path": "index.mjs",
@@ -88,11 +88,11 @@
     },
     {
       "path": "package.json",
-      "hash": "5de2043c18fbf801cbec4718d5d0443be73306228d5f5f6120b8aeb6724bc862"
+      "hash": "256afa0fe346e94872e222c5e8312613241ed93510d7d090fd2eda91688b09f3"
     },
     {
       "path": "README.md",
-      "hash": "44f07fd8cc5cbbf78f5e404b50545847d55459606e0b9ec66d3410c88b702590"
+      "hash": "e88236ac4867b14c518a49932a59b613b9dac4799cde7c8d24377cc57b1a955d"
     },
     {
       "path": "ROUTING.md",

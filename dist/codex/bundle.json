@@ -1,9 +1,9 @@
 {
-  "version": "4.4.0",
+  "version": "4.4.2",
   "files": [
     {
       "path": ".codex-plugin/plugin.json",
-      "hash": "9a6df15c1003b2e9c907e00f83c064f978d181f31dc1aee3b26e4089af9aab35"
+      "hash": "95301e250cdc4d0f708aaa8de89e5f4162e79700632ec7fc5abc62d31890ac62"
     },
     {
       "path": ".mcp.json",
@@ -11,7 +11,7 @@
     },
     {
       "path": "agents/loop-dev.md",
-      "hash": "e68d5736130bcadc0bf83078edddd27803266f18b279d359088ffe5e83884c41"
+      "hash": "fd8cdc5e1111712367f2ff23439d8e756143c0d20dd8ed1a83d53730af37cac7"
     },
     {
       "path": "agents/loop-planner.md",
@@ -19,7 +19,7 @@
     },
     {
       "path": "agents/loop-reviewer.md",
-      "hash": "1efa6e6672ef11e05ffafac5c2124b71603dcd97133f9b0afc89ee184fb535c5"
+      "hash": "d533970f338c225a74a0a6d3201b6ada95c3669c33734b7481b4b262a85608e8"
     },
     {
       "path": "agents/loop-scribe.md",
@@ -27,7 +27,7 @@
     },
     {
       "path": "agents/loop-tester.md",
-      "hash": "ae7830d6aacce4c38d97a913be11cfd3f270360c9abceeb350847bb3a11cab85"
+      "hash": "bfb773b05c71b3e0ac0758a89041c8ea73ce73773e66b43f50c7e03da4475cd9"
     },
     {
       "path": "hooks/hooks.json",
@@ -47,11 +47,11 @@
     },
     {
       "path": "plugin.json",
-      "hash": "824d799ead1f27997ceb103d20fcb6d91d8989ebd77bf50c3ac9d92776a44cec"
+      "hash": "3a69f35334a1fa1b08541f32a31def24ce8c71c6e72c5f87059ba7b5ef77a1a1"
     },
     {
       "path": "README.md",
-      "hash": "3a859b282110f62cdd5d95a804ff212bf779088e1a94415fbe95a306bd580de5"
+      "hash": "1268045d31f84c5960e38cd11b9d13609434689a8e9848e4d8d3f980db7b250f"
     },
     {
       "path": "ROUTING.md",
@@ -91,11 +91,11 @@
     },
     {
       "path": "scripts/lib.mjs",
-      "hash": "6e0b6a6e9b67638f58d5332360f8e1a3d981d64966622ebb276a2e0fe7da4d47"
+      "hash": "97634b2e0176c0faf5f3eed62bc2f31e41636c371aaaf997ef39f616e339c087"
     },
     {
       "path": "scripts/loop.mjs",
-      "hash": "ca3404b689eac41b09cdebfc8af00b463efbbf69f2d46d2209b7d9df395096c8"
+      "hash": "98cdc34e09254d0df4bab0d6f582f6c81e7b5774717773f75c80b322f36733ce"
     },
     {
       "path": "scripts/memory-store.mjs",
@@ -127,7 +127,7 @@
     },
     {
       "path": "scripts/profiles.mjs",
-      "hash": "0754111fddb498f3cfbb3d3565d22617e3b1e4692a08885c7dbfd8db52c07127"
+      "hash": "4ea7774cb0311318ab1f38d6582d72cb49c80c6e1687556083a94f0a8416b47f"
     },
     {
       "path": "scripts/README.md",
@@ -163,7 +163,7 @@
     },
     {
       "path": "SETUP.md",
-      "hash": "b7d007cfa66f7ea050b983b061743469d31f07ba3606a5e808ed472cf26b4199"
+      "hash": "58e9b53963b09fd54d40a85762782a61a174de56546d7e10cd7fb550991047ea"
     },
     {
       "path": "skills/ai-loop-models/SKILL.md",
@@ -183,7 +183,7 @@
     },
     {
       "path": "WORKFLOW.md",
-      "hash": "62dadf488e5d30d62649074252d5c9545c2c8ade3e73aad7d8077c6ba427f385"
+      "hash": "676eb6089cef81cc8495652de345da9df0d5015648b99e96a30aba61f192058b"
     }
   ]
 }

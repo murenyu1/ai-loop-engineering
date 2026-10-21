@@ -36,6 +36,24 @@ test('read/update 和动作调用返回 MCP structuredContent，拒绝多余输�
   assert.deepEqual(calls, ['read', ['update', { flag: false }], 'ai_loop.settings.apply']);
 });
 
+test('reset_project 工具调用把 fallback 失败作为可见错误返回', async () => {
+  const protocol = createSettingsProtocol({
+    async read() { return { schema: { type: 'object', properties: {} }, values: {}, layout: [] }; },
+    update() { return { values: {} }; },
+    async action(name) {
+      assert.equal(name, 'ai_loop.settings.reset_project');
+      throw new SyntaxError('全局模型配置损坏，停止恢复');
+    },
+  });
+  const tools = await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+  assert.ok(tools.result.tools.some(tool => tool.name === 'ai_loop.settings.reset_project'));
+  const response = await protocol.request({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: {
+    name: 'ai_loop.settings.reset_project', arguments: {},
+  } });
+  assert.equal(response.result.isError, true);
+  assert.match(response.result.content[0].text, /全局模型配置损坏/);
+});
+
 test('stdio transport 串行处理请求，只向 stdout 输出 JSON-RPC，并等待队列排空', async () => {
   const input = new PassThrough(), output = new PassThrough();
   const lines = [];

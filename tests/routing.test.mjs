@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { install, REQUIRED_FILES } from '../scripts/install.mjs';
 import { balanced, validateProfile, routeHash } from '../scripts/routing.mjs';
+import { configureProfile, resolveProfile } from '../plugins/codex/scripts/profiles.mjs';
 import { cli as modelCli, changeModel } from '../scripts/models.mjs';
 import { diagnose } from '../scripts/doctor.mjs';
 import { recordAgent, agentStatus } from '../scripts/agents.mjs';
@@ -69,6 +70,29 @@ test('逐角色自定义、预演、切换保留其他角色和另一 harness，
   assert.equal(get(o, '.claude/agents/loop-dev.md'), claude);
   assert.equal(status(o.root, run).tasks[0].fixes, 1);
   assert.deepEqual(install({ ...o, check: true }).changes, []);
+});
+
+test('Codex插件路径升级时重写原生角色指令路径并保留模型profile', t => {
+  const o = fixture(t);
+  const home = path.join(o.root, 'personal');
+  fs.mkdirSync(home, { recursive: true });
+  const nextBundle = path.join(o.root, '新插件路径');
+  fs.mkdirSync(path.join(nextBundle, 'agents'), { recursive: true });
+  fs.copyFileSync(path.join(o.bundle, 'agents/loop-dev.md'), path.join(nextBundle, 'agents/loop-dev.md'));
+  const profile = balanced('codex');
+  profile.roles.dev.model = 'custom-codex-model';
+  configureProfile(o.project, profile, { home, scope: 'global', bundle: o.bundle, apply: true });
+
+  const prior = resolveProfile(o.project, { home, scope: 'global' });
+  assert.equal(prior.bundle, o.bundle.split(path.sep).join('/'));
+  const result = configureProfile(o.project, prior.profile, { home, scope: 'global', bundle: nextBundle, apply: true });
+  const migrated = resolveProfile(o.project, { home, scope: 'global' });
+  const agent = fs.readFileSync(path.join(home, 'agents/loop-dev.toml'), 'utf8');
+  assert.equal(result.status, 'configured');
+  assert.equal(migrated.bundle, nextBundle.split(path.sep).join('/'));
+  assert.equal(migrated.profile.roles.dev.model, 'custom-codex-model');
+  assert.ok(agent.includes(nextBundle.split(path.sep).join('/') + '/agents/loop-dev.md'));
+  assert.ok(!agent.includes(o.bundle.split(path.sep).join('/') + '/agents/loop-dev.md'));
 });
 
 test('模型配置字段、平台、参数与非交互选择校验', async t => {

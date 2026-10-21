@@ -2,7 +2,8 @@
 
 DSH 与 Codex 维护同一套源包。每次接手先读本文件、最新交接记录，再检查 Git；旧聊天摘要和安装副本不是源码依据。
 
-- 当前交接：[workflow-sync.md](workflow-sync.md)。
+- 当前交接：[repair-install.md](repair-install.md)；上一阶段设计：[workflow-sync.md](workflow-sync.md)。
+- 安装前复查：[three-version-audit.md](three-version-audit.md)，记录尚待修复的问题与实际验证范围。
 - 只读概览：在仓库根执行 `node scripts/dev-status.mjs`，查看分支、提交、未提交文件和上游状态。
 - 共享实现：`core/`；平台差异：`plugins/dsh/`、`plugins/codex/`；`dist/` 和 `downloads/` 由脚本生成。
 - `.ai-loop/` 保存本机运行、模型、诊断和完整证据，继续忽略；可共享的结论、验证摘要和待办必须写入本目录并提交。不要把本机配置、凭据、个人路径或日志全文复制进来。

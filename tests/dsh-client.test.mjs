@@ -185,6 +185,49 @@ test('DSH project edits preserve unrelated projects and role settings', async ()
   assert.deepEqual(projects[1], { path: '/other', enabled: false });
 });
 
+test('DSH角色卡项目强度交互只写入用户覆盖，模型继承成对清除路由', async () => {
+  const React = {
+    createElement(type, props, ...children) {
+      if (typeof type === 'function') return type({ ...props, children });
+      return { type, props: { ...props, children } };
+    },
+  };
+  const componentPlugin = createPlugin(name => name === 'react' ? React : runtime(name));
+  const { card, scope } = controller({
+    roles: { dev: { provider: 'global-provider', model: 'global-model', reasoningEffort: 'low' } },
+    projects: [{ path: '/a', enabled: true }],
+  });
+  const catalog = {
+    status: 'ready',
+    groups: [{ id: 'global-provider', models: [{ id: 'global-model', reasoning: { efforts: [{ id: 'low', name: '低' }, { id: 'high', name: '高' }] } }] }],
+  };
+  const findControls = tree => {
+    const nodes = [];
+    const visit = node => {
+      if (Array.isArray(node)) return node.forEach(visit);
+      if (!node || typeof node !== 'object') return;
+      nodes.push(node);
+      visit(node.props?.children);
+    };
+    visit(tree);
+    return nodes.filter(node => node.type === 'select');
+  };
+  const render = () => componentPlugin.RoleCard({ role: 'dev', path: '/a', state: card.store.getSnapshot(), controller: card, catalog, disabled: false });
+
+  let controls = findControls(render());
+  assert.equal(controls.length, 3);
+  controls[2].props.onChange({ target: { value: 'high' } });
+  assert.deepEqual(card.store.getSnapshot().projects[0].roles.dev, { reasoningEffort: 'high' });
+  await card.actions.save();
+  assert.deepEqual(scope.writes.at(-1)[0].value[0].roles.dev, { reasoningEffort: 'high' });
+
+  controls = findControls(render());
+  controls[1].props.onChange({ target: { value: '' } });
+  assert.deepEqual(card.store.getSnapshot().projects[0].roles.dev, { provider: '', model: '', reasoningEffort: '' });
+  assert.equal(componentPlugin.rolesValid(card.store.getSnapshot().projects[0].roles), true);
+  await card.actions.save();
+  assert.deepEqual(scope.writes.at(-1)[0].value[0].roles.dev, { provider: '', model: '', reasoningEffort: '' });
+});
 test('DSH restore inheritance removes only the selected role override', async () => {
   const { card, scope } = controller({ projects: [{ path: '/a', enabled: true, maxConcurrent: 4, roles: { dev: { provider: '', model: '' }, reviewer: { provider: 'p', model: 'r' } } }] });
   card.resetRole('dev', '/a');

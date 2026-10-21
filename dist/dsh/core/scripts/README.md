@@ -9,6 +9,7 @@ node scripts/memory.mjs bootstrap --project ROOT
 node scripts/memory.mjs bootstrap --project ROOT --intent continue
 node scripts/loop.mjs status --project ROOT --run RUN
 node scripts/loop.mjs events --project ROOT --run RUN --after 0 --limit 20
+node scripts/loop.mjs inbox --project ROOT --run RUN --role tester --task task1 --after-id mail-00012
 ```
 
 bootstrap 返回短状态与候选，不自动执行任务。读取项目 `.ai-loop/memory/index.md`，然后按需读取运行的 session/checkpoint 与关键改动。只有多个候选且用户未指定时才澄清。
@@ -48,3 +49,7 @@ node scripts/loop.mjs --help
 ```
 
 MEMORY.md 定义 save / checkpoint 的输入结构、来源、并发处理和分页读取。交接记录变更文件、关键符号、原因与优先读取位置。只有落盘的资料能够跨会话恢复；旧检查须核对当前代码才有效。
+
+## 运行状态兼容
+
+新建运行使用 `schema_version: 2`，旧核心只识别 schema 1，因此会拒绝写入新版运行。当前核心可以读取 schema 1 的历史运行；4.3.1 及更早且不含新版字段的安全旧运行仍可继续写入。候选版 4.4.0 的 schema 1 记录（包括 `owner`、范围、托管执行批次或 `developed` 阶段）仅可读取，写入前须显式迁移。先核实没有旧执行者仍在写入，再运行 `node scripts/loop.mjs migrate --project ROOT --run RUN --confirm-no-active-executors`。迁移在锁内保存原 state 备份，保留 run_id、修复计数、报告与历史事件，并追加迁移事件；不重置或改写任务状态。不要手工改写 state.json 的 schema 或阶段来绕过此门禁。`inbox` 的公开游标参数为 `--after-id`，其值是 `mail-00001` 这类邮件 ID。
