@@ -2,7 +2,7 @@
 
 DSH 与 Codex 维护同一套源包。每次接手先读本文件、最新交接记录，再检查 Git；旧聊天摘要和安装副本不是源码依据。
 
-- 当前交接：[settings-refresh.md](settings-refresh.md)；上一阶段修复安装：[repair-install.md](repair-install.md)；契约设计：[workflow-sync.md](workflow-sync.md)。
+- 当前交接：[publish-4.4.3.md](publish-4.4.3.md)；设置修复：[settings-refresh.md](settings-refresh.md)；上一阶段修复安装：[repair-install.md](repair-install.md)；契约设计：[workflow-sync.md](workflow-sync.md)。
 - 安装前复查：[three-version-audit.md](three-version-audit.md)，记录尚待修复的问题与实际验证范围。
 - 只读概览：在仓库根执行 `node scripts/dev-status.mjs`，查看分支、提交、未提交文件和上游状态。
 - 共享实现：`core/`；平台差异：`plugins/dsh/`、`plugins/codex/`；`dist/` 和 `downloads/` 由脚本生成。
@@ -21,11 +21,11 @@ DSH 与 Codex 维护同一套源包。每次接手先读本文件、最新交接
 
 ## 当前仓库的首次远端接续
 
-此目录原来只有空 Git 元数据，现有源码未进入本地历史。当前分支从本机源码建立了独立根提交，**尚未证明与远端 main 有共同祖先**。
+此目录从本机源码建立了独立根提交。2026-10-21 网络恢复后已执行 `git fetch origin`，确认本地历史与远端 `main` **没有共同祖先**（merge-base 退出码 1）；当时远端为 `6ab6083`，本地设置修复阶段为 `2e9c2f5`。
 
-网络恢复后先 `git fetch origin`，再检查 `git merge-base HEAD origin/main`。没有共同祖先时，不直接 pull、不使用强推或无关历史强行合并；推荐从远端 main 建独立 worktree，人工核对本轮基线到最终提交的差异，只移植本轮需要的提交/补丁并跑回归。保留本地基线与历史，不能把它当远端历史替代品。
+继续接手仍须先 fetch 并检查历史，不直接 pull、不使用强推或无关历史强行合并。本次发行核对远端与本地基线差异，通过发行白名单将已验证文件移植为远端 `main` 的新子提交；保留远端未管理文件及历史发行包，并在更新分支前核对远端 head 未变化。后续也可从远端 main 建独立 worktree，只移植需要的补丁并跑回归；本地根历史不能替代远端历史。
 
-远端当前登记为 `https://github.com/murenyu1/ai-loop-engineering.git`，来自项目已有发布记录；本轮 Git 网络连接失败，尚未核验或推送。使用不同电脑前，必须完成上面的历史接续和远端同步。
+远端为 `https://github.com/murenyu1/ai-loop-engineering.git`，已通过连接器和 Git 读取核验。本次发行状态以 [4.4.3 交接](publish-4.4.3.md)、实际远端和本阶段提交说明为准；本地分支与远端 main 仍是两套历史，不能盲目设置追踪后 pull。
 
 ## 交接格式
 

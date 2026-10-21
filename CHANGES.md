@@ -1,8 +1,10 @@
-# AI Loop Engineering 4.4.3（本地候选）
+# AI Loop Engineering 4.4.3
 
-- 修复 Codex 设置在切换工作区、配置范围和恢复草稿时返回上一范围值的问题；更新响应按当前选择生成模型、思考强度、并发和开关值。
-- 增加直接检查设置更新响应的回归，保留全局默认与项目覆盖的独立草稿及显式保存行为。
-- 同步候选版本说明、项目插件标记和已核对的知识来源；历史验证与本次宿主验收边界分别记录，见 `docs/development/settings-refresh.md`。
+- 统一发布通用工作流、Codex 插件与 DSH 插件三个包，并提供同版 `SHA256SUMS`。
+- 延续 4.4.0 的任务归属、文件范围、托管验证与独立评审批次契约；4.4.2 完成新契约隔离迁移，旧核心拒绝写入新版运行。
+- 增加信箱 CLI 与模型继承事务处理，收紧失败回滚和配置隔离边界。
+- 修复 Codex 设置切换工作区、配置范围和恢复草稿时返回旧值的问题；异步更新响应按当前选择返回模型、思考强度、并发、开关及布局约束。
+- 版本说明和各包下载入口见 [v4.4.3 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.4.3) 与 [开发交接](docs/development/publish-4.4.3.md)。设置修复背景见 `docs/development/settings-refresh.md`；宿主界面、有效模型与钩子触发不以自动检查代替验收。
 
 # AI Loop Engineering 4.4.0（本地候选）
 

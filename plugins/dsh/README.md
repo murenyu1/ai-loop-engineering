@@ -4,7 +4,7 @@
 
 ## 安装
 
-历史 DSH 4.3.0 预览版可从 [已发布版本页](https://github.com/murenyu1/ai-loop-engineering/releases/tag/dsh-v4.3.0) 获取。当前源码候选为 4.4.3，尚未发布；不要把历史安装包当作本次更新结果。
+DSH 插件与通用工作流、Codex 插件统一收录在 [v4.4.3 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.4.3)：[下载 DSH 插件](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.4.3/ai-loop-dsh-4.4.3.tgz)，并使用同一页面的 [SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.4.3/SHA256SUMS) 校验。历史 DSH 4.3.0 预览版仍保留在[旧版发布页](https://github.com/murenyu1/ai-loop-engineering/releases/tag/dsh-v4.3.0)。
 
 维护者也可从仓库构建安装包：
 
