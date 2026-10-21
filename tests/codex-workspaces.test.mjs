@@ -47,8 +47,8 @@ test('设置读取刷新 Codex 列表；移除项目后拒绝保存，不能伪�
   f.save({ 'local-projects': { a: { name: '甲', rootPaths: [f.a] } } });
   const manager = createSettingsManager({ home: f.home, modelsProvider: async () => ({ models: [] }) });
   const first = await manager.read();
-  manager.update({ workspace_root: first.schema.properties.workspace_root.enum[1] });
-  assert.throws(() => manager.update({ workspace_root: f.b }), /只能选择/);
+  await manager.update({ workspace_root: first.schema.properties.workspace_root.enum[1] });
+  await assert.rejects(manager.update({ workspace_root: f.b }), /只能选择/);
   f.save({ 'local-projects': { b: { name: '乙', rootPaths: [f.b] } } });
   assert.throws(() => manager.action('ai_loop.workspace.toggle'), /已不可用/);
   await assert.rejects(manager.action('ai_loop.settings.apply'), /已不可用/);

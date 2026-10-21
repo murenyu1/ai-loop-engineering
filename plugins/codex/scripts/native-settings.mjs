@@ -35,7 +35,6 @@ export function createSettingsManager(options = {}) {
   let scope = 'global';
   let selectedRoot = '';
   let lastError = '';
-  let lastValues = {};
 
   const key = () => `${scope}\n${selectedRoot}`;
   const capture = (nextScope, nextRoot) => {
@@ -153,7 +152,6 @@ export function createSettingsManager(options = {}) {
     const info = project ? inspectWindows(project, { home }) : { status: 'unavailable' };
     const error = currentSnapshot.error || exactRecord.error || lastError || modelsResult.error || (info.status === 'needs-repair' ? 'Windows 目录所有者检查未通过，写入已禁用。' : '');
     const status = [discovery.error, error, `配置来源：${source}`, selectedRoot ? `所选工作区：${selectedRoot}` : '尚未选择工作区；全局配置仍可查看。', conflict && configDrafts ? '检测到外部配置变化；应用已暂停，请放弃草稿后重新进入页面。' : '', models.length ? `发现 ${models.length} 个可用模型。` : '模型列表尚未验证。', invalidModels.length ? `模型不可用：${invalidModels.join(', ')}` : '', invalidEfforts.length ? `需修正思考深度：${invalidEfforts.join(', ')}` : ''].filter(Boolean).join(' ');
-    lastValues = values;
     return {
       schema: { type: 'object', properties: props }, values,
       layout: [
@@ -164,7 +162,7 @@ export function createSettingsManager(options = {}) {
     };
   }
 
-  function update(set) {
+  async function update(set) {
     assert(set && typeof set === 'object' && !Array.isArray(set), 'settings.update 需要 set 对象');
     const fields = new Set(['scope', 'workspace_root', 'workspace_enabled', 'concurrency', ...roleNames.flatMap(role => [`model.${role}`, `effort.${role}`])]);
     const entries = Object.entries(set);
@@ -198,12 +196,7 @@ export function createSettingsManager(options = {}) {
       if (field === 'scope' || field === 'workspace_root') continue;
       drafts.set(key(), { ...drafts.get(key()), [field]: value });
     }
-    if (Object.hasOwn(set, 'workspace_root')) {
-      const current = workspaces.find(item => item.root === selectedRoot);
-      lastValues.workspace_enabled = current?.enabled ?? false;
-    }
-    lastValues = { ...lastValues, ...set, scope: scopeLabels[scope], workspace_root: Object.hasOwn(set, 'workspace_root') ? (selected ? workspaceChoice(selected) : '') : (lastValues.workspace_root || '') };
-    return { values: { ...lastValues } };
+    return read();
   }
 
   async function apply() {
@@ -240,7 +233,6 @@ export function createSettingsManager(options = {}) {
     const previousKey = key();
     const result = setWorkspaceEnabled(home, project, draft().workspace_enabled ?? current.enabled, { create: true });
     const values = drafts.get(previousKey) || {}; delete values.workspace_enabled; drafts.set(previousKey, values);
-    lastValues.workspace_enabled = result.enabled;
     return { ...result, message: `工作区${result.enabled ? '已启用' : '已停用'}。请重新进入插件详情页刷新原生设置。` };
   }
 

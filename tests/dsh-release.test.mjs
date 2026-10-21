@@ -8,6 +8,7 @@ import { gunzipSync } from 'node:zlib';
 import { spawnSync } from 'node:child_process';
 import { BUNDLE, VERSION, safePath } from '../scripts/lib.mjs';
 import { buildDsh, packDsh, tarball } from '../scripts/build-dsh.mjs';
+import { createPlugin } from '../plugins/dsh/client/index.mjs';
 
 function untar(bytes, root) {
   const tar = gunzipSync(bytes), names = [];
@@ -58,6 +59,25 @@ test('DSH tgz 可复现、可独立运行核心且只携带登记源码', t => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).active_count, 0);
   assert.equal(buildDsh(undefined, { check: true }).status, 'checked');
+});
+
+test('DSH 客户端源文件使用 CRLF 时发行摘要仍与 LF 检出一致', () => {
+  buildDsh();
+  const descriptor = Object.getOwnPropertyDescriptor(createPlugin, 'toString');
+  const original = createPlugin.toString();
+  Object.defineProperty(createPlugin, 'toString', { configurable: true, value: () => original.replace(/\r?\n/g, '\r\n') });
+  try {
+    assert.equal(buildDsh(undefined, { check: true }).status, 'checked');
+    const lock = JSON.parse(fs.readFileSync(path.join(BUNDLE, 'dist/dsh/bundle.json')));
+    for (const item of lock.files) {
+      const bytes = fs.readFileSync(path.join(BUNDLE, 'dist/dsh', item.path));
+      const normalized = Buffer.from(bytes.toString('utf8').replace(/\r\n/g, '\n'));
+      assert.equal(crypto.createHash('sha256').update(normalized).digest('hex'), item.hash, item.path);
+    }
+  } finally {
+    if (descriptor) Object.defineProperty(createPlugin, 'toString', descriptor);
+    else delete createPlugin.toString;
+  }
 });
 
 test('DSH 构建拒绝越界、混入个人文件与被改动的产物', () => {

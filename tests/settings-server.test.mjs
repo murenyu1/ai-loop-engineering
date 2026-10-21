@@ -17,23 +17,46 @@ test('initialize、discover 与 tools/list 声明 openai/settings 原生能力',
   assert.equal(tools.result.tools.some(tool => tool.name === 'ai_loop.workspace.register'), false);
 });
 
-test('read/update 和动作调用返回 MCP structuredContent，拒绝多余输入', async () => {
+test('read/update 和动作调用返回 MCP structuredContent，update等待并传回刷新schema', async () => {
   const calls = [];
+  const updated = { schema: { type: 'object', properties: { flag: { type: 'boolean', title: 'Flag' } } }, values: { flag: false }, layout: [{ kind: 'group', title: '刷新' }] };
   const manager = {
     async read() { calls.push('read'); return { schema: { type: 'object', properties: { flag: { type: 'boolean', title: 'Flag' } } }, values: { flag: true }, layout: [] }; },
-    update(set) { calls.push(['update', set]); return { values: { flag: set.flag } }; },
+    async update(set) { calls.push(['update', set]); await new Promise(resolve => setTimeout(resolve, 0)); return updated; },
     async action(name) { calls.push(name); return { status: 'configured' }; },
   };
   const protocol = createSettingsProtocol(manager);
   const read = await protocol.request({ jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: READ_TOOL, arguments: {} } });
   assert.deepEqual(read.result.structuredContent.values, { flag: true });
   const update = await protocol.request({ jsonrpc: '2.0', id: 11, method: 'tools/call', params: { name: UPDATE_TOOL, arguments: { set: { flag: false } } } });
-  assert.deepEqual(update.result.structuredContent.values, { flag: false });
+  assert.deepEqual(update.result.structuredContent, updated);
+  const listed = await protocol.request({ jsonrpc: '2.0', id: 14, method: 'tools/list' });
+  const updateTool = listed.result.tools.find(tool => tool.name === UPDATE_TOOL);
+  assert.ok(updateTool.outputSchema.properties.schema);
+  assert.ok(updateTool.outputSchema.properties.layout);
   const applied = await protocol.request({ jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name: 'ai_loop.settings.apply', arguments: {} } });
   assert.equal(applied.result.structuredContent.result.status, 'configured');
   const invalid = await protocol.request({ jsonrpc: '2.0', id: 13, method: 'tools/call', params: { name: READ_TOOL, arguments: { path: 'x' } } });
   assert.equal(invalid.result.isError, true);
   assert.deepEqual(calls, ['read', ['update', { flag: false }], 'ai_loop.settings.apply']);
+});
+
+test('reset_project 工具调用把 fallback 失败作为可见错误返回', async () => {
+  const protocol = createSettingsProtocol({
+    async read() { return { schema: { type: 'object', properties: {} }, values: {}, layout: [] }; },
+    update() { return { values: {} }; },
+    async action(name) {
+      assert.equal(name, 'ai_loop.settings.reset_project');
+      throw new SyntaxError('全局模型配置损坏，停止恢复');
+    },
+  });
+  const tools = await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+  assert.ok(tools.result.tools.some(tool => tool.name === 'ai_loop.settings.reset_project'));
+  const response = await protocol.request({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: {
+    name: 'ai_loop.settings.reset_project', arguments: {},
+  } });
+  assert.equal(response.result.isError, true);
+  assert.match(response.result.content[0].text, /全局模型配置损坏/);
 });
 
 test('stdio transport 串行处理请求，只向 stdout 输出 JSON-RPC，并等待队列排空', async () => {
@@ -42,17 +65,19 @@ test('stdio transport 串行处理请求，只向 stdout 输出 JSON-RPC，并�
   output.setEncoding('utf8'); output.on('data', value => lines.push(value));
   const manager = {
     async read() { await new Promise(resolve => setTimeout(resolve, 5)); return { schema: { type: 'object', properties: {} }, values: {}, layout: [] }; },
-    update(set) { return { values: set }; },
+    async update(set) { await new Promise(resolve => setTimeout(resolve, 5)); return { schema: { type: 'object', properties: {} }, values: set, layout: [] }; },
     action() { return { status: 'ok' }; },
   };
   const running = runSettingsServer({ input, output, manager });
   input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' })}\n`);
   input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: READ_TOOL, arguments: {} } })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: UPDATE_TOOL, arguments: { set: { concurrency: 4 } } } })}\n`);
   input.end();
   await running;
   const responses = lines.join('').trim().split('\n').map(line => JSON.parse(line));
-  assert.deepEqual(responses.map(item => item.id), [1, 2]);
+  assert.deepEqual(responses.map(item => item.id), [1, 2, 3]);
   assert.equal(responses[1].result.structuredContent.values && typeof responses[1].result.structuredContent.values, 'object');
+  assert.deepEqual(responses[2].result.structuredContent.values, { concurrency: 4 });
 });
 
 test('stdio transport 保留跨chunk JSON，正确解码UTF-8与CRLF', async () => {

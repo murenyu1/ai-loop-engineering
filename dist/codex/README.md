@@ -1,8 +1,8 @@
-# AI Loop Codex 插件 4.3.1
+# AI Loop Codex 插件 4.4.3
 
-4.3.1 修复纯插件项目调度预检和 Windows 沙箱只读身份误报。插件预检使用 `node PLUGIN/scripts/plugin.mjs doctor --project ROOT`；兼容 `doctor.mjs` 也会识别插件项目。配置检查、原生执行、实际模型和界面分别验收。
+本插件包与通用工作流、DSH 插件统一收录在 [v4.4.3 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.4.3)：[下载 Codex 插件](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.4.3/ai-loop-codex-4.4.3.zip)；完整性校验使用该 Release 的 [SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.4.3/SHA256SUMS)。4.3.1 下载仍作为历史版本保留。插件预检使用 `node PLUGIN/scripts/plugin.mjs doctor --project ROOT`；兼容 `doctor.mjs` 也会识别插件项目。配置检查、原生执行、实际模型和界面分别验收。
 
-在 Codex 插件详情页直接管理 AI Loop 模型和工作区，并在不同本地项目使用同一套开发闭环、分页记忆与中断恢复流程。插件包包含运行所需核心，无需另装通用工作流。可从 [GitHub Releases](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.3.1) 单独下载 Codex 插件包。
+在 Codex 插件详情页直接管理 AI Loop 模型和工作区，并在不同本地项目使用同一套开发闭环、分页记忆与中断恢复流程。插件包包含运行所需核心，无需另装通用工作流。
 
 ## 安装
 
@@ -14,6 +14,8 @@ node scripts/install-plugin.mjs --project . --apply
 ```
 
 先预演，再安装。安装器使用 Codex 原生插件管理命令，不修改 `settings.json` 或钩子信任缓存。安装后新开聊天，核对技能是否加载。
+
+升级后用新插件的 doctor 检查角色引用。若仍指向旧缓存目录，先读取当前 global/project 模型配置，再用新插件的 configure 和相同配置预演、应用，仅更新受管理角色路径；不要重新套用预设覆盖用户模型。已有项目覆盖须分别更新，之后原生重载并验证实际角色调用。
 
 ## 在插件详情页配置
 
@@ -37,4 +39,4 @@ node scripts/install-plugin.mjs --project . --apply
 
 每个项目只保存自己的 `.ai-loop/` 运行资料。中断后可恢复已落盘的摘要、未关闭工作单元、事件和改动定位；未记录的聊天内容无法恢复。选择工作区不授予提交、发布或越权权限。Windows 受保护配置需由正常用户宿主创建；不批量调整权限。
 
-通用工作流、源码布局和已发布版本见[项目首页](https://github.com/murenyu1/ai-loop-engineering)；版本包见 [v4.3.1 Releases](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.3.1)，通用工作流与 Codex 插件可分别下载。
+通用工作流、源码布局和版本包见[项目首页](https://github.com/murenyu1/ai-loop-engineering)；[v4.4.3 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.4.3) 同时提供通用工作流、Codex 插件、DSH 插件和 SHA256SUMS。

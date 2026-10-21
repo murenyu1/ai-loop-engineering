@@ -3,6 +3,7 @@
 /.release/
 /.ai-loop/
 /node_modules/
+/.codex/
 *.log
 *.tmp
 .env

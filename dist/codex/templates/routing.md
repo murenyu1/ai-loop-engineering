@@ -6,7 +6,7 @@
 
 先运行本部署 `scripts/doctor.mjs --project ROOT --harness HARNESS`；有 CLI 时加 `--probe --native` 检查真实配置层/provider，dispatch=blocked 时停止派发。再用原生工具确认角色已发现。Codex 选择 loop-* 原生角色；只有工具明确支持模型参数且未加载固定角色配置时才显式传入模型/强度，使用新上下文与完整任务包，不依赖全历史 fork 后换模型。Claude Code 使用 Agent/Task 等当前客户端实际提供的原生工具选择对应 subagent_type，不能仅靠 prompt 自称角色，也不以 Bash 启动独立 CLI 代替当前会话的原生子代理。禁止静默降级为同代理自检，独立评审要求不变。
 
-派发任务包包含：项目绝对路径、角色与运行路径、任务编号、目标、批准范围、必要用户/项目/技能规则、输入路径与摘要、依赖、revision、验收命令。只返回角色 JSON 摘要与证据路径，长日志存文件；不复制整段聊天、全部角色和历史。
+派发任务包包含：项目绝对路径、角色与运行路径、任务编号、目标、owner、in_scope/out_of_scope、批准范围、必要用户/项目/技能规则、输入路径与摘要、依赖、revision、验收命令。managed_execution 任务还包含核心当前 tester/reviewer attempt；返回报告须带同批次，不替换旧报告的编号。仅范围互斥且核心检查通过的开发任务可并行，未知范围串行；验证评审等待写入收敛。只返回角色 JSON 摘要与证据路径，长日志存文件；不复制整段聊天、全部角色和历史。
 
 ## 用户选择与中途切换
 

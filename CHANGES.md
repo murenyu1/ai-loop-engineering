@@ -1,4 +1,21 @@
+# AI Loop Engineering 4.4.3
+
+- 统一发布通用工作流、Codex 插件与 DSH 插件三个包，并提供同版 `SHA256SUMS`。
+- 延续 4.4.0 的任务归属、文件范围、托管验证与独立评审批次契约；4.4.2 完成新契约隔离迁移，旧核心拒绝写入新版运行。
+- 增加信箱 CLI 与模型继承事务处理，收紧失败回滚和配置隔离边界。
+- 修复 Codex 设置切换工作区、配置范围和恢复草稿时返回旧值的问题；异步更新响应按当前选择返回模型、思考强度、并发、开关及布局约束。
+- 版本说明和各包下载入口见 [v4.4.3 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.4.3) 与 [开发交接](docs/development/publish-4.4.3.md)。设置修复背景见 `docs/development/settings-refresh.md`；宿主界面、有效模型与钩子触发不以自动检查代替验收。
+
+# AI Loop Engineering 4.4.0（本地候选）
+
+- 共享核心增加可选任务归属、文件范围及托管验证/评审批次；拒收旧报告，未声明互斥范围时不并行开发，状态摘要包含依赖、就绪和阻塞原因。旧记录兼容。
+- Codex 与通用角色同步任务包、批次、恢复和接管约束，保留真实独立评审、快照证据及修复上限。
+- DSH 使用受鉴权的只读状态路由与右侧栏面板，支持多运行选择、自动刷新与过期响应丢弃；移除 shell 状态回退并保留模型目录设置依赖，原生验收边界见 `docs/development/workflow-sync.md`。
+- 建立 Git 本地源码基线、共享开发交接、只读 dev-status 命令和安全发行清单；修复二进制安装包的 Git 文本归一化规则。远端网络不可达，未同步或发布。
+
 # AI Loop Engineering 4.3.1
+
+- 修复 DSH 插件无法激活：`ai_loop_status` 参数声明里的 `required: false` 被宿主 JSON Schema 编译拒绝（`JsonSchemaError: unsupported JSON schema: parameters.project.required must be true when present`），改为省略该字段；测试桩同步按宿主规则校验参数声明，防止回归。
 
 - 插件项目的兼容 doctor 自动选择插件预检，纯插件模式不再要求旧项目安装清单。
 - 插件调度规则使用插件 doctor，配置允许后仍须独立验证原生角色发现、实际调用与模型。

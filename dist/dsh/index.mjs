@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import z from '@deepseek-ai/schemastery';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { delegationDepthOf, parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent';
@@ -39,6 +39,38 @@ export function apply(ctx, config) {
       if (!projectSettings(config, root).enabled) return '';
       return `此项目已启用 AI Loop。先加载 ai-loop 技能，按新需求/继续/只读检查区分意图，恢复必要的 .ai-loop/ 资料后行动。项目根目录：${root}。共享核心：${corePath}。项目规则、deny、原生审批与沙箱优先；不要通过宿主 fs/exec 绕过。独立角色使用 ai_loop_delegate；只有用户或工作流授权时才派发。`;
     }
+  });
+
+  // Read-only browser route. The client uses a same-origin fetch so both the
+  // DSH browser and Electron's dsh-app:// forwarding reach the host route.
+  ctx.inject(['webServer', 'connection'], webCtx => {
+    webCtx.effect(() => webCtx.webServer.register({
+      kind: 'exact', path: '/plugins/ai-loop-engineering/state',
+      handler: async (req, res) => {
+        const rejection = webCtx.connection.requestRejection(req);
+        const send = (code, value) => {
+          res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+          res.end(JSON.stringify(value));
+        };
+        if (rejection !== undefined) return send(rejection, { error: rejection === 401 ? 'unauthorized' : 'forbidden' });
+        if (req.method !== 'GET') return send(405, { error: 'method not allowed' });
+        try {
+          const url = new URL(req.url ?? '/', 'http://dsh.internal');
+          const root = url.searchParams.get('project') ?? '';
+          if (!root || !projectSettings(config, root).enabled) return send(403, { error: '此工作区未启用 AI Loop。' });
+          const loopMod = await import(pathToFileURL(path.join(coreRoot, 'scripts', 'loop.mjs')).href);
+          const runs = loopMod.listRuns(root);
+          const run = url.searchParams.get('run');
+          if (run) return send(200, { ...loopMod.status(root, run), runs });
+          const activeRuns = runs.filter(item => item.status === 'active');
+          if (activeRuns.length === 1) return send(200, { ...loopMod.status(root, activeRuns[0].run_id), runs });
+          if (activeRuns.length === 0 && runs.length === 1) return send(200, { ...loopMod.status(root, runs[0].run_id), runs });
+          return send(200, { runs, message: runs.length === 0 ? '当前工作区暂无运行记录。' : activeRuns.length > 1 ? '存在多个活跃运行，请选择运行。' : '请选择要查看的运行。' });
+        } catch (error) {
+          return send(400, { error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+    }), 'ai-loop: read-only status route');
   });
 
   const active = new Map();
@@ -99,6 +131,44 @@ export function apply(ctx, config) {
         activation.result.then(release, release);
         return `已启动 AI Loop ${ROLE_LABELS[args.role]}子代理 ${activation.childId}（spawn 独立上下文）。`;
       } catch (error) { release(); throw error; }
+    }
+  }));
+
+  ctx.tools.register(defineTool({
+    name: 'ai_loop_status',
+    description: '只读查看当前项目的 AI Loop 运行状态、DAG 任务执行进度或可选运行列表。无需审批与执行 bash，直接返回结构化状态。',
+    parameters: {
+      project: { type: 'string', description: '项目根目录。默认为当前工作区。' },
+      run: { type: 'string', description: '运行编号（run_id）。若省略，自动推断当前活跃的唯一运行或返回运行列表。' }
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, result) => [{ type: 'text', text: result }]
+    },
+    isConcurrencySafe: () => true,
+    async execute(args, exec) {
+      const parent = exec.agent;
+      const cwd = parent ? (await ctx.workingDirectory.ensure(parent, exec.signal)) : process.cwd();
+      const root = args.project || parent?.session?.header?.cwd || cwd;
+      try {
+        const settings = projectSettings(config, root);
+        if (!settings.enabled) throw new Error('此项目未启用 AI Loop，不能读取其运行状态。');
+        const loopUrl = pathToFileURL(path.join(coreRoot, 'scripts', 'loop.mjs')).href;
+        const loopMod = await import(loopUrl);
+        if (!args.run) {
+          const runs = loopMod.listRuns(root);
+          const active = runs.filter(r => r.status === 'active');
+          if (active.length === 1) {
+            return JSON.stringify(loopMod.status(root, active[0].run_id), null, 2);
+          } else if (active.length === 0 && runs.length === 1) {
+            return JSON.stringify(loopMod.status(root, runs[0].run_id), null, 2);
+          }
+          return JSON.stringify({ runs, message: active.length > 1 ? '存在多个活跃运行，请指定 run 参数。' : '当前无唯一运行，请指定 run 参数。' }, null, 2);
+        }
+        return JSON.stringify(loopMod.status(root, args.run), null, 2);
+      } catch (error) {
+        return JSON.stringify({ error: error instanceof Error ? error.message : String(error) }, null, 2);
+      }
     }
   }));
 }

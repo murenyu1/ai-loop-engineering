@@ -17,7 +17,7 @@ const readOutputSchema = {
   },
   required: ['schema', 'values'],
 };
-const updateOutputSchema = { type: 'object', properties: { values: { type: 'object' } }, required: ['values'] };
+const updateOutputSchema = { type: 'object', properties: readOutputSchema.properties, required: ['values'] };
 const objectSchema = { type: 'object', additionalProperties: false };
 const actionSchema = { type: 'object', properties: {}, additionalProperties: false };
 
@@ -73,7 +73,7 @@ export function createSettingsProtocol(manager = createSettingsManager()) {
         }
         if (name === UPDATE_TOOL) {
           if (!args.set || typeof args.set !== 'object' || Array.isArray(args.set) || Object.keys(args).some(key => key !== 'set')) throw new Error('settings.update 需要且只接受 set 对象');
-          const result = manager.update(args.set);
+          const result = await manager.update(args.set);
           return { jsonrpc: '2.0', id, result: toolResult(result) };
         }
         if (typeof name === 'string' && ['ai_loop.settings.apply', 'ai_loop.settings.discard', 'ai_loop.settings.reset_project', 'ai_loop.workspace.toggle'].includes(name)) {

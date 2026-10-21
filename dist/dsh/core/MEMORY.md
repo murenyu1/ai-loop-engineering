@@ -2,6 +2,10 @@
 
 本协议用于跨会话、跨 harness 的项目记忆。所有工具共享项目 `.ai-loop/memory/` 和 `.ai-loop/runs/`；使用当前平台部署或已启用插件中的脚本，不复制知识库，不改根规范。插件模式不要求每项目安装核心。
 
+若项目使用 Git 且忽略 `.ai-loop/`，跨克隆协作还需在项目已有开发文档目录维护可提交的交接摘要，包含基准提交、批准范围、改动、验证边界与下一步。只同步经核对的必要事实，不复制本机配置、凭据和日志全文；摘要不替代运行状态，不证明远端或安装版已更新。未使用 Git 的项目不因此被要求建仓库。
+
+使用新版本 developed 阶段或 managed_execution 契约前，应统一升级参与写入同一运行的核心与插件；新版可读旧记录，旧版不能被假定可读新阶段。源码更新不会自动升级本机已安装插件，遇未知阶段停止并升级，不手改状态降级。
+
 ## 新会话启动
 
 1. 先遵守项目、上级和当前工具规则。首次处理项目相关请求时运行本部署 `scripts/memory.mjs bootstrap --project ROOT`，读取 `.ai-loop/memory/index.md`。同会话已读且未变化时复用。
@@ -42,8 +46,11 @@
 
 ## 脚本契约
 
-`scripts/memory.mjs` 提供 bootstrap / inspect / search / save / checkpoint，具体输入见脚本 README。
+`scripts/memory.mjs` 提供 bootstrap / inspect / search / read / save / checkpoint 命令：
 
+- `read`：按 entry ID 或分页读取完整条目正文（支持 `--id ID` 或 `--path PATH`，单次最多 8000 字符，可传 `--offset` / `--limit` 分页）。
+- `save`：增量合并知识条目。输入 JSON 包含 `{ base_revision, entries: [{ id, title, content, scope, status, source }] }`，并发时比对 expected_hash。
+- `checkpoint`：保存会话交接状态。输入 JSON 包含 `{ base_cursor, session: { intent, decisions, questions, next_steps, changes: [{ path, symbols, reason, read_first }] } }`。
 - catalog.json 保存短目录与 revision，schema 2 的结构化知识按不可变 data 分片保存；Markdown 是阅读视图。schema 1 仍可读，更新时迁移并保留旧目录备份。save 根据已读取的 base_revision 和 expected_hash 增量合并条目，不默认删除旧条目；改动正文前留 history 备份。未索引旧资料需要先读、保留有效内容，再显式 import_existing。
 - checkpoint.json 保存实际消费的 event_cursor、交接结构和 session_hash。checkpoint 根据 base_cursor 和 expected_session_hash 合并；旧 session 留 handoffs 备份。可分批处理事件，但游标落后仍标 events-pending，不能称交接完整。
 - session.md 保存用户意图、约束、决策原因、未决问题、下一步和必要文件指针，不复制权威计数。changes 固定记录本阶段改动文件、symbols、reason、read_first；保存文件 hash，删除文件用 deleted:true。按符号定位优先于不稳定的行号，不复制整段源码。旧交接缺字段仍可读，新交接应补齐。state.json 始终是执行状态源；complete/stopped 的交接可归档整理，但状态不会重开。

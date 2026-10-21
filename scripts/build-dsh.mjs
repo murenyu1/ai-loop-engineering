@@ -35,6 +35,10 @@ export function buildDsh(output = 'dist/dsh', options = {}) {
   for (const [file, bytes] of collect(safePath(source, 'skills'))) planned.set('skills/' + file, bytes);
   for (const [file, bytes] of collect(safePath(BUNDLE, 'core'))) planned.set('core/' + file, bytes);
   planned.set('client.js', Buffer.from(buildDshClient()));
+  // Git uses LF for text files; lock hashes must survive a fresh checkout.
+  for (const [file, bytes] of planned) if (/\.(?:mjs|js|json|md|ya?ml)$/.test(file)) {
+    planned.set(file, Buffer.from(bytes.toString('utf8').replace(/\r\n/g, '\n')));
+  }
   const lock = { version: VERSION, harness: 'dsh', files: [...planned].map(([file, bytes]) => ({ path: file, hash: digest(bytes) })).sort((a, b) => a.path.localeCompare(b.path)) };
   planned.set('bundle.json', Buffer.from(JSON.stringify(lock, null, 2) + '\n'));
   const lockPath = path.join(target, 'bundle.json');
