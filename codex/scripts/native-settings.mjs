@@ -1,6 +1,6 @@
 import path from 'node:path';
-import { ROLES, balanced } from '../../../scripts/routing.mjs';
-import { assert, rootPath } from '../../../scripts/lib.mjs';
+import { ROLES, balanced } from '../../scripts/routing.mjs';
+import { assert, rootPath } from '../../scripts/lib.mjs';
 import { getNativeModels } from './native-models.mjs';
 import { configureProfile, resetProjectProfile, resolveProfile, userHome } from './profiles.mjs';
 import { inspectWindows } from './windows.mjs';

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { buildDshClient } from '../scripts/build-dsh-client.mjs';
-import { createPlugin } from '../plugins/dsh/client/index.mjs';
+import { createPlugin } from '../dsh/client/index.mjs';
 
 // Minimal native-form bridge: field serialization and persistence belong to the
 // host. Capture the bridge boundary so tests assert our writes, not host internals.

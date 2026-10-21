@@ -157,7 +157,7 @@ test('GitHub 发行清单只包含源包、插件和市场，不包含本机运�
   buildPlugin();
   const files = publishFiles();
   assert.ok(files.some(item => item.path === '.agents/plugins/marketplace.json'));
-  assert.ok(files.some(item => item.path === 'plugins/codex/plugin.json'));
+  assert.ok(files.some(item => item.path === 'codex/plugin.json'));
   assert.ok(files.some(item => item.path === 'dist/codex/plugin.json'));
   assert.ok(files.every(item => !/(?:^|\/)(?:\.release|\.ai-loop|\.validation|\.env|node_modules)(?:\/|$)/.test(item.path)));
   assert.ok(files.every(item => !item.path.endsWith('.log')));

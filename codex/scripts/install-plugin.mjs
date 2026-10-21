@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { BUNDLE, assert, rootPath, safePath, jsonFile, atomicWrite, codexExecutable, args, allowArgs, mainModule, printResult } from '../../../scripts/lib.mjs';
-import { userHome } from '../../../scripts/profiles.mjs';
-import { digest } from '../../../scripts/memory-store.mjs';
-import { inspectWindows } from '../../../scripts/windows.mjs';
+import { BUNDLE, assert, rootPath, safePath, jsonFile, atomicWrite, codexExecutable, args, allowArgs, mainModule, printResult } from '../../scripts/lib.mjs';
+import { userHome } from '../../scripts/profiles.mjs';
+import { digest } from '../../scripts/memory-store.mjs';
+import { inspectWindows } from '../../scripts/windows.mjs';
 
 export function installPlugin(project, options = {}) {
   const root = rootPath(project), home = rootPath(options.home || userHome());
@@ -32,7 +32,7 @@ export function installPlugin(project, options = {}) {
     stage(`${location}/${item.path}`, content);
   }
   const marketplaceFile = `${marketplace}/.agents/plugins/marketplace.json`;
-  const metadata = jsonFile(fs.existsSync(path.join(BUNDLE,'marketplace.json')) ? path.join(BUNDLE,'marketplace.json') : safePath(BUNDLE,'plugins/codex/marketplace.json'));
+  const metadata = jsonFile(fs.existsSync(path.join(BUNDLE,'marketplace.json')) ? path.join(BUNDLE,'marketplace.json') : safePath(BUNDLE,'codex/marketplace.json'));
   metadata.plugins[0].source.path = './plugins/ai-loop-engineering';
   const marketplaceContent = Buffer.from(JSON.stringify(metadata, null, 2)+'\n');
   const existing = safePath(home, marketplaceFile);

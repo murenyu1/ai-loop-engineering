@@ -1,4 +1,4 @@
-import { mainModule, VERSION } from '../../../scripts/lib.mjs';
+import { mainModule, VERSION } from '../../scripts/lib.mjs';
 import { createSettingsManager } from './native-settings.mjs';
 
 export const PROTOCOL_VERSION = '2025-11-25';

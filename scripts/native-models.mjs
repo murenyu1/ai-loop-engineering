@@ -1,1 +1,1 @@
-export * from '../plugins/codex/scripts/native-models.mjs';
+export * from '../codex/scripts/native-models.mjs';

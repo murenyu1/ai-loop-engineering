@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { assert, rootPath, codexExecutable, VERSION } from '../../../scripts/lib.mjs';
+import { assert, rootPath, codexExecutable, VERSION } from '../../scripts/lib.mjs';
 
 const cache = new Map();
 export async function getNativeModels(project) {

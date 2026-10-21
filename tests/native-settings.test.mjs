@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createSettingsManager } from '../plugins/codex/scripts/native-settings.mjs';
+import { createSettingsManager } from '../codex/scripts/native-settings.mjs';
 import { balanced } from '../scripts/routing.mjs';
-import { configureProfile, resetProjectProfile, resolveProfile } from '../plugins/codex/scripts/profiles.mjs';
+import { configureProfile, resetProjectProfile, resolveProfile } from '../codex/scripts/profiles.mjs';
 import { listWorkspaces } from '../scripts/workspaces.mjs';
 import { link } from './support.mjs';
 

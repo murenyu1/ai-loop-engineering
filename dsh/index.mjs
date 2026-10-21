@@ -11,7 +11,7 @@ export const inject = ['skills', 'tools', 'systemPrompt', 'subagents', 'workingD
 export const Config = createConfig(z);
 
 const pluginRoot = path.dirname(fileURLToPath(import.meta.url));
-const coreRoot = fs.existsSync(path.join(pluginRoot, 'core')) ? path.join(pluginRoot, 'core') : path.resolve(pluginRoot, '../../core');
+const coreRoot = fs.existsSync(path.join(pluginRoot, 'core')) ? path.join(pluginRoot, 'core') : path.resolve(pluginRoot, '../core');
 const corePath = coreRoot.replaceAll('\\', '/');
 const resource = relative => fs.readFileSync(path.join(pluginRoot, relative), 'utf8').replaceAll('{{CORE}}', corePath);
 const roleText = Object.fromEntries(ROLES.map(role => [role, fs.readFileSync(path.join(coreRoot, 'agents', `loop-${role}.md`), 'utf8')]));

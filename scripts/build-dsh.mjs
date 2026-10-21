@@ -25,7 +25,7 @@ function collect(directory, prefix = '') {
 export function buildDsh(output = 'dist/dsh', options = {}) {
   assert(output === 'dist/dsh' || output.startsWith('.release/'), '输出仅允许 dist/dsh 或 .release/ 下的验证目录');
   const target = safePath(BUNDLE, output);
-  const source = safePath(BUNDLE, 'plugins/dsh');
+  const source = safePath(BUNDLE, 'dsh');
   const manifest = JSON.parse(fs.readFileSync(path.join(source, 'package.json'), 'utf8'));
   assert(manifest.version === VERSION, 'DSH 插件版本与核心不一致');
   const planned = new Map();

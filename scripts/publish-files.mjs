@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { BUNDLE, VERSION, assert, safePath, args, allowArgs, mainModule, printResult } from './lib.mjs';
 
-const directories = ['core', 'adapters/project', 'scripts', 'tests', 'plugins/codex', 'dist/codex', 'plugins/dsh', 'dist/dsh', 'docs/development'];
+const directories = ['core', 'adapters/project', 'scripts', 'tests', 'codex', 'dist/codex', 'dsh', 'dist/dsh', 'docs/development'];
 const files = ['.gitignore', '.gitattributes', 'AGENTS.md', 'CLAUDE.md', 'README.md', 'SETUP.md', 'CHANGES.md'];
 const extensions = /\.(?:md|mjs|js|json|yaml|yml|toml|ps1|html|css)$/;
 export function publishFiles() {
@@ -20,7 +20,7 @@ export function publishFiles() {
   for (const directory of directories) if (fs.existsSync(safePath(BUNDLE, directory))) walk(directory);
   // 仅发行时映射市场元数据，不在当前源包工作区创建受保护 .agents 目录。
   const mapping = new Map([...selected].map(relative => [relative, relative]));
-  mapping.set('.agents/plugins/marketplace.json', 'plugins/codex/marketplace.json');
+  mapping.set('.agents/plugins/marketplace.json', 'codex/marketplace.json');
   for(const name of [`ai-loop-workflow-${VERSION}.zip`,`ai-loop-codex-${VERSION}.zip`,`ai-loop-dsh-${VERSION}.tgz`,'SHA256SUMS']) {
     const relative='downloads/'+name;
     if(fs.existsSync(safePath(BUNDLE,relative))) mapping.set(relative,relative);

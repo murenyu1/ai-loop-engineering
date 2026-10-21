@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { ROLES, validateProfile, nativeAgent, routeHash } from '../../../scripts/routing.mjs';
-import { assert, rootPath, safePath, jsonFile, atomicWrite, locked, BUNDLE, sourceRelative } from '../../../scripts/lib.mjs';
-import { inspectWindows } from '../../../scripts/windows.mjs';
-import { rootString } from '../../../scripts/toml.mjs';
+import { ROLES, validateProfile, nativeAgent, routeHash } from '../../scripts/routing.mjs';
+import { assert, rootPath, safePath, jsonFile, atomicWrite, locked, BUNDLE, sourceRelative } from '../../scripts/lib.mjs';
+import { inspectWindows } from '../../scripts/windows.mjs';
+import { rootString } from '../../scripts/toml.mjs';
 
 export const userHome = () => path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');

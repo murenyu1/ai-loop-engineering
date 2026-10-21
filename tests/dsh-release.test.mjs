@@ -8,7 +8,7 @@ import { gunzipSync } from 'node:zlib';
 import { spawnSync } from 'node:child_process';
 import { BUNDLE, VERSION, safePath } from '../scripts/lib.mjs';
 import { buildDsh, packDsh, tarball } from '../scripts/build-dsh.mjs';
-import { createPlugin } from '../plugins/dsh/client/index.mjs';
+import { createPlugin } from '../dsh/client/index.mjs';
 
 function untar(bytes, root) {
   const tar = gunzipSync(bytes), names = [];
@@ -81,7 +81,7 @@ test('DSH 客户端源文件使用 CRLF 时发行摘要仍与 LF 检出一致', 
 });
 
 test('DSH 构建拒绝越界、混入个人文件与被改动的产物', () => {
-  assert.throws(() => buildDsh('plugins/dsh'), /输出仅允许/);
+  assert.throws(() => buildDsh('dsh'), /输出仅允许/);
   assert.throws(() => buildDsh('.release/../core'), /路径须为规范/);
   buildDsh();
   const unowned = path.join(BUNDLE, 'dist/dsh/private-test.txt');

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { assert, rootPath, safePath, atomicWrite, args, allowArgs, mainModule, printResult } from '../../../scripts/lib.mjs';
+import { assert, rootPath, safePath, atomicWrite, args, allowArgs, mainModule, printResult } from '../../scripts/lib.mjs';
 
 const sandboxAccount = name => /\\CodexSandbox(?:Offline|Online)$/i.test(name || '');
 export function assessOwners(data, options = {}) {

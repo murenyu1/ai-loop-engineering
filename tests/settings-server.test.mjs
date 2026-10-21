@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
-import { createSettingsProtocol, PROTOCOL_VERSION, READ_TOOL, UPDATE_TOOL, runSettingsServer } from '../plugins/codex/scripts/settings-server.mjs';
+import { createSettingsProtocol, PROTOCOL_VERSION, READ_TOOL, UPDATE_TOOL, runSettingsServer } from '../codex/scripts/settings-server.mjs';
 
 test('initialize、discover 与 tools/list 声明 openai/settings 原生能力', async () => {
   const protocol = createSettingsProtocol({});

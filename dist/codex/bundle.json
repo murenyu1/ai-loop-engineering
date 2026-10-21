@@ -83,7 +83,7 @@
     },
     {
       "path": "scripts/install-plugin.mjs",
-      "hash": "1057afc3ec3bf9b8f7950108d11088ffd7cfd6760c1c94995c23ba4887f6d675"
+      "hash": "aa922da5edf8235a98530a1463bbf80c63f99855e7c403f10772256f6b6d75b2"
     },
     {
       "path": "scripts/install.mjs",
@@ -147,7 +147,7 @@
     },
     {
       "path": "scripts/source.mjs",
-      "hash": "3e84b352f8e6ef54109fd6f72d0e7298228659c73eb5ecd10da4e01fa4db9a59"
+      "hash": "dca6a2123b060b1c7ed61a235727088d310d056839ad0ee84803f547e074c21e"
     },
     {
       "path": "scripts/toml.mjs",
@@ -163,7 +163,7 @@
     },
     {
       "path": "SETUP.md",
-      "hash": "27e6b1f07400db3a3ea5bd8d423e21669dafbe7aa845bb4774c01225341a7013"
+      "hash": "e7487e7c43e5a5e7b18850b6519db46f81299fa9a0f0310f1bf29832384dec12"
     },
     {
       "path": "skills/ai-loop-models/SKILL.md",

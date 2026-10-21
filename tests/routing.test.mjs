@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { install, REQUIRED_FILES } from '../scripts/install.mjs';
 import { balanced, validateProfile, routeHash } from '../scripts/routing.mjs';
-import { configureProfile, resolveProfile } from '../plugins/codex/scripts/profiles.mjs';
+import { configureProfile, resolveProfile } from '../codex/scripts/profiles.mjs';
 import { cli as modelCli, changeModel } from '../scripts/models.mjs';
 import { diagnose } from '../scripts/doctor.mjs';
 import { recordAgent, agentStatus } from '../scripts/agents.mjs';

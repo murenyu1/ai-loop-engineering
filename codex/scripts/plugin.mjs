@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { bootstrap } from '../../../scripts/memory.mjs';
-import { resolveProfile } from '../../../scripts/profiles.mjs';
-import { inspectWindows } from '../../../scripts/windows.mjs';
-import { assert, BUNDLE, sourceRelative, VERSION, rootPath, safePath, atomicWrite, jsonFile, args, allowArgs, mainModule, printResult } from '../../../scripts/lib.mjs';
-import { digest } from '../../../scripts/memory-store.mjs';
+import { bootstrap } from '../../scripts/memory.mjs';
+import { resolveProfile } from '../../scripts/profiles.mjs';
+import { inspectWindows } from '../../scripts/windows.mjs';
+import { assert, BUNDLE, sourceRelative, VERSION, rootPath, safePath, atomicWrite, jsonFile, args, allowArgs, mainModule, printResult } from '../../scripts/lib.mjs';
+import { digest } from '../../scripts/memory-store.mjs';
 
 export function initialize(project, options = {}) {
   const root = rootPath(project);

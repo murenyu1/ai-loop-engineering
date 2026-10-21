@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { BUNDLE, ID, safePath, jsonFile, mainModule } from '../../../scripts/lib.mjs';
-import { listWorkspaces } from '../../../scripts/workspaces.mjs';
+import { BUNDLE, ID, safePath, jsonFile, mainModule } from '../../scripts/lib.mjs';
+import { listWorkspaces } from '../../scripts/workspaces.mjs';
 
 // 钩子只读已启用工作区的短状态；工作区列表由设置页直接读取 Codex 本机项目。
 export function startupContext(input, options = {}) {

@@ -1,9 +1,9 @@
 import { createInterface } from 'node:readline/promises';
 import { stdin, stderr } from 'node:process';
-import { resolveProfile, configureProfile, resetProjectProfile } from '../../../scripts/profiles.mjs';
-import { balanced, ROLES } from '../../../scripts/routing.mjs';
-import { inspectNative } from '../../../scripts/doctor.mjs';
-import { assert, rootPath, jsonFile, args, allowArgs, mainModule } from '../../../scripts/lib.mjs';
+import { resolveProfile, configureProfile, resetProjectProfile } from '../../scripts/profiles.mjs';
+import { balanced, ROLES } from '../../scripts/routing.mjs';
+import { inspectNative } from '../../scripts/doctor.mjs';
+import { assert, rootPath, jsonFile, args, allowArgs, mainModule } from '../../scripts/lib.mjs';
 
 export async function cli(argv, io = { input: stdin, output: stderr }) {
   const options = args(argv);

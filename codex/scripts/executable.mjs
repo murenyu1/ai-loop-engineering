@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { assert } from '../../../scripts/lib.mjs';
+import { assert } from '../../scripts/lib.mjs';
 export function codexExecutable() {
   if (process.env.AI_LOOP_CODEX_CLI) {
     const executable = path.resolve(process.env.AI_LOOP_CODEX_CLI);

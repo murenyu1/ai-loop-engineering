@@ -10,7 +10,7 @@ AI Loop Engineering 4.4.3 提供通用工作流、Codex 插件和 DSH 插件三�
 |---|---|---|
 | 在不同 AI 开发工具中使用共用流程 | [通用工作流 4.4.3](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.4.3/ai-loop-workflow-4.4.3.zip) | 共用流程、角色、状态和分页记忆工具；不含 Codex 插件 |
 | 在 Codex 中一次安装，并在插件详情页设置 | [Codex 插件 4.4.3](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.4.3/ai-loop-codex-4.4.3.zip) | Codex 插件、原生设置、工作区管理和所需核心 |
-| 在 DeepSeek Harness 中使用原生插件 | [DSH 插件 4.4.3](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.4.3/ai-loop-dsh-4.4.3.tgz)，见 [安装说明](plugins/dsh/README.md) | 面向 0.2.1-rc.2 的插件、原生角色调度、设置和所需核心 |
+| 在 DeepSeek Harness 中使用原生插件 | [DSH 插件 4.4.3](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.4.3/ai-loop-dsh-4.4.3.tgz)，见 [安装说明](dsh/README.md) | 面向 0.2.1-rc.2 的插件、原生角色调度、设置和所需核心 |
 | 修改工作流或开发其他客户端插件 | 本仓库源码 | core、平台适配器、插件源码、测试和构建工具 |
 
 三个包和统一校验文件位于 [v4.4.3 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.4.3)：[SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.4.3/SHA256SUMS)。Codex 用户只需插件包；其他工具可选通用工作流包。GitHub 自动提供的 Source code 压缩包包含仓库源码，主要供开发维护使用。历史版本仍可从 [v4.3.1](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.3.1) 和 [DSH 4.3.0 预览版](https://github.com/murenyu1/ai-loop-engineering/releases/tag/dsh-v4.3.0) 获取。
@@ -48,7 +48,7 @@ Codex 插件的模型设置通过本地 stdio MCP 的 `openai/settings` 集成�
 
 ## 通用工作流
 
-DeepSeek Harness 用户可从 [v4.4.3 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.4.3) 下载 [DSH 插件包](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.4.3/ai-loop-dsh-4.4.3.tgz) 和 [SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.4.3/SHA256SUMS)，用 DSH 插件管理器安装到实际使用的 profile；也可按 [DSH 插件说明](plugins/dsh/README.md) 从源码构建。
+DeepSeek Harness 用户可从 [v4.4.3 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.4.3) 下载 [DSH 插件包](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.4.3/ai-loop-dsh-4.4.3.tgz) 和 [SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.4.3/SHA256SUMS)，用 DSH 插件管理器安装到实际使用的 profile；也可按 [DSH 插件说明](dsh/README.md) 从源码构建。
 
 下载并解压通用工作流 ZIP 到固定目录，不必复制进每个项目。让当前 AI：
 
@@ -67,8 +67,8 @@ node scripts/memory.mjs bootstrap --project 项目绝对路径
 ```text
 core/                  共用流程、角色、记忆协议与平台无关状态工具
 adapters/project/      多客户端项目安装兼容适配器
-plugins/codex/         Codex 插件源代码、技能、MCP 设置和钩子
-plugins/dsh/           DeepSeek Harness 原生插件、角色调度和设置
+codex/                 Codex 插件源代码、技能、MCP 设置和钩子
+dsh/                   DeepSeek Harness 原生插件、角色调度和设置
 dist/codex/            从插件源码构建的可安装目录
 dist/dsh/              DSH 可安装目录，发行时打包为 tgz
 scripts/               构建、发行和上传清单工具
@@ -76,7 +76,9 @@ tests/                 维护者检查
 downloads/             本机生成的通用包、插件包与校验文件
 ```
 
-`core/` 是共享工作流的权威源码；插件源码与通用工作流分开，Codex 插件通过构建流程带上所需核心副本。新增其他客户端插件时，在 `plugins/<harness>/` 增加独立源码，再生成对应的 `dist/<harness>/`，使用户能分别识别和下载。发行包不包含个人模型配置、工作区名单、项目任务记忆、日志、缓存或测试夹具。
+本项目在插件集合工作区的独立 `ai-loop-engineering/` 目录维护；`.git/` 位于该项目根，统一管理 `core/`、`codex/` 和 `dsh/`，三者不建立嵌套 Git 仓库。
+
+`core/` 是共享工作流的权威源码；插件源码与通用工作流分开，Codex 插件通过构建流程带上所需核心副本。新增其他客户端插件时，在项目根的 `<harness>/` 增加独立源码，再生成对应的 `dist/<harness>/`，使用户能分别识别和下载。发行包不包含个人模型配置、工作区名单、项目任务记忆、日志、缓存或测试夹具。
 
 维护者命令：
 

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { createConfig, projectKey, projectSettings, roleOptions, validateConfig, validateProjects, validateRoles } from '../plugins/dsh/config.mjs';
+import { createConfig, projectKey, projectSettings, roleOptions, validateConfig, validateProjects, validateRoles } from '../dsh/config.mjs';
 
 const root = 'D:\\Projects\\example';
 const config = extra => ({ enabled: true, maxConcurrent: 2, roles: {}, projects: [{ path: root, enabled: true }], ...extra });
@@ -62,12 +62,12 @@ test('DSH Config仅包含浏览器可序列化声明约束，不含transform回�
 
 // Contract tests use SDK doubles; real DSH loading and model calls are separate
 // acceptance checks. No SDK is downloaded or copied into the source repository.
-let source = fs.readFileSync(new URL('../plugins/dsh/index.mjs', import.meta.url), 'utf8');
+let source = fs.readFileSync(new URL('../dsh/index.mjs', import.meta.url), 'utf8');
 source = source.replace("import z from '@deepseek-ai/schemastery';", 'const chain = new Proxy(function(){ return chain; }, {get:()=>chain}); const z=chain;');
 source = source.replace("import { defineTool } from '@deepseek-ai/dsh-tools';", 'const defineTool = value => { for (const [name, spec] of Object.entries(value.parameters ?? {})) { if (spec.required !== undefined && spec.required !== true) throw new Error(`unsupported JSON schema: parameters.${name}.required must be true when present`); } return value; };');
 source = source.replace("import { delegationDepthOf, parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent';", 'const delegationDepthOf = agent => agent.depth ?? 0; const parentAgentOptionsForDelegation = agent => agent.options;');
-source = source.replace("'./config.mjs'", JSON.stringify(new URL('../plugins/dsh/config.mjs', import.meta.url).href));
-source = source.replaceAll('import.meta.url', JSON.stringify(new URL('../plugins/dsh/index.mjs', import.meta.url).href));
+source = source.replace("'./config.mjs'", JSON.stringify(new URL('../dsh/config.mjs', import.meta.url).href));
+source = source.replaceAll('import.meta.url', JSON.stringify(new URL('../dsh/index.mjs', import.meta.url).href));
 const { apply } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 function fixture(settings = config()) {
@@ -112,7 +112,7 @@ test('DSH 技能与动态上下文仅提供必要恢复入口，不写入项目'
   assert.match(f.contexts[0].text({ agent: f.parent }), /此项目已启用/);
   f.parent.session.header.cwd = 'D:/unknown';
   assert.equal(f.contexts[0].text({ agent: f.parent }), '');
-  const file = fs.readFileSync(new URL('../plugins/dsh/index.mjs', import.meta.url), 'utf8');
+  const file = fs.readFileSync(new URL('../dsh/index.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(file, /writeFile|appendFile|mkdir|child_process|execFile|spawn\(/);
   assert.doesNotMatch(file, /ops_bash|callTool\(/);
 });
