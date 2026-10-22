@@ -95,9 +95,11 @@ window.__ModuleLoader__.load({
   }
 
   function samePath(left, right) {
+    if (typeof left !== 'string' || typeof right !== 'string') return false;
     const normalize = path => {
-      const value = (path || '').replace(/\\/g, '/').replace(/\/+$/, '') || (path ? '/' : '');
-      return /^[A-Za-z]:\//.test(value) || value.startsWith('//') ? value.toLowerCase() : value;
+      const trimmed = path.trim().replace(/^[A-Za-z]:[\\/]/, m => m.toLowerCase());
+      const value = trimmed.replace(/\\/g, '/').replace(/\/+$/, '') || (trimmed ? '/' : '');
+      return /^[a-z]:\//.test(value) || value.startsWith('//') ? value.toLowerCase() : value;
     };
     return normalize(left) === normalize(right);
   }
@@ -288,11 +290,11 @@ window.__ModuleLoader__.load({
 
   async function requestStatus(fetcher, path, run, sessionId, signal) {
     const base = typeof document !== 'undefined' && document.baseURI ? document.baseURI : 'http://dsh.internal/';
-    const url = new URL('plugins/ai-loop-engineering/state', base);
+    const url = new URL('/plugins/ai-loop-engineering/state', base);
     if (path) url.searchParams.set('project', path);
     if (sessionId) url.searchParams.set('session', sessionId);
     if (run) url.searchParams.set('run', run);
-    const response = await fetcher(url.href, { method: 'GET', cache: 'no-store', signal });
+    const response = await fetcher(url.href, { method: 'GET', cache: 'no-store', credentials: 'same-origin', signal });
     const parsed = await response.json().catch(() => ({}));
     if (!response.ok || parsed.error) throw new Error(parsed.error || `HTTP ${response.status}`);
     return parsed;
@@ -809,6 +811,7 @@ window.__ModuleLoader__.load({
       ctx,
       sessionId,
       initialWorkspacePath: resolvedPath,
+      inSidebar: true,
     });
   }
 
@@ -890,7 +893,7 @@ window.__ModuleLoader__.load({
   }
 
   function Card(props) {
-    const { controller, ctx, useWorkspaces, sessionId, initialWorkspacePath } = props;
+    const { controller, ctx, useWorkspaces, sessionId, initialWorkspacePath, inSidebar } = props;
     const state = React.useSyncExternalStore(controller.store.subscribe, controller.store.getSnapshot, controller.store.getSnapshot);
 
     const targetWorkspace = React.useMemo(() => {
@@ -908,8 +911,9 @@ window.__ModuleLoader__.load({
     const [newPathInput, setNewPathInput] = React.useState('');
     const [query, setQuery] = React.useState('');
 
+    const userSelectedRef = React.useRef(false);
     React.useEffect(() => {
-      if (targetWorkspace) {
+      if (!userSelectedRef.current && targetWorkspace) {
         setPath(targetWorkspace);
       }
     }, [targetWorkspace]);
@@ -936,12 +940,16 @@ window.__ModuleLoader__.load({
     const pathMap = new Map();
     for (const w of workspacesItems) pathMap.set(w.path, w.title || w.path);
     for (const p of state.projects) {
-      if (![...pathMap.keys()].some(k => samePath(k, p.path))) {
+      const match = [...pathMap.keys()].find(k => samePath(k, p.path));
+      if (!match) {
         pathMap.set(p.path, `${p.path}（已配置）`);
       }
     }
-    if (path && ![...pathMap.keys()].some(k => samePath(k, path))) {
-      pathMap.set(path, `${path}（当前工作区）`);
+    if (path) {
+      const match = [...pathMap.keys()].find(k => samePath(k, path));
+      if (!match && state.projects.some(p => samePath(p.path, path))) {
+        pathMap.set(path, `${path}（当前选择）`);
+      }
     }
 
     const filtered = [...pathMap].filter(([val, title]) => `${title} ${val}`.toLowerCase().includes(query.toLowerCase()));
@@ -954,7 +962,7 @@ window.__ModuleLoader__.load({
       setNewPathInput('');
     };
 
-    return h(SettingsForm, {
+    const formContent = h(SettingsForm, {
       state,
       labels: {
         unavailable: 'AI Loop 插件未加载，暂时无法配置。',
@@ -1016,7 +1024,10 @@ window.__ModuleLoader__.load({
             value: path,
             disabled: state.saving,
             style: S.input,
-            onChange: e => setPath(e.target.value),
+            onChange: e => {
+              userSelectedRef.current = true;
+              setPath(e.target.value);
+            },
           },
           h('option', { value: '' }, '🌐 全局默认配置 (所有项目通用)'),
           filtered.map(([id, name]) => h('option', { key: id, value: id }, name))),
@@ -1057,7 +1068,11 @@ window.__ModuleLoader__.load({
           type: 'button',
           style: { ...S.btn(false), color: 'var(--dsw-alias-state-error-primary, #f87171)', borderColor: 'rgba(248,113,113,0.3)' },
           disabled: disabled || !project,
-          onClick: () => { controller.removeProject(path); setPath(''); },
+          onClick: () => {
+            userSelectedRef.current = true;
+            controller.removeProject(path);
+            setPath('');
+          },
         }, '移除项目覆盖'),
       ) : null,
     ),
@@ -1126,6 +1141,21 @@ window.__ModuleLoader__.load({
         onClick: controller.actions.discard,
       }, '放弃所有修改'),
     ));
+
+    if (inSidebar) {
+      return h('div', {
+        style: {
+          height: '100%',
+          minHeight: 0,
+          overflowY: 'auto',
+          boxSizing: 'border-box',
+          padding: '16px',
+          display: 'flex',
+          flexDirection: 'column',
+        },
+      }, formContent);
+    }
+    return formContent;
   }
 
   function apply(ctx) {
@@ -1172,6 +1202,7 @@ window.__ModuleLoader__.load({
                 ctx,
                 sessionId: tabProps?.scope?.sessionId,
                 initialWorkspacePath: tabProps?.scope?.cwd || sessionCwdOf(ctx, tabProps?.scope?.sessionId),
+                inSidebar: true,
               }),
             });
             return () => {

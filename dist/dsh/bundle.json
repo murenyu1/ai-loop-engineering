@@ -1,14 +1,14 @@
 {
-  "version": "4.5.0",
+  "version": "4.5.1",
   "harness": "dsh",
   "files": [
     {
       "path": "client.js",
-      "hash": "8fae3d263f522af5fb2752983c2b6bf3f41fc3ffb42b6eb2031af7a40e759c91"
+      "hash": "1904fa7a190093c926be791416b78bf8d7712ac3ed6e55337894523db7cc4a18"
     },
     {
       "path": "config.mjs",
-      "hash": "37c09758aefe0e605efc0b17eacc2289eff396583e54ac9fba978b8b8fa80eb5"
+      "hash": "9e84c23f4f65b2f4720153853c90d439246834b9c88b02dd69c43132d7a031ca"
     },
     {
       "path": "cordis.patch.yml",
@@ -52,7 +52,7 @@
     },
     {
       "path": "core/scripts/lib.mjs",
-      "hash": "d6433568536d69c708d87204807e990d6da99c1e9f22aeaa67667b1b8ecfd400"
+      "hash": "d96ba92c3136fd2a3ad90734df891e085f7d23ab594b92b00291fdc66560ea04"
     },
     {
       "path": "core/scripts/loop.mjs",
@@ -96,7 +96,7 @@
     },
     {
       "path": "package.json",
-      "hash": "efd8ff464e8100c6998bd56eec161407c88adeae34f68b159bb3bd3915d2b135"
+      "hash": "cbb2d9c9daf638e9a1c7d3b6376e969e5a9142e437178f14385e6afee1aba4f0"
     },
     {
       "path": "README.md",

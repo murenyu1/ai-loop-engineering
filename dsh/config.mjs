@@ -61,9 +61,10 @@ export function validateConfig(config) {
 
 export function projectKey(root) {
   if (typeof root !== 'string' || !root.trim()) return undefined;
-  if (/^(?:[a-z]:[\\/]|\\\\)/i.test(root)) return path.win32.normalize(root).replace(/[\\/]+$/, '').toLowerCase();
-  if (!path.posix.isAbsolute(root)) return undefined;
-  return path.posix.normalize(root).replace(/\/$/, '') || '/';
+  const cleaned = root.trim().replace(/^[a-zA-Z]:(?:\/|\\)/, m => m.toLowerCase());
+  if (/^(?:[a-z]:[\\/]|\\\\)/i.test(cleaned)) return path.win32.normalize(cleaned).replace(/[\\/]+$/, '').toLowerCase();
+  if (!path.posix.isAbsolute(cleaned)) return undefined;
+  return path.posix.normalize(cleaned).replace(/\/$/, '') || '/';
 }
 
 export function projectSettings(config, root) {
