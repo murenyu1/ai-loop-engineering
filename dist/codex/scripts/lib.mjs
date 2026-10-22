@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-export const VERSION = '4.5.1';
+export const VERSION = '4.5.2';
 const base = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const BUNDLE = fs.existsSync(path.join(base, '../scripts/build-release.mjs')) && path.basename(base) === 'core' ? path.dirname(base) : base;
 export function resourceRelative(root, relative) {

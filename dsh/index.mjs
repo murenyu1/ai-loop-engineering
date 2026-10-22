@@ -37,7 +37,7 @@ export function apply(ctx, config) {
       if (!agent) return '';
       const root = agent.session.header.cwd;
       if (!projectSettings(config, root).enabled) return '';
-      return `此项目已启用 AI Loop。先加载 ai-loop 技能，按新需求/继续/只读检查区分意图，恢复必要的 .ai-loop/ 资料后行动。项目根目录：${root}。共享核心：${corePath}。项目规则、deny、原生审批与沙箱优先；不要通过宿主 fs/exec 绕过。独立角色使用 ai_loop_delegate；只有用户或工作流授权时才派发。`;
+      return `此项目已启用 AI Loop 工业化闭环工作流。当涉及代码开发、功能修改、Bug修复、重构或代码审查等工程任务时，必须遵循 AI Loop 规范：首先加载 ai-loop 技能（skill({ name: 'ai-loop' })），按规范管理运行（Run）与阶段任务；严禁主代理自行直接修改业务代码或单代理越权完成开发；必须通过 ai_loop_delegate 派发对应的专业子代理角色（planner 规划、dev 编码、tester 测试验证、reviewer 独立评审、scribe 知识沉淀）协同推进，以驱动顶部看板和闭环监控。项目根目录：${root}。共享核心：${corePath}。项目规则、deny、原生审批与沙箱优先；不要通过宿主 fs/exec 绕过。`;
     }
   });
 

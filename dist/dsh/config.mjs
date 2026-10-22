@@ -67,6 +67,16 @@ export function projectKey(root) {
   return path.posix.normalize(cleaned).replace(/\/$/, '') || '/';
 }
 
+export function pruneProjects(projects, validPaths) {
+  if (!Array.isArray(projects)) return [];
+  if (!Array.isArray(validPaths) || validPaths.length === 0) return projects;
+  const validKeys = new Set(validPaths.map(p => projectKey(p)).filter(Boolean));
+  return projects.filter(item => {
+    const key = projectKey(item?.path);
+    return key && validKeys.has(key);
+  });
+}
+
 export function projectSettings(config, root) {
   const schemaVersion = valueOf(config.schemaVersion);
   if (schemaVersion !== undefined && schemaVersion !== 2) throw new Error(`不支持 AI Loop 配置 schemaVersion=${schemaVersion}。`);

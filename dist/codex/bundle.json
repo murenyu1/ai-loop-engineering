@@ -1,9 +1,9 @@
 {
-  "version": "4.5.1",
+  "version": "4.5.2",
   "files": [
     {
       "path": ".codex-plugin/plugin.json",
-      "hash": "066ea3436ac7a98efdb1cd30d1460c5a22a57f657ff544f432b0d8ca2e94c10b"
+      "hash": "7627cbddd61df609611411f4710c0aa24b27c993f8b5d315f371c648a37ec87f"
     },
     {
       "path": ".mcp.json",
@@ -35,7 +35,7 @@
     },
     {
       "path": "marketplace.json",
-      "hash": "295e5e69e471ffce8924cbadf7ffb19b97092245f97e2a338b343f4f8f151443"
+      "hash": "7df687a149d384ee0d97d102be655841f647b9cd87a8c1ec51a1f7b3fdc518c8"
     },
     {
       "path": "mcp.json",
@@ -47,7 +47,7 @@
     },
     {
       "path": "plugin.json",
-      "hash": "702662ffefa6b04b94f616e0e478cf1da193db62e37852f430236b107b23b0c5"
+      "hash": "5c700b36760b2c057cf5c36feecff14a9a0b6c9529935a5be065859504cd520b"
     },
     {
       "path": "README.md",
@@ -95,7 +95,7 @@
     },
     {
       "path": "scripts/lib.mjs",
-      "hash": "4253f6ca0f96bc7b44e985bc65ff8c4d356958b223e3c32c7087245603d2d416"
+      "hash": "dd2c5b706535811cd2834620d7d8141123ef3cab4cf0ce20c6d2f7ade7b41de3"
     },
     {
       "path": "scripts/loop.mjs",

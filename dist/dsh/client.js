@@ -896,7 +896,7 @@ window.__ModuleLoader__.load({
     const { controller, ctx, useWorkspaces, sessionId, initialWorkspacePath, inSidebar } = props;
     const state = React.useSyncExternalStore(controller.store.subscribe, controller.store.getSnapshot, controller.store.getSnapshot);
 
-    const targetWorkspace = React.useMemo(() => {
+    const activeSessionCwd = React.useMemo(() => {
       if (typeof initialWorkspacePath === 'string' && initialWorkspacePath.trim()) {
         return initialWorkspacePath.trim();
       }
@@ -907,26 +907,48 @@ window.__ModuleLoader__.load({
       return '';
     }, [initialWorkspacePath, sessionId, ctx]);
 
-    const [path, setPath] = React.useState(targetWorkspace);
-    const [newPathInput, setNewPathInput] = React.useState('');
-    const [query, setQuery] = React.useState('');
+    const [path, setPath] = React.useState(activeSessionCwd || '');
+    const lastActiveSessionRef = React.useRef(sessionId);
+    const lastActiveCwdRef = React.useRef(activeSessionCwd);
 
-    const userSelectedRef = React.useRef(false);
     React.useEffect(() => {
-      if (!userSelectedRef.current && targetWorkspace) {
-        setPath(targetWorkspace);
+      if (sessionId !== lastActiveSessionRef.current || activeSessionCwd !== lastActiveCwdRef.current) {
+        lastActiveSessionRef.current = sessionId;
+        lastActiveCwdRef.current = activeSessionCwd;
+        if (activeSessionCwd) {
+          setPath(activeSessionCwd);
+        }
       }
-    }, [targetWorkspace]);
+    }, [sessionId, activeSessionCwd]);
 
-    let workspacesItems = [];
-    if (typeof useWorkspaces === 'function') {
+    const workspacesFromHook = typeof useWorkspaces === 'function' ? useWorkspaces(s => s?.items || s) : null;
+    const [contextWorkspaces, setContextWorkspaces] = React.useState(() => {
       try {
-        const snap = useWorkspaces(s => s);
-        if (snap && Array.isArray(snap.items)) workspacesItems = snap.items;
-      } catch {
-        workspacesItems = [];
-      }
-    }
+        const ws = ctx?.get?.('workspaces') || ctx?.workspaces;
+        const snap = ws?.list?.getSnapshot?.();
+        if (Array.isArray(snap?.items)) return snap.items;
+      } catch {}
+      return [];
+    });
+
+    React.useEffect(() => {
+      try {
+        const ws = ctx?.get?.('workspaces') || ctx?.workspaces;
+        if (typeof ws?.list?.subscribe === 'function') {
+          return ws.list.subscribe(() => {
+            const snap = ws.list.getSnapshot?.();
+            if (Array.isArray(snap?.items)) setContextWorkspaces(snap.items);
+          });
+        }
+      } catch {}
+    }, [ctx]);
+
+    const effectiveWorkspaces = React.useMemo(() => {
+      if (Array.isArray(workspacesFromHook) && workspacesFromHook.length > 0) return workspacesFromHook;
+      if (workspacesFromHook && Array.isArray(workspacesFromHook.items) && workspacesFromHook.items.length > 0) return workspacesFromHook.items;
+      if (Array.isArray(contextWorkspaces) && contextWorkspaces.length > 0) return contextWorkspaces;
+      return [];
+    }, [workspacesFromHook, contextWorkspaces]);
 
     React.useEffect(() => {
       const off = ctx.on?.('connection/reset', () => { controller.actions.discard(); setPath(''); });
@@ -937,30 +959,36 @@ window.__ModuleLoader__.load({
     const disabled = !state.writable || state.saving;
     const project = state.projects.find(row => samePath(row.path, path));
 
-    const pathMap = new Map();
-    for (const w of workspacesItems) pathMap.set(w.path, w.title || w.path);
-    for (const p of state.projects) {
-      const match = [...pathMap.keys()].find(k => samePath(k, p.path));
-      if (!match) {
-        pathMap.set(p.path, `${p.path}（已配置）`);
+    const workspaceOptions = React.useMemo(() => {
+      const list = [];
+      const seen = new Set();
+      if (effectiveWorkspaces.length > 0) {
+        for (const ws of effectiveWorkspaces) {
+          if (!ws || typeof ws.path !== 'string') continue;
+          const wsPath = ws.path;
+          if (seen.has(wsPath.toLowerCase())) continue;
+          seen.add(wsPath.toLowerCase());
+          const proj = state.projects.find(row => samePath(row.path, wsPath));
+          const isEn = Boolean(proj?.enabled);
+          const dot = isEn ? '🟢' : '🔴';
+          const name = ws.title || ws.name || wsPath;
+          list.push({ path: wsPath, label: `${dot} ${name} (${wsPath})`, enabled: isEn });
+        }
+      } else {
+        for (const p of state.projects) {
+          if (!p || typeof p.path !== 'string') continue;
+          if (seen.has(p.path.toLowerCase())) continue;
+          seen.add(p.path.toLowerCase());
+          const dot = p.enabled ? '🟢' : '🔴';
+          list.push({ path: p.path, label: `${dot} ${p.path} (${p.path})`, enabled: p.enabled });
+        }
+        if (path && !seen.has(path.toLowerCase())) {
+          const dot = project?.enabled ? '🟢' : '🔴';
+          list.push({ path, label: `${dot} ${path} (${path})`, enabled: Boolean(project?.enabled) });
+        }
       }
-    }
-    if (path) {
-      const match = [...pathMap.keys()].find(k => samePath(k, path));
-      if (!match && state.projects.some(p => samePath(p.path, path))) {
-        pathMap.set(path, `${path}（当前选择）`);
-      }
-    }
-
-    const filtered = [...pathMap].filter(([val, title]) => `${title} ${val}`.toLowerCase().includes(query.toLowerCase()));
-
-    const handleAddCustomPath = () => {
-      const trimmed = newPathInput.trim();
-      if (!trimmed) return;
-      controller.updateProject(trimmed, row => ({ ...row, enabled: true }));
-      setPath(trimmed);
-      setNewPathInput('');
-    };
+      return list;
+    }, [effectiveWorkspaces, state.projects, path, project]);
 
     const formContent = h(SettingsForm, {
       state,
@@ -971,7 +999,15 @@ window.__ModuleLoader__.load({
         save: '保存配置',
         saving: '保存中…',
       },
-      onSave: () => controller.actions.save(),
+      onSave: () => {
+        if (effectiveWorkspaces.length > 0) {
+          const pruned = state.projects.filter(p => effectiveWorkspaces.some(w => samePath(w.path, p.path)));
+          if (pruned.length !== state.projects.length) {
+            controller.edit('projects', pruned);
+          }
+        }
+        controller.actions.save();
+      },
       onDiscard: controller.actions.discard,
     },
     // 1. 全局工作流总控卡片
@@ -998,90 +1034,56 @@ window.__ModuleLoader__.load({
       h('p', { style: S.subtitle }, '提示：全局开关与具体项目开关同时启用后生效。新创建的工作区默认停用，避免非目标项目意外触发子代理。'),
     ),
 
-    // 2. 配置范围与项目选择卡片
+    // 2. 配置范围与工作区选择卡片
     h('div', { style: S.card },
       h('div', { style: S.cardHeader },
         h('div', null,
-          h('h3', { style: S.title }, '📁 配置范围与项目绑定'),
-          h('p', { style: S.subtitle }, '选择针对全局默认配置生效，还是针对指定工作区进行参数覆盖。'),
+          h('h3', { style: S.title }, '🏢 工作区配置与独立管理'),
+          h('p', { style: S.subtitle }, '以 DSH 工作区为基本单位，独立管理每个工作区的工作流激活状态、角色模型与并发设置。'),
         ),
-        path ? h('span', { style: S.badge(project?.enabled) }, project?.enabled ? '项目已启用' : '项目已停用') : null,
+        path ? h('span', { style: S.badge(project?.enabled) }, project?.enabled ? '工作区已激活' : '工作区未激活') : null,
       ),
       h('div', { style: S.row },
-        h('label', { style: { ...S.label, flex: '1 1 200px' } },
-          '按名称/路径过滤项目',
-          h('input', {
-            type: 'search',
-            value: query,
-            placeholder: '输入关键词搜索…',
-            style: S.input,
-            onChange: e => setQuery(e.target.value),
-          }),
-        ),
-        h('label', { style: { ...S.label, flex: '1 1 240px' } },
-          '当前配置生效目标',
+        h('label', { style: { ...S.label, flex: '1 1 100%' } },
+          '工作区选择',
           h('select', {
             value: path,
             disabled: state.saving,
             style: S.input,
-            onChange: e => {
-              userSelectedRef.current = true;
-              setPath(e.target.value);
-            },
+            onChange: e => setPath(e.target.value),
           },
-          h('option', { value: '' }, '🌐 全局默认配置 (所有项目通用)'),
-          filtered.map(([id, name]) => h('option', { key: id, value: id }, name))),
+          h('option', { value: '' }, '🌐 全局默认配置 (所有工作区通用)'),
+          workspaceOptions.map(opt => h('option', { key: opt.path, value: opt.path }, opt.label))),
         ),
       ),
-      // 添加自定义项目路径
-      h('div', { style: { ...S.row, marginTop: 4, background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.15))', padding: '10px 12px', borderRadius: 8 } },
-        h('input', {
-          type: 'text',
-          placeholder: '输入绝对路径手动绑定项目 (例如 D:/Projects/my-app)',
-          value: newPathInput,
-          style: { ...S.input, flex: '1 1 300px' },
-          onChange: e => setNewPathInput(e.target.value),
-        }),
-        h('button', {
-          type: 'button',
-          style: S.btn(true),
-          disabled: !newPathInput.trim() || disabled,
-          onClick: handleAddCustomPath,
-        }, '+ 添加并启用项目'),
-      ),
-      path ? h('div', { style: { ...S.row, justifyContent: 'space-between', background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.2))', padding: '10px 14px', borderRadius: 8 } },
-        h('div', { style: { display: 'grid', gap: 4 } },
-          h('div', { style: { fontSize: 13, fontWeight: 600 } }, '当前选定项目：'),
-          h('code', { style: { fontSize: 12, color: 'var(--dsw-alias-brand-primary, #60a5fa)', overflowWrap: 'anywhere' } }, path),
-          h('label', { style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, cursor: 'pointer', fontSize: 13 } },
-            h('input', {
-              type: 'checkbox',
-              checked: project?.enabled ?? false,
-              disabled,
-              style: { accentColor: 'var(--dsw-alias-brand-primary, #2563eb)' },
-              onChange: e => controller.updateProject(path, row => ({ ...row, enabled: e.target.checked })),
-            }),
-            '在此项目中激活 AI Loop 工作流与子代理',
-          ),
+      path ? h('div', { style: { ...S.row, justifyContent: 'space-between', alignItems: 'center', background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.2))', padding: '10px 14px', borderRadius: 8, marginTop: 8 } },
+        h('label', { style: { display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500 } },
+          h('input', {
+            type: 'checkbox',
+            checked: project?.enabled ?? false,
+            disabled,
+            style: { accentColor: 'var(--dsw-alias-brand-primary, #2563eb)' },
+            onChange: e => controller.updateProject(path, row => ({ ...row, enabled: e.target.checked })),
+          }),
+          '在此工作区中激活 AI Loop 工作流与子代理',
         ),
-        h('button', {
+        project ? h('button', {
           type: 'button',
           style: { ...S.btn(false), color: 'var(--dsw-alias-state-error-primary, #f87171)', borderColor: 'rgba(248,113,113,0.3)' },
           disabled: disabled || !project,
           onClick: () => {
-            userSelectedRef.current = true;
             controller.removeProject(path);
             setPath('');
           },
-        }, '移除项目覆盖'),
+        }, '移除工作区覆盖') : null,
       ) : null,
     ),
 
-    // 4. 并发限制与角色模型矩阵卡片
+    // 3. 并发限制与角色模型矩阵卡片
     h('div', { style: S.card },
       h('div', { style: S.cardHeader },
         h('div', null,
-          h('h3', { style: S.title }, path ? '⚙️ 项目独立模型与并发覆盖' : '🌐 全局默认模型与并发配置'),
+          h('h3', { style: S.title }, path ? '⚙️ 工作区独立模型与并发覆盖' : '🌐 全局默认模型与并发配置'),
           h('p', { style: S.subtitle }, '精确指派 5 大闭环角色的执行模型与推理深度，支持继承父代理或恢复全局设置。'),
         ),
         h('button', {
