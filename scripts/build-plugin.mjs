@@ -4,12 +4,12 @@ import { REQUIRED_FILES } from './install.mjs';
 import { BUNDLE, VERSION, runtimeContent, assert, safePath, jsonFile, atomicWrite, args, allowArgs, mainModule, printResult } from './lib.mjs';
 import { digest } from './memory-store.mjs';
 
-export const PLUGIN_FILES = [...new Set([...REQUIRED_FILES, ...['profiles','plugin-models','plugin','codex-workspaces','native-settings','settings-server','native-models','workspaces','session-start','install-plugin'].map(name => 'scripts/'+name+'.mjs')])];
+export const PLUGIN_FILES = [...new Set([...REQUIRED_FILES, ...['profiles','plugin-models','plugin','codex-workspaces','native-settings','settings-server','native-models','workspaces','session-start','install-plugin'].map(name => 'scripts/'+name+'.mjs'), 'ui/agent-dashboard.html'])];
 export function buildPlugin(output, options = {}) {
   const relative = output || 'dist/codex';
   const target = safePath(BUNDLE, relative);
   assert(relative === 'dist/codex' || relative.startsWith('.release/'), '输出仅允许 dist/codex 或 .release/ 下的验证目录，不能覆盖源代码');
-  const text = file => runtimeContent(BUNDLE, file);
+  const text = file => runtimeContent(BUNDLE, file === 'ui/agent-dashboard.html' ? 'plugin/ui/agent-dashboard.html' : file);
   const planned = new Map(PLUGIN_FILES.map(file => [file, text(file)]));
   const manifest = JSON.parse(text('plugin/plugin.json').toString());
   assert(manifest.version === VERSION, '插件版本与核心不一致');

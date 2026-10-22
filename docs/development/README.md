@@ -1,5 +1,7 @@
 # 两端开发入口
 
+- 当前子代理控制与会话看板版本：[4.5.0 开发交接](agent-control-4.5.0.md)，批准依据与原审查见 [agent-control-audit.md](agent-control-audit.md)。当前发行状态见 [v4.5.0 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.5.0)；客户端设置页、看板显示、实际模型及停止能力仍需分别验收。
+
 DSH 与 Codex 维护同一套源包。每次接手先读本文件、最新交接记录，再检查 Git；旧聊天摘要和安装副本不是源码依据。
 
 - 当前目录与路径交接：[project-layout.md](project-layout.md)；历史发行交接：[publish-4.4.3.md](publish-4.4.3.md)；设置修复：[settings-refresh.md](settings-refresh.md)；上一阶段修复安装：[repair-install.md](repair-install.md)；契约设计：[workflow-sync.md](workflow-sync.md)。

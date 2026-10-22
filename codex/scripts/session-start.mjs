@@ -3,6 +3,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { BUNDLE, ID, safePath, jsonFile, mainModule } from '../../scripts/lib.mjs';
 import { listWorkspaces } from '../../scripts/workspaces.mjs';
+import { resolveProfile } from '../../scripts/profiles.mjs';
+import { roleEnabled } from '../../scripts/routing.mjs';
 
 // 钩子只读已启用工作区的短状态；工作区列表由设置页直接读取 Codex 本机项目。
 export function startupContext(input, options = {}) {
@@ -24,8 +26,11 @@ export function startupContext(input, options = {}) {
     }
   }
   const bundle = options.bundle || BUNDLE;
+  const profile = resolveProfile(root, { home }).profile;
+  const enabledRoles = profile ? Object.keys(profile.roles).filter(role => roleEnabled(profile.roles[role])) : [];
   const context = [
     '本工作区已由用户在 AI Loop 管理面板启用自动入口。',
+    enabledRoles.length ? `已开启角色：${enabledRoles.join('、')}。每次派发前重新核对有效配置，其他角色不调用。` : '五个子代理当前全部关闭；由主代理完成必要工作，不自动选择模型或替代子代理。独立评审要求保留待复核。',
     `精确工作区：${JSON.stringify(root)}。插件根：${JSON.stringify(bundle)}。`,
     `处理项目开发、继续、验证请求时，使用 ${JSON.stringify(path.join(bundle,'skills/ai-loop/SKILL.md'))}；先读取项目规则与 .ai-loop/memory/index.md，再用插件 scripts/memory.mjs bootstrap --project ROOT 按需恢复。`,
     active.length ? `发现活跃运行：${active.map(name=>JSON.stringify(name)).join('、')}。唯一运行仅帮助定位，多个候选先澄清。` : '先用 bootstrap 查看运行状态，不为普通问答新建开发任务。',

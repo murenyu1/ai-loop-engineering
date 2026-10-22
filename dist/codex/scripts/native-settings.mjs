@@ -1,10 +1,11 @@
 import path from 'node:path';
-import { ROLES, balanced } from './routing.mjs';
+import crypto from 'node:crypto';
+import { ROLES, disabledProfile, roleEnabled, upgradeProfile } from './routing.mjs';
 import { assert, rootPath } from './lib.mjs';
 import { getNativeModels } from './native-models.mjs';
 import { configureProfile, resetProjectProfile, resolveProfile, userHome } from './profiles.mjs';
 import { inspectWindows } from './windows.mjs';
-import { setWorkspaceEnabled } from './workspaces.mjs';
+import { workspaceEntry, workspaceHash, restoreWorkspaceEntry, setWorkspaceEnabled } from './workspaces.mjs';
 import { readCodexWorkspaces, workspaceChoice } from './codex-workspaces.mjs';
 
 const roleNames = Object.keys(ROLES);
@@ -21,7 +22,7 @@ function currentRecord(project, home, scope) {
 function profileSnapshot(project, home, scope) {
   const current = currentRecord(project, home, scope);
   const inherited = scope === 'project' ? currentRecord(project, home, 'global') : null;
-  return { profile_hash: current.profile_hash || null, fallback_hash: inherited?.profile_hash || null, error: current.error || inherited?.error || '' };
+  return { profile_hash: current.profile_hash || null, fallback_hash: inherited?.profile_hash || null, workspace_hash: workspaceHash(project ? workspaceEntry(home, project) : null), error: current.error || inherited?.error || '' };
 }
 
 export function createSettingsManager(options = {}) {
@@ -35,16 +36,21 @@ export function createSettingsManager(options = {}) {
   let scope = 'global';
   let selectedRoot = '';
   let lastError = '';
+  let applying = false;
 
   const key = () => `${scope}\n${selectedRoot}`;
+  const hasModelDraft = values => Object.keys(values).some(field => field === 'concurrency' || field.startsWith('model.') || field.startsWith('effort.'));
+  const mergeBaseline = (previous, current, values) => ({
+    profile_hash: hasModelDraft(values) && previous ? previous.profile_hash : current.profile_hash,
+    fallback_hash: hasModelDraft(values) && previous ? previous.fallback_hash : current.fallback_hash,
+    workspace_hash: values.workspace_enabled !== undefined && previous ? previous.workspace_hash : current.workspace_hash,
+  });
   const capture = (nextScope, nextRoot) => {
     const nextKey = `${nextScope}\n${nextRoot}`;
     const values = drafts.get(nextKey) || {};
-    const hasModelDraft = Object.keys(values).some(field => field === 'concurrency' || field.startsWith('model.') || field.startsWith('effort.'));
-    if (bases.has(nextKey) && hasModelDraft) return;
     const project = nextRoot || defaultProject;
     const current = profileSnapshot(project, home, nextScope);
-    bases.set(nextKey, { profile_hash: current.profile_hash, fallback_hash: current.fallback_hash });
+    bases.set(nextKey, mergeBaseline(bases.get(nextKey), current, values));
   };
   const projectFor = () => {
     const value = selectedRoot || defaultProject;
@@ -63,7 +69,7 @@ export function createSettingsManager(options = {}) {
     const active = currentRecord(project, home, scope);
     if (active.error) lastError = active.error;
     const fallback = scope === 'project' ? currentRecord(project, home, 'global').profile : null;
-    const profile = active.profile || fallback || balanced('codex');
+    const profile = upgradeProfile(active.profile || fallback || disabledProfile('codex'));
     const snapshot = profileSnapshot(project, home, scope);
     if (!bases.has(key())) bases.set(key(), snapshot);
     return profile;
@@ -73,14 +79,21 @@ export function createSettingsManager(options = {}) {
     const enabled = draft().workspace_enabled;
     drafts.delete(key());
     if (enabled !== undefined) drafts.set(key(), { workspace_enabled: enabled });
-    bases.delete(key());
+    const previous = bases.get(key());
+    const current = profileSnapshot(projectFor(), home, scope);
+    if (!current.error) bases.set(key(), mergeBaseline(previous, current, draft()));
+    else if (enabled === undefined) bases.delete(key());
+    else if (previous) bases.set(key(), previous);
   };
   const effective = () => {
     const profile = structuredClone(activeProfile());
     const values = draft();
     if (values.concurrency !== undefined) profile.concurrency = values.concurrency;
     for (const role of roleNames) {
-      if (values[`model.${role}`] !== undefined) profile.roles[role].model = values[`model.${role}`];
+      if (values[`model.${role}`] !== undefined) {
+        if (values[`model.${role}`] === '关闭') profile.roles[role] = { ...profile.roles[role], enabled: false };
+        else profile.roles[role] = { ...profile.roles[role], enabled: true, model: values[`model.${role}`] };
+      }
       if (values[`effort.${role}`] !== undefined) profile.roles[role].effort = values[`effort.${role}`];
     }
     return profile;
@@ -115,16 +128,17 @@ export function createSettingsManager(options = {}) {
       concurrency: { type: 'integer', title: '子代理并发上限', minimum: 1, maximum: 8 },
     };
     for (const role of roleNames) {
-      const selectedId = profile.roles[role].model;
+      const enabled = roleEnabled(profile.roles[role]);
+      const selectedId = enabled ? profile.roles[role].model : '关闭';
       const ids = [...new Set(models.map(item => item.id))];
-      const choices = ids.length ? ids : [selectedId];
-      const selectedModel = models.find(item => item.id === selectedId);
-      if (models.length && !selectedModel) invalidModels.push(role);
-      props[`model.${role}`] = { type: 'string', title: `${role} 模型`, enum: [...new Set([...choices, selectedId])], description: selectedModel ? '选择本机可用模型。' : `当前配置模型 ${selectedId} 未出现在本机列表中；应用前请替换。` };
+      const choices = ids.length ? ids : (enabled && selectedId !== '关闭' ? [selectedId] : []);
+      const selectedModel = enabled ? models.find(item => item.id === selectedId) : null;
+      if (enabled && models.length && !selectedModel) invalidModels.push(role);
+      props[`model.${role}`] = { type: 'string', title: `${role} 模型`, enum: ['关闭', ...new Set([...choices, ...(enabled ? [selectedId] : [])])], description: selectedModel ? '选择本机可用模型；选择“关闭”可停用此角色。' : enabled ? `当前配置模型 ${selectedId} 未出现在本机列表中；应用前请替换或关闭角色。` : '此角色已关闭，不会派发或调用模型。' };
       const supported = Array.isArray(selectedModel?.efforts) ? selectedModel.efforts.map(item => typeof item === 'string' ? item : item?.reasoningEffort).filter(item => effortOptions.includes(item)) : [];
       const effort = profile.roles[role].effort;
       const shownEffort = effort ?? (selectedModel?.default_effort || 'medium');
-      if (effort !== null && supported.length && !supported.includes(effort)) invalidEfforts.push(role);
+      if (enabled && effort !== null && supported.length && !supported.includes(effort)) invalidEfforts.push(role);
       const effortChoices = [...new Set([...(supported.length ? supported : effortOptions), shownEffort])];
       props[`effort.${role}`] = { type: 'string', title: `${role} 思考深度`, enum: effortChoices, description: supported.length ? `仅显示该模型支持的值${invalidEfforts.includes(role) ? '；当前值不受支持，请选择下拉项' : ''}。` : '应用时会根据本机模型列表校验。' };
     }
@@ -133,7 +147,7 @@ export function createSettingsManager(options = {}) {
     const configDrafts = Object.keys(draft()).some(field => field === 'concurrency' || field.startsWith('model.') || field.startsWith('effort.'));
     const currentSnapshot = profileSnapshot(project, home, scope);
     const conflict = Boolean(baseline && (baseline.profile_hash !== currentSnapshot.profile_hash || baseline.fallback_hash !== currentSnapshot.fallback_hash));
-    if (conflict && !configDrafts && !currentSnapshot.error) bases.set(key(), { profile_hash: currentSnapshot.profile_hash, fallback_hash: currentSnapshot.fallback_hash });
+    if (!currentSnapshot.error) bases.set(key(), mergeBaseline(baseline, currentSnapshot, draft()));
     const source = scope === 'project' ? exactRecord.error ? '项目配置异常' : exactRecord.profile ? '项目专属覆盖' : '项目继承全局' : '全局配置';
     const values = {
       scope: scopeLabels[scope],
@@ -142,7 +156,7 @@ export function createSettingsManager(options = {}) {
       concurrency: profile.concurrency,
     };
     for (const role of roleNames) {
-      values[`model.${role}`] = profile.roles[role].model;
+      values[`model.${role}`] = roleEnabled(profile.roles[role]) ? profile.roles[role].model : '关闭';
       const selectedModel = models.find(item => item.id === profile.roles[role].model);
       values[`effort.${role}`] = profile.roles[role].effort ?? selectedModel?.default_effort ?? 'medium';
     }
@@ -155,7 +169,7 @@ export function createSettingsManager(options = {}) {
     return {
       schema: { type: 'object', properties: props }, values,
       layout: [
-        { kind: 'group', title: '工作区', items: [{ kind: 'property', property: 'workspace_root' }, { kind: 'property', property: 'workspace_enabled' }, { kind: 'tool', tool: 'ai_loop.workspace.toggle' }] },
+        { kind: 'group', title: '工作区', items: [{ kind: 'property', property: 'workspace_root' }, { kind: 'property', property: 'workspace_enabled' }] },
         { kind: 'group', title: '模型分工', items: [{ kind: 'property', property: 'scope' }, ...roleNames.flatMap(role => [{ kind: 'property', property: `model.${role}` }, { kind: 'property', property: `effort.${role}` }]), { kind: 'property', property: 'concurrency' }, { kind: 'tool', tool: 'ai_loop.settings.apply' }, { kind: 'tool', tool: 'ai_loop.settings.reset_project' }] },
         { kind: 'group', title: `状态：${status}`.slice(0, 240), items: [{ kind: 'tool', tool: 'ai_loop.settings.discard' }] },
       ],
@@ -163,6 +177,7 @@ export function createSettingsManager(options = {}) {
   }
 
   async function update(set) {
+    assert(!applying, '设置正在应用，暂不能修改草稿');
     assert(set && typeof set === 'object' && !Array.isArray(set), 'settings.update 需要 set 对象');
     const fields = new Set(['scope', 'workspace_root', 'workspace_enabled', 'concurrency', ...roleNames.flatMap(role => [`model.${role}`, `effort.${role}`])]);
     const entries = Object.entries(set);
@@ -178,7 +193,7 @@ export function createSettingsManager(options = {}) {
       }
       if (field === 'workspace_enabled') assert(typeof value === 'boolean', '工作区启用值须为布尔值');
       if (field === 'concurrency') assert(Number.isInteger(value) && value >= 1 && value <= 8, '并发值须为 1–8');
-      if (field.startsWith('model.')) assert(typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value), '模型 ID 无效');
+      if (field.startsWith('model.')) assert(typeof value === 'string' && (value === '关闭' || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value)), '模型 ID 无效');
       if (field.startsWith('effort.')) assert(effortOptions.includes(value), '思考深度无效');
     }
     const previousKey = key();
@@ -188,7 +203,18 @@ export function createSettingsManager(options = {}) {
     if (scope === 'global' && nextScope === 'global' && nextRoot !== selectedRoot) {
       const existing = drafts.get(previousKey) || {};
       const transferable = Object.fromEntries(Object.entries(existing).filter(([name]) => name === 'concurrency' || name.startsWith('model.') || name.startsWith('effort.')));
-      if (Object.keys(transferable).length) drafts.set(`global\n${nextRoot}`, { ...transferable, ...(drafts.get(`global\n${nextRoot}`) || {}) });
+      const nextKey = `global\n${nextRoot}`;
+      const targetDraft = drafts.get(nextKey) || {};
+      const sourceBase = bases.get(previousKey);
+      if (Object.keys(transferable).length && sourceBase && !hasModelDraft(targetDraft)) {
+        drafts.set(nextKey, { ...targetDraft, ...transferable });
+        const targetBase = bases.get(nextKey);
+        bases.set(nextKey, {
+          profile_hash: sourceBase.profile_hash,
+          fallback_hash: sourceBase.fallback_hash,
+          workspace_hash: targetBase?.workspace_hash ?? null,
+        });
+      }
     }
     scope = nextScope;
     selectedRoot = nextRoot;
@@ -201,29 +227,61 @@ export function createSettingsManager(options = {}) {
 
   async function apply() {
     assert(!probeMode, '模型探测进程禁止写入配置');
+    assert(!applying, '设置正在应用，请勿重复提交');
+    applying = true;
+    try {
     const project = allowedProject();
     const info = inspectWindows(project, { home, purpose: 'configure' });
     assert(['ready', 'not-windows'].includes(info.status), 'Windows 目录所有者检查未通过，停止写入');
-    const modelsResult = await readModels(project, effective());
-    assert(!modelsResult.error, `无法读取本机模型列表：${modelsResult.error}`);
-    const models = modelsResult.models;
     const profile = effective();
-    for (const role of roleNames) {
+    const hasProfileDraft = Object.keys(draft()).some(field => field === 'concurrency' || field.startsWith('model.') || field.startsWith('effort.'));
+    const validateRoles = new Set(roleNames.filter(role => {
+      const selected = draft()[`model.${role}`];
+      return selected !== undefined ? selected !== '关闭' : draft()[`effort.${role}`] !== undefined && roleEnabled(profile.roles[role]);
+    }));
+    if (validateRoles.size) {
+      const modelsResult = await readModels(project, profile);
+      assert(!modelsResult.error, `无法读取本机模型列表：${modelsResult.error}`);
+      const models = modelsResult.models;
+      for (const role of validateRoles) {
       const model = models.find(item => item.id === profile.roles[role].model);
       assert(model, `${role} 模型不在当前本机模型列表中`);
       const efforts = Array.isArray(model.efforts) ? model.efforts.map(item => typeof item === 'string' ? item : item?.reasoningEffort).filter(Boolean) : [];
       const selectedEffort = profile.roles[role].effort ?? model.default_effort;
       assert(efforts.includes(selectedEffort), `${role} 模型不支持思考深度 ${selectedEffort || '(未提供默认值)'}；请从设置页选择支持的值`);
+      }
     }
     const base = bases.get(key());
     const currentSnapshot = profileSnapshot(project, home, scope);
     assert(base && !currentSnapshot.error && currentSnapshot.profile_hash === base.profile_hash && currentSnapshot.fallback_hash === base.fallback_hash, '配置在编辑期间发生变化，请放弃草稿后重新进入设置');
-    const result = configureProfile(project, profile, { home, scope, apply: true, bundle });
-    clearModelDraft(); lastError = '';
-    return { ...result, message: `${scopeLabels[scope]}模型配置已应用。请重新进入插件详情页刷新原生设置；代理配置在下一次原生重载后生效。` };
+    const workspaceDraft = draft().workspace_enabled;
+    const registryBefore = workspaceEntry(home, project);
+    const savedBefore = readCodexWorkspaces(home).workspaces.find(item => item.root === project);
+    const previousEnabled = registryBefore?.enabled ?? savedBefore?.enabled ?? false;
+    let workspaceResult = null;
+    let workspaceChanged = false;
+    const workspaceRevision = crypto.randomUUID();
+    if (workspaceDraft !== undefined) assert(currentSnapshot.workspace_hash === base.workspace_hash, '工作区开关在编辑期间变化，请重新读取后保存');
+    if (workspaceDraft !== undefined && workspaceDraft !== previousEnabled) {
+      workspaceResult = setWorkspaceEnabled(home, project, workspaceDraft, { create: true, revision: workspaceRevision, expectedHash: base.workspace_hash });
+      workspaceChanged = true;
+    }
+    try {
+      const result = hasProfileDraft ? configureProfile(project, profile, { home, scope, apply: true, bundle }) : { status: 'unchanged', scope };
+      drafts.delete(key()); bases.delete(key()); lastError = '';
+      return { ...result, workspace: workspaceResult, message: `${scopeLabels[scope]}设置已统一应用。${workspaceResult ? `工作区${workspaceResult.enabled ? '已启用' : '已停用'}。` : ''}请重新进入插件详情页刷新原生设置；代理配置在下一次原生重载后生效。` };
+    } catch (error) {
+      if (workspaceChanged) {
+        try { restoreWorkspaceEntry(home, project, registryBefore, { expectedRevision: workspaceRevision, expectedEnabled: workspaceDraft }); }
+        catch (rollbackError) { throw new Error(`${error.message}；${rollbackError.message}`, { cause: error }); }
+      }
+      throw error;
+    }
+    } finally { applying = false; }
   }
 
   function toggleWorkspace() {
+    assert(!applying, '设置正在应用，暂不能单独修改工作区');
     assert(!probeMode, '模型探测进程禁止写入配置');
     const project = allowedProject();
     const info = inspectWindows(project, { home, purpose: 'configure' });
@@ -237,6 +295,7 @@ export function createSettingsManager(options = {}) {
   }
 
   function resetProject() {
+    assert(!applying, '设置正在应用，暂不能恢复项目配置');
     assert(!probeMode, '模型探测进程禁止写入配置');
     assert(scope === 'project', '请先将范围切换为“仅当前工作区”');
     const project = allowedProject();
@@ -251,6 +310,7 @@ export function createSettingsManager(options = {}) {
   }
 
   function discardDraft() {
+    assert(!applying, '设置正在应用，暂不能放弃草稿');
     drafts.delete(key());
     bases.delete(key());
     lastError = '';

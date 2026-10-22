@@ -5,6 +5,7 @@ import { resolveProfile } from '../../scripts/profiles.mjs';
 import { inspectWindows } from '../../scripts/windows.mjs';
 import { assert, BUNDLE, sourceRelative, VERSION, rootPath, safePath, atomicWrite, jsonFile, args, allowArgs, mainModule, printResult } from '../../scripts/lib.mjs';
 import { digest } from '../../scripts/memory-store.mjs';
+import { disabledProfile, roleEnabled } from '../../scripts/routing.mjs';
 
 export function initialize(project, options = {}) {
   const root = rootPath(project);
@@ -37,9 +38,10 @@ export function pluginDoctor(project, options = {}) {
     }
   }
   const models = resolveProfile(root, { home: options.home });
-  if (!models.profile) issues.push('未配置全局或项目子代理模型；使用 ai-loop-models 设置');
-  else {
-    if (models.scope === 'global') for (const role of ['planner', 'reviewer', 'dev', 'tester', 'scribe']) if (fs.existsSync(safePath(root, `.codex/agents/loop-${role}.toml`))) issues.push('项目原生角色会覆盖全局设置，先迁移或登记项目覆盖：loop-' + role);
+  const profile = models.profile || disabledProfile('codex');
+  const enabledRoles = Object.keys(profile.roles).filter(role => roleEnabled(profile.roles[role]));
+  if (models.profile && enabledRoles.length) {
+    if (models.scope === 'global') for (const role of enabledRoles) if (fs.existsSync(safePath(root, `.codex/agents/loop-${role}.toml`))) issues.push('项目原生角色会覆盖全局设置，先迁移或登记项目覆盖：loop-' + role);
     const base = models.scope === 'global' ? path.dirname(path.dirname(models.path)) : root;
     for (const [relative, expected] of Object.entries(models.native)) {
       const target = safePath(base, relative);
@@ -48,7 +50,7 @@ export function pluginDoctor(project, options = {}) {
     if (path.resolve(models.bundle) !== path.resolve(BUNDLE)) issues.push('原生代理引用了其他插件路径；用模型 configure 预演后更新，再重载');
   }
   const blocked = issues.length > 0 || windows.issues.length > 0;
-  return { version: VERSION, mode: 'plugin', status: blocked ? 'needs-check' : 'configured', configuration: issues.length ? 'fail' : 'pass', dispatch: blocked ? 'blocked' : 'requires-native-verification', issues, windows, models: { scope: models.scope, path: models.path, profile: models.profile }, memory: bootstrap(root), native_discovery: 'unverified', execution: 'unverified', effective_model: 'unverified', ui_visibility: 'unverified' };
+  return { version: VERSION, mode: 'plugin', status: blocked ? 'needs-check' : 'configured', configuration: issues.length ? 'fail' : 'pass', dispatch: blocked ? 'blocked' : enabledRoles.length ? 'requires-native-verification' : 'disabled', enabled_roles: enabledRoles, disabled_roles: Object.keys(profile.roles).filter(role => !roleEnabled(profile.roles[role])), issues, windows, models: { scope: models.scope, path: models.path, profile }, memory: bootstrap(root), native_discovery: 'unverified', execution: 'unverified', effective_model: 'unverified', ui_visibility: 'unverified' };
 }
 export function cli(argv) {
   const options = args(argv); allowArgs(options, ['project', 'apply', 'help']);

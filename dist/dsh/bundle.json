@@ -1,14 +1,14 @@
 {
-  "version": "4.4.3",
+  "version": "4.5.0",
   "harness": "dsh",
   "files": [
     {
       "path": "client.js",
-      "hash": "bf354d79120238986c3603782086e9243109c76990e1a3135a94121e2d9fa913"
+      "hash": "8fae3d263f522af5fb2752983c2b6bf3f41fc3ffb42b6eb2031af7a40e759c91"
     },
     {
       "path": "config.mjs",
-      "hash": "78ea1d8cc658630ce58b832bfa17ceedc6b18efddf206b2aa384aedde866a930"
+      "hash": "37c09758aefe0e605efc0b17eacc2289eff396583e54ac9fba978b8b8fa80eb5"
     },
     {
       "path": "cordis.patch.yml",
@@ -40,19 +40,23 @@
     },
     {
       "path": "core/README.md",
-      "hash": "6f09014b0ddde64b5fd7b754ef4179afc963f62d813ee37ae49598d7a7c98acd"
+      "hash": "ae1838dd78f3a159094d4c34451c330e12a672badfa0b0aabccbc91a85477b6f"
     },
     {
       "path": "core/ROUTING.md",
       "hash": "40f7ee2ccdf87b092ab4746ddded56f82e4609c386d1b8dde169f1350360b28a"
     },
     {
+      "path": "core/scripts/activity.mjs",
+      "hash": "c91d7c6c35d038cc036caea0535c0f1b131b9706b3618414fe40679945c825d0"
+    },
+    {
       "path": "core/scripts/lib.mjs",
-      "hash": "d58a6fcbebffe8b25f93c9f72ab7b45ab4bed4f17dc9dd1f6fe6afe9761db57c"
+      "hash": "d6433568536d69c708d87204807e990d6da99c1e9f22aeaa67667b1b8ecfd400"
     },
     {
       "path": "core/scripts/loop.mjs",
-      "hash": "98cdc34e09254d0df4bab0d6f582f6c81e7b5774717773f75c80b322f36733ce"
+      "hash": "b84f382ee43705f7fc5317bbe3a4ec2fdc63124e10bb87b474d000851d544386"
     },
     {
       "path": "core/scripts/memory-store.mjs",
@@ -64,7 +68,11 @@
     },
     {
       "path": "core/scripts/README.md",
-      "hash": "59194bbb64c1bd72c2ef6b8a53311902b0ebef5b1cf64223125379c385747958"
+      "hash": "35e8e34b461395759843fab7a81e7accb3329d15cff206b62b0377a0b1d40961"
+    },
+    {
+      "path": "core/scripts/roles.mjs",
+      "hash": "59c22416311d90edaf364d8ec7ce4ef805fa7eeb9f3c0c9671ac44ee76f72af7"
     },
     {
       "path": "core/SETUP.md",
@@ -76,35 +84,35 @@
     },
     {
       "path": "core/templates/routing.md",
-      "hash": "6fec62d80abfcbd35854e479b5689bcc2891533c6748a68cbdd9181c01468195"
+      "hash": "887acdfd36b5729deed2b5140c6bec76ed43044dfce18cf8e07254d71ab5d369"
     },
     {
       "path": "core/WORKFLOW.md",
-      "hash": "676eb6089cef81cc8495652de345da9df0d5015648b99e96a30aba61f192058b"
+      "hash": "8f5fa03338d86c867642e12a6fac410004827d84a8afa6b3518d39406bd10978"
     },
     {
       "path": "index.mjs",
-      "hash": "dc7240d1b7e4d85a9c34943b953a844ab53f6732a6daac0884b0bf46abef2168"
+      "hash": "f163b2b8e77771790646801f734b962f95f7241eb86c06e2453e06f27b564f8e"
     },
     {
       "path": "package.json",
-      "hash": "8876b43d1e4b44b4ae94d3a1d8f03c2347ffb51e8bf814beda66f7e69f5c27f0"
+      "hash": "efd8ff464e8100c6998bd56eec161407c88adeae34f68b159bb3bd3915d2b135"
     },
     {
       "path": "README.md",
-      "hash": "5c47afbd87c8e51b82028f5f3b36fa104a99217e69afd7aa3342f5ce89a9cd6d"
+      "hash": "19b4f26e48e684ae5c758baa15c69b0494433d930db08e984982e1c94d1e3db9"
     },
     {
       "path": "ROUTING.md",
-      "hash": "6f806d68bb9b3a28289f47e6f2e4f013530f73eb95bafe091ab65ab1caad406c"
+      "hash": "e901bcbc30a1370352ce794d8eb09a7057b2a3a0848a35a4e2f9b913cf61ce3d"
     },
     {
       "path": "skills/ai-loop-models/SKILL.md",
-      "hash": "470057264fed35e57484fa32dc124a9864953e2f6f15179fc12957bc65b2338b"
+      "hash": "8fa9b5b87eeb583440cfbd27fadb34b5a993c31a90cb1562af69a70b1cdbe0e4"
     },
     {
       "path": "skills/ai-loop/SKILL.md",
-      "hash": "9efccafe1cb84cbc72e92c2ed635443a40204add19347faa4a9ca38fe2f84c9d"
+      "hash": "552275ccc95811ac05fcaba6d59deab2e157756d8a365870fbdbdc27933b47f2"
     }
   ]
 }

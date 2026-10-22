@@ -1,5 +1,13 @@
 # 状态与记忆工具
 
+## 4.5.0 角色策略与代理观察
+
+无配置时五个角色全部关闭。通用工作流使用 `roles.mjs status --project ROOT` 查看；`roles.mjs set --project ROOT --role dev --enabled true --model ID --apply` 明确开启，`--enabled false --apply` 关闭并保留模型。没有 `--apply` 只预演。插件使用自己的原生配置与继承，不能混用另一平台设置。
+
+`activity.mjs check --project ROOT --run RUN --task TASK --role ROLE --attempt N` 先检查通用角色开关，再验证运行、阶段与批次；此命令本身不调用模型。`record --input JSON` 保存 requested/running/waiting/stop_requested/unknown/completed/failed/stopped，首次 requested 必须带 id/task/role/harness/summary。running 需要真实 native_id，同任务同角色尚未停止时不得重复派发。`status` 返回最后观察及过期标记；usage 缺失为 null，不估算 token。
+
+新建运行可声明 `role_policy: {dev:{enabled:true,model:"所选模型"},reviewer:{enabled:false}}`。该策略进入方案摘要且使用运行 schema 3；旧核心拒绝读写，当前核心仍兼容旧运行。独立评审要求不会因角色关闭而降低；配置关闭不会立即终止已在运行的代理，须由原生控制确认。
+
 Node.js 18+，仅标准库。脚本目录以本工作流解压目录为准，`ROOT` 是目标项目真实绝对路径。脚本只管理记录，不会替你执行测试命令、调用模型、提交或发布。项目规则和已批准范围优先。
 
 ## 发现与续接

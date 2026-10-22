@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { ROLES, validateProfile, nativeAgent, routeHash } from '../../scripts/routing.mjs';
+import { roleEnabled } from '../../scripts/roles.mjs';
 import { assert, rootPath, safePath, jsonFile, atomicWrite, locked, BUNDLE, sourceRelative } from '../../scripts/lib.mjs';
 import { inspectWindows } from '../../scripts/windows.mjs';
 import { rootString } from '../../scripts/toml.mjs';
@@ -22,10 +23,12 @@ export function resolveProfile(project, options = {}) {
     if (!fs.existsSync(target)) continue;
     const record = jsonFile(target);
     const profile = validateProfile(record.profile, 'codex');
-    assert(record.schema_version === 1 && record.profile_hash === routeHash(profile), '模型配置摘要损坏，停止使用');
+    assert([1, 2].includes(record.schema_version) && record.profile_hash === routeHash(profile), '模型配置摘要损坏，停止使用');
     const prefix = scope === 'global' ? 'agents' : '.codex/agents';
     const keys = Object.keys(ROLES).map(role => `${prefix}/loop-${role}.toml`);
-    assert(record.native && Object.keys(record.native).length === keys.length && keys.every(key => /^[a-f0-9]{64}$/.test(record.native[key])), '原生模型文件登记格式无效，停止使用');
+    const active = Object.keys(ROLES).filter(role => roleEnabled(profile.roles[role])).map(role => `${prefix}/loop-${role}.toml`);
+    const allowed = new Set(keys);
+    assert(record.native && Object.keys(record.native).every(key => allowed.has(key) && /^[a-f0-9]{64}$/.test(record.native[key])) && active.every(key => record.native[key]), '原生模型文件登记格式无效，停止使用');
     return { ...record, profile, scope, path: target, effective_model: 'unverified' };
   }
   return { profile: null, scope: null, path: null, effective_model: 'unverified' };
@@ -37,7 +40,7 @@ export function configureProfile(project, profile, options = {}) {
   profile = validateProfile(profile, 'codex');
   const target = safePath(root, location.relative);
   const previous = fs.existsSync(target) ? jsonFile(target) : null;
-  if (previous) assert(previous.profile_hash === routeHash(validateProfile(previous.profile, 'codex')), '现有模型配置损坏，停止覆盖');
+  if (previous) assert([1, 2].includes(previous.schema_version) && previous.profile_hash === routeHash(validateProfile(previous.profile, 'codex')), '现有模型配置损坏，停止覆盖');
   const agentRoot = scope === 'global' ? 'agents' : '.codex/agents';
   const deployment = path.resolve(options.bundle || BUNDLE).split(path.sep).join('/');
   assert(fs.existsSync(safePath(deployment, sourceRelative(deployment, 'agents/loop-dev.md'))), '插件角色资料不存在');
@@ -57,11 +60,18 @@ export function configureProfile(project, profile, options = {}) {
     const relative = `${agentRoot}/loop-${role}.toml`, file = safePath(root, relative);
     const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
     const owned = previous?.native?.[relative];
+    if (!roleEnabled(profile.roles[role])) {
+      if (owned) {
+        assert(before !== null && hash(before) === owned, '已登记的原生角色被修改或缺失，停止覆盖：' + relative);
+        native[relative] = owned;
+      }
+      continue;
+    }
     assert(before === null ? !owned : owned && hash(before) === owned, '原生角色未登记、被修改或缺失，停止覆盖：' + relative);
     const content = nativeAgent(profile, role, instructionsRoot);
     native[relative] = hash(content); stage(relative, content);
   }
-  const record = { schema_version: 1, profile, profile_hash: routeHash(profile), native, bundle: deployment };
+  const record = { schema_version: 2, profile, profile_hash: routeHash(profile), native, bundle: deployment };
   stage(location.relative, JSON.stringify(record, null, 2) + '\n');
   if (options.apply && changes.length) {
     const info = inspectWindows(project, { home, purpose: 'configure' });

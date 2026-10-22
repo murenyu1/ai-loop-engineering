@@ -1,3 +1,10 @@
+# AI Loop Engineering 4.5.0
+
+- 五个子代理新增明确启停，新配置默认全部关闭；保留已有显式模型，关闭不发起替代调用。
+- 增加通用角色策略、结构化派发前检查及最后观察，带策略运行使用 schema 3，保留原有快照、批次和独立评审门禁。
+- Codex 原生设置统一保存工作区开关和模型，新增包内会话看板资源；DSH 关联会话、运行、任务与原生生命周期，复用状态订阅。
+- 三个发行包及 SHA256SUMS 见 [v4.5.0 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.5.0)。客户端面板显示、真实模型执行及停止能力须分别验收。
+
 # AI Loop Engineering 4.4.3
 
 - 统一发布通用工作流、Codex 插件与 DSH 插件三个包，并提供同版 `SHA256SUMS`。

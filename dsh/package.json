@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-ai-loop-engineering",
-  "version": "4.4.3",
+  "version": "4.5.0",
   "description": "AI Loop 项目开发闭环、分页记忆、中断恢复与原生子代理设置。",
   "type": "module",
   "main": "index.mjs",
@@ -48,7 +48,9 @@
       "inject": [
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-ui-plugin-manager",
-        "@deepseek-ai/dsh-api-remotes"
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-conversation"
       ]
     }
   }

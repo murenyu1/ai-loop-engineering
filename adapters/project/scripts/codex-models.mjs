@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { assert } from '../../../scripts/lib.mjs';
 import { rootString, updateRootString } from '../../../scripts/toml.mjs';
-import { balanced, validateProfile, routeHash } from '../../../scripts/routing.mjs';
+import { balanced, roleEnabled, validateProfile, routeHash } from '../../../scripts/routing.mjs';
 
 const START = '# ai-loop-models:start';
 const END = '# ai-loop-models:end';
@@ -31,8 +31,8 @@ export function configureModels(text, previous, requested = balanced('codex')) {
     text = updateRootString(text, key, () => profile.main[field]);
   }
   const block = [START, '[agents]', 'enabled = true',
-    `default_subagent_model = ${JSON.stringify(profile.roles.dev.model)}`,
-    ...(profile.roles.dev.effort === null ? [] : [`default_subagent_reasoning_effort = ${JSON.stringify(profile.roles.dev.effort)}`]),
+    ...(roleEnabled(profile.roles.dev) ? [`default_subagent_model = ${JSON.stringify(profile.roles.dev.model)}`] : []),
+    ...(!roleEnabled(profile.roles.dev) || profile.roles.dev.effort === null ? [] : [`default_subagent_reasoning_effort = ${JSON.stringify(profile.roles.dev.effort)}`]),
     `max_concurrent_threads_per_session = ${profile.concurrency}`, END].join('\n');
   const current = managedBlock(text);
   text = current ? text.slice(0, current.start) + block + text.slice(current.end) : text + (text.endsWith('\n') ? '' : '\n') + '\n' + block + '\n';

@@ -1,8 +1,10 @@
+4.5.0 已作为统一版本发布：[GitHub Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.5.0)。新配置的五个子代理默认关闭，用户选择模型后启用；现有显式配置保留。Codex 使用统一保存和包内会话看板资源，DSH 使用原生会话插槽。设置页显示、真实模型调用和停止能力须分别在宿主客户端验收；安装不修改 settings.json。4.4.3 及更早下载入口保留为历史版本。
+
 # 配置 AI Loop Engineering
 
 DeepSeek Harness 原生插件见 [dsh/README.md](dsh/README.md)，针对本机 0.2.1-rc.2 接口适配，从共用 `core/` 构建独立 `.tgz`。它与下文旧式 `--harness dsh` 显式入口安装器是两种路径；插件通过 DSH 原生管理器加载，项目只保存 `.ai-loop/`。插件的宿主加载、界面和实际模型调用须分别验收。
 
-Codex 插件 4.4.3 与通用工作流、DSH 插件统一收录在 [v4.4.3 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.4.3)，包名和校验文件见仓库 [README](README.md)。历史 4.3.1 通用工作流 / Codex 包与 DSH 4.3.0 预览包仍保留在各自旧版页面。Codex 使用插件详情页的原生 `openai/settings` 设置区；原生页面可见性需在实际客户端验收。维护者从仓库 `node scripts/build-release.mjs` 构建；用 `scripts/install-plugin.mjs --project ROOT` 预演、加 --apply 安装。插件提供核心，目标只保存 `.ai-loop/`；不适用下文旧式“源包位于目标内部”的约束。SessionStart 自动入口需要在 Codex 原生 `/hooks` 审核信任。安装成功不等于设置页可见、原生加载或实际模型已验证。
+Codex 插件 4.5.0 与通用工作流、DSH 插件统一收录在 [v4.5.0 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.5.0)，包名和校验文件见仓库 [README](README.md)。历史 4.3.1 通用工作流 / Codex 包、4.4.3 Release 与 DSH 4.3.0 预览包仍保留。Codex 使用插件详情页的原生 `openai/settings` 设置区；原生页面可见性需在实际客户端验收。维护者从仓库 `node scripts/build-release.mjs` 构建；用 `scripts/install-plugin.mjs --project ROOT` 预演、加 --apply 安装。插件提供核心，目标只保存 `.ai-loop/`；不适用下文旧式“源包位于目标内部”的约束。SessionStart 自动入口需要在 Codex 原生 `/hooks` 审核信任。安装成功不等于设置页可见、原生加载或实际模型已验证。
 
 以下为 adapters/project/ 保留的旧式项目安装兼容说明。仓库的共用正文现在位于 core/，根 scripts/ 是兼容命令；安装器会从权威源码生成部署，不能把兼容转发脚本单独复制到目标。通用工作流独立 ZIP 不包含这些平台安装器。
 

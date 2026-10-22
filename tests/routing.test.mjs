@@ -59,6 +59,10 @@ test('逐角色自定义、预演、切换保留其他角色和另一 harness，
   record(o.root, run, { role: 'tester', task_id: 't1', status: 'FAIL', execution: 'self', revision: snapshot(o.root), issues: ['需修复'] });
   fix(o.root, run, 't1');
   const params = { ...o, role: 'dev', model: 'custom-model', effort: 'low' };
+  const disabled = changeModel({ ...o, role: 'dev', enabled: 'false', model: 'keep-model' });
+  assert.equal(disabled.requested_profile.roles.dev.enabled, false);
+  assert.equal(disabled.requested_profile.roles.dev.model, 'keep-model');
+  assert.ok(!disabled.preview.some(item => item.path === '.codex/agents/loop-dev.toml' && item.action === 'create-native-agent'));
   const preview = changeModel(params);
   assert.ok(preview.changes.includes('.codex/agents/loop-dev.toml'));
   assert.equal(rootString(get(o, '.codex/agents/loop-dev.toml'), 'model').value, 'gpt-6-luna');

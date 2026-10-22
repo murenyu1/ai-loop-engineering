@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { status as runStatus } from '../../../scripts/loop.mjs';
 import { installed } from '../../../scripts/models.mjs';
 import { resolveProfile } from '../../../scripts/profiles.mjs';
-import { ROLES, routeHash, validateProfile } from '../../../scripts/routing.mjs';
+import { ROLES, roleEnabled, routeHash, validateProfile } from '../../../scripts/routing.mjs';
 import { assert, rootPath, safePath, validId, jsonFile, locked, writeJson, args, allowArgs, mainModule, printResult } from '../../../scripts/lib.mjs';
 
 const transitions = { requested: ['running', 'failed', 'stopped'], running: ['waiting', 'completed', 'failed', 'stopped'], waiting: ['running', 'failed', 'stopped'], completed: [], failed: [], stopped: [] };
@@ -37,6 +37,7 @@ export function recordAgent(project, run, input) {
       const plugin = fs.existsSync(marker) ? resolveProfile(root) : null;
       const profile = plugin?.profile || record?.model_routing?.profile;
       assert(profile, '该 harness 未配置模型分工');
+      assert(roleEnabled(profile.roles[input.role]), '该子代理角色已关闭，不能记录新派发');
       assert(routeHash(validateProfile(profile, input.harness)) === (plugin?.profile_hash || record.model_routing.profile_hash), '模型配置摘要损坏，停止派发记录');
       if (input.replaces) {
         const old = data.agents.find(agent => agent.id === input.replaces);

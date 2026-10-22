@@ -5,6 +5,7 @@ await import('./hook.test.mjs');
 
 await import('./memory.test.mjs');
 await import('./routing.test.mjs');
+await import('./roles.test.mjs');
 await import('./upgrade.test.mjs');
 await import('./codex-workspaces.test.mjs');
 await import('./native-settings.test.mjs');
