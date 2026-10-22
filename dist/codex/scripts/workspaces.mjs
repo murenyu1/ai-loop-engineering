@@ -56,6 +56,13 @@ export function listWorkspaces(home) {
   const entries = read(fileFor(home)).workspaces;
   return entries.map(item => ({ root: item.root, enabled: item.enabled === true, exists: (() => { try { return fs.realpathSync(item.root) === item.root && fs.statSync(item.root).isDirectory(); } catch { return false; } })() }));
 }
+export function workspaceEntry(home, value) {
+  checkedDirectory(home);
+  const root = exactRoot(value);
+  const entry = read(fileFor(home)).workspaces.find(item => item.root === root);
+  return entry ? { ...entry } : null;
+}
+export const workspaceHash = entry => crypto.createHash('sha256').update(JSON.stringify(entry)).digest('hex');
 
 export function registerWorkspace(home, value, options = {}) {
   const root = exactRoot(value);
@@ -74,10 +81,28 @@ export function setWorkspaceEnabled(home, value, enabled, options = {}) {
   return locked(home, file => {
     const data = read(file), found = data.workspaces.find(item => item.root === root);
     ensure(found || options.create === true, '工作区尚未登记');
-    if (found) found.enabled = enabled;
-    else data.workspaces.push({ root, enabled });
+    if (options.expectedHash !== undefined) ensure(workspaceHash(found || null) === options.expectedHash, '工作区开关在编辑期间变化，请重新读取后保存');
+    const revision = options.revision || crypto.randomUUID();
+    if (found) { found.enabled = enabled; found.revision = revision; }
+    else data.workspaces.push({ root, enabled, revision });
     write(file, data);
     return { root, enabled };
+  });
+}
+
+export function restoreWorkspaceEntry(home, value, previous, options = {}) {
+  const root = exactRoot(value);
+  ensure(previous === null || (previous && previous.root === root && typeof previous.enabled === 'boolean'), '工作区回滚快照无效');
+  return locked(home, file => {
+    const data = read(file), index = data.workspaces.findIndex(item => item.root === root);
+    if (options.expectedRevision !== undefined) ensure(index >= 0 && data.workspaces[index].revision === options.expectedRevision, '工作区已被其他进程修改，停止回滚并保留外部值');
+    if (options.expectedEnabled !== undefined) ensure(index >= 0 && data.workspaces[index].enabled === options.expectedEnabled, '工作区开关已被外部修改，停止回滚并保留外部值');
+    if (previous === null) {
+      if (index >= 0) data.workspaces.splice(index, 1);
+    } else if (index >= 0) data.workspaces[index] = { ...previous };
+    else data.workspaces.push({ ...previous });
+    write(file, data);
+    return { root, restored: previous !== null };
   });
 }
 

@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readCodexWorkspaces } from '../plugins/codex/scripts/codex-workspaces.mjs';
+import { readCodexWorkspaces } from '../codex/scripts/codex-workspaces.mjs';
 import { registerWorkspace } from '../scripts/workspaces.mjs';
-import { createSettingsManager } from '../plugins/codex/scripts/native-settings.mjs';
+import { createSettingsManager } from '../codex/scripts/native-settings.mjs';
 
 function fixture(t) {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-picker-'));

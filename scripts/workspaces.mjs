@@ -1,1 +1,1 @@
-export * from '../plugins/codex/scripts/workspaces.mjs';
+export * from '../codex/scripts/workspaces.mjs';

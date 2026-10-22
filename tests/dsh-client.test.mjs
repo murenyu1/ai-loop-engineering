@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { buildDshClient } from '../scripts/build-dsh-client.mjs';
-import { createPlugin } from '../plugins/dsh/client/index.mjs';
+import { createPlugin } from '../dsh/client/index.mjs';
 
 // Minimal native-form bridge: field serialization and persistence belong to the
 // host. Capture the bridge boundary so tests assert our writes, not host internals.
@@ -59,11 +59,17 @@ test('DSH native configuration attaches only to its own installed package page',
   const ctx = {
     effect: setup => { const stop = setup(); if (typeof stop === 'function') cleanup.push(stop); },
     configForms: { get: id => { assert.equal(id, 'ai-loop-engineering'); return scope; }, whileServed: (ids, run) => { assert.deepEqual(ids, ['ai-loop-engineering']); return run(); } },
-    slots: { inject: (slot, run) => { injected.push(slot); return run(); }, register: options => { registrations.push(options); return () => {}; } },
+    slots: { inject: (slot, run) => { injected.push(slot); return run(); }, register: (options, render) => { registrations.push({ ...options, render }); return () => {}; } },
   };
   plugin.apply(ctx);
   assert.deepEqual(registrations.map(row => row.name), ['plugins.bundle.config', 'sidebar.right.pane.tab', 'sidebar.right.pane.tab.title']);
   assert.deepEqual(injected, ['plugins.bundle.config', 'sidebar.right.pane.tab', 'sidebar.right.pane.tab.title']);
+  const panel = registrations[1].render({ sessionId: 'session-1', injectedValue: 'preserved' });
+  assert.equal(panel.props.sessionId, 'session-1');
+  assert.equal(panel.props.injectedValue, 'preserved');
+  const title = registrations[2].render({ sessionId: 'session-1' });
+  assert.equal(title.type.name, 'SidebarTitle');
+  assert.equal(title.props.sessionId, 'session-1');
   cleanup.forEach(stop => stop());
   assert.equal(scope.disposed, true);
 });
@@ -83,71 +89,57 @@ test('DSH status bridge uses same-origin fetch, encodes paths, preserves errors 
   await assert.rejects(plugin.requestStatus(async () => { throw new Error('network down'); }, 'D:\\Projects\\x'), /network down/);
 });
 
-test('DSH看板多工作区可先选择、按钮点击不把事件当运行号、切换后丢弃旧响应并清理轮询', async () => {
-  const slots = [];
-  const effects = [];
-  const cleanups = [];
-  const values = [];
-  let cursor = 0;
-  let intervals = 0;
-  let cleared = 0;
-  const same = (left, right) => Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((item, index) => Object.is(item, right[index]));
-  const React = {
-    createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
-    useState(initial) { const index = cursor++; if (!(index in values)) values[index] = initial; return [values[index], value => { values[index] = typeof value === 'function' ? value(values[index]) : value; }]; },
-    useRef(initial) { const index = cursor++; if (!(index in values)) values[index] = { current: initial }; return values[index]; },
-    useCallback(fn) { cursor++; return fn; },
-    useEffect(fn, deps) { const index = cursor++; const previous = values[index]; if (!previous || !same(previous.deps, deps)) { values[index] = { deps, cleanup: previous?.cleanup }; effects.push(() => { previous?.cleanup?.(); const cleanup = fn(); values[index].cleanup = cleanup; if (cleanup) cleanups.push(cleanup); }); } },
-    useSyncExternalStore(_subscribe, snapshot) { return snapshot(); },
-  };
-  const hooksPlugin = createPlugin(name => name === 'react' ? React : runtime(name));
-  const render = component => { cursor = 0; effects.length = 0; const tree = component(); effects.splice(0).forEach(effect => effect()); return tree; };
-  const resetHooks = () => { values.length = 0; cursor = 0; effects.length = 0; };
-  const flatten = node => Array.isArray(node) ? node.flatMap(flatten) : node && typeof node === 'object' ? [node, ...(node.props?.children || []).flatMap(flatten)] : [];
-  const scope = { value: { enabled: true, maxConcurrent: 3, roles: {}, projects: [{ path: '/one', enabled: true }, { path: '/two', enabled: true }] }, mutate() {} };
-  const controller = new hooksPlugin.Controller(scope);
-  const sidebarTree = render(() => hooksPlugin.SidebarDashboard({ controller, ctx: {} }));
-  assert.equal(sidebarTree.props.path, '');
-  resetHooks();
-  const emptyPathTree = render(() => hooksPlugin.RunDashboard({ path: '', ctx: {}, projects: scope.value.projects }));
-  assert.ok(flatten(emptyPathTree).some(node => node.type === 'select'));
-  resetHooks();
-
+test('两个看板订阅同一 session/project/run 时共享一次状态请求', async () => {
   const pending = [];
-  const originalFetch = globalThis.fetch;
-  const originalSetInterval = globalThis.setInterval;
-  const originalClearInterval = globalThis.clearInterval;
-  globalThis.fetch = (url, options) => new Promise(resolve => pending.push({ url: new URL(url), options, resolve }));
-  globalThis.setInterval = callback => { intervals++; slots.push(callback); return intervals; };
-  globalThis.clearInterval = () => { cleared++; };
-  try {
-    let tree = render(() => hooksPlugin.RunDashboard({ path: '/one', ctx: {} }));
-    assert.equal(pending[0].url.searchParams.get('project'), '/one');
-    tree = render(() => hooksPlugin.RunDashboard({ path: '/two', ctx: {} }));
-    assert.equal(pending[1].url.searchParams.get('project'), '/two');
-    pending[1].resolve({ ok: true, status: 200, json: async () => ({ run_id: 'new', tasks: [], runs: [{ run_id: 'new', status: 'active' }, { run_id: 'history', status: 'complete' }] }) });
-    await Promise.resolve(); await Promise.resolve();
-    pending[0].resolve({ ok: true, status: 200, json: async () => ({ run_id: 'old', tasks: [] }) });
-    await Promise.resolve(); await Promise.resolve();
-    assert.equal(values[0].data.run_id, 'new');
-    tree = render(() => hooksPlugin.RunDashboard({ path: '/two', ctx: {} }));
-    const runSelect = flatten(tree).find(node => node.type === 'select');
-    assert.ok(flatten(runSelect).some(child => child.props?.value === 'history'));
-    runSelect.props.onChange({ target: { value: 'history' } });
-    tree = render(() => hooksPlugin.RunDashboard({ path: '/two', ctx: {} }));
-    assert.equal(pending.at(-1).url.searchParams.get('run'), 'history');
-    const refresh = flatten(tree).find(node => node.type === 'button');
-    refresh.props.onClick({ type: 'click' });
-    await Promise.resolve();
-    assert.equal(pending.at(-1).url.searchParams.get('run'), 'history');
-    render(() => hooksPlugin.RunDashboard({ path: '', ctx: {} }));
-    assert.ok(cleared > 0);
-  } finally {
-    globalThis.fetch = originalFetch;
-    globalThis.setInterval = originalSetInterval;
-    globalThis.clearInterval = originalClearInterval;
-    cleanups.forEach(cleanup => cleanup?.());
-  }
+  const store = plugin.createStatusPollStore((url, options) => new Promise(resolve => pending.push({ url: new URL(url), options, resolve })), {});
+  const params = { sessionId: 's1', path: '/project', run: 'r1' };
+  const first = store.subscribe(params, () => {});
+  const second = store.subscribe(params, () => {});
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].url.searchParams.get('session'), 's1');
+  assert.equal(pending[0].url.searchParams.get('project'), '/project');
+  assert.equal(pending[0].url.searchParams.get('run'), 'r1');
+  first();
+  assert.equal(pending[0].options.signal.aborted, false);
+  second();
+  assert.equal(pending[0].options.signal.aborted, true);
+});
+
+test('共享状态轮询串行执行，页面隐藏时暂停并取消请求，恢复时立即刷新', async () => {
+  let timerId = 0;
+  const timers = new Map();
+  const listeners = new Map();
+  const host = {
+    document: {
+      visibilityState: 'visible',
+      addEventListener: (name, fn) => listeners.set(name, fn),
+      removeEventListener: name => listeners.delete(name),
+    },
+    setTimeout: fn => { const id = ++timerId; timers.set(id, fn); return id; },
+    clearTimeout: id => timers.delete(id),
+  };
+  const pending = [];
+  const store = plugin.createStatusPollStore((url, options) => new Promise((resolve, reject) => {
+    const request = { options, resolve, reject };
+    options.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+    pending.push(request);
+  }), host);
+  const unsubscribe = store.subscribe({ path: '/p', run: 'r' }, () => {});
+  assert.equal(pending.length, 1);
+  assert.equal(timers.size, 0);
+  pending[0].resolve({ ok: true, status: 200, json: async () => ({ run_id: 'r', runs: [] }) });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(pending.length, 1);
+  assert.equal(timers.size, 1);
+  const tick = timers.values().next().value;
+  timers.clear(); tick();
+  assert.equal(pending.length, 2);
+  host.document.visibilityState = 'hidden'; listeners.get('visibilitychange')();
+  assert.equal(pending[1].options.signal.aborted, true);
+  assert.equal(timers.size, 0);
+  host.document.visibilityState = 'visible'; listeners.get('visibilitychange')();
+  assert.equal(pending.length, 3);
+  unsubscribe();
 });
 
 test('DSH模型目录仍从注入的remote.session读取', async () => {
@@ -176,13 +168,24 @@ test('DSH project edits preserve unrelated projects and role settings', async ()
   card.updateProject('d:/A/', row => ({ ...row, maxConcurrent: 4 }));
   card.setRole('dev', { provider: 'p', model: 'code', reasoningEffort: 'high' }, 'D:\\A');
   await card.actions.save();
-  const projects = scope.writes.at(-1)[0].value;
+  const projects = scope.writes.at(-1).find(change => change.path[0] === 'projects').value;
   assert.equal(projects.length, 2);
   assert.equal(projects[0].enabled, true);
   assert.equal(projects[0].roles.reviewer.model, 'review');
   assert.equal(projects[0].roles.dev.model, 'code');
   assert.equal(projects[0].maxConcurrent, 4);
   assert.deepEqual(projects[1], { path: '/other', enabled: false });
+});
+
+test('保存新配置时将总开关原子迁移到 schema v2 并把 legacy enabled 置 false', async () => {
+  const { card, scope } = controller({ enabled: true });
+  assert.equal(card.store.getSnapshot().enabled, true);
+  card.edit('maxConcurrent', 4);
+  await card.actions.save();
+  const writes = scope.writes.at(-1);
+  assert.deepEqual(writes.find(change => change.path[0] === 'schemaVersion'), { op: 'set', path: ['schemaVersion'], value: 2 });
+  assert.deepEqual(writes.find(change => change.path[0] === 'enabled'), { op: 'set', path: ['enabled'], value: false });
+  assert.deepEqual(writes.find(change => change.path[0] === 'workflowEnabled'), { op: 'set', path: ['workflowEnabled'], value: true });
 });
 
 test('DSH角色卡项目强度交互只写入用户覆盖，模型继承成对清除路由', async () => {
@@ -219,33 +222,136 @@ test('DSH角色卡项目强度交互只写入用户覆盖，模型继承成对�
   controls[2].props.onChange({ target: { value: 'high' } });
   assert.deepEqual(card.store.getSnapshot().projects[0].roles.dev, { reasoningEffort: 'high' });
   await card.actions.save();
-  assert.deepEqual(scope.writes.at(-1)[0].value[0].roles.dev, { reasoningEffort: 'high' });
+  assert.deepEqual(scope.writes.at(-1).find(change => change.path[0] === 'projects').value[0].roles.dev, { reasoningEffort: 'high' });
 
   controls = findControls(render());
   controls[1].props.onChange({ target: { value: '' } });
-  assert.deepEqual(card.store.getSnapshot().projects[0].roles.dev, { provider: '', model: '', reasoningEffort: '' });
-  assert.equal(componentPlugin.rolesValid(card.store.getSnapshot().projects[0].roles), true);
+  assert.equal(Object.hasOwn(card.store.getSnapshot().projects[0], 'roles'), false);
   await card.actions.save();
-  assert.deepEqual(scope.writes.at(-1)[0].value[0].roles.dev, { provider: '', model: '', reasoningEffort: '' });
+  assert.equal(Object.hasOwn(scope.writes.at(-1).find(change => change.path[0] === 'projects').value[0], 'roles'), false);
+});
+
+test('项目角色选择关闭时优先保留显式关闭，选择空继承项则删除项目覆盖', () => {
+  const React = {
+    createElement(type, props, ...children) {
+      if (typeof type === 'function') return type({ ...props, children });
+      return { type, props: { ...props, children } };
+    },
+  };
+  const componentPlugin = createPlugin(name => name === 'react' ? React : runtime(name));
+  const writes = [];
+  const state = { roles: { dev: { provider: 'p', model: 'm' } }, projects: [{ path: '/a', enabled: true, roles: { dev: { provider: 'p', model: 'm' } } }] };
+  const controller = {
+    setRole: (...args) => writes.push(['set', ...args]),
+    resetRole: (...args) => writes.push(['reset', ...args]),
+  };
+  const catalog = { status: 'ready', groups: [{ id: 'p', models: [{ id: 'm' }] }] };
+  const tree = componentPlugin.RoleCard({ role: 'dev', path: '/a', state, controller, catalog, disabled: false });
+  const selects = [];
+  const visit = node => {
+    if (Array.isArray(node)) return node.forEach(visit);
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'select') selects.push(node);
+    visit(node.props?.children);
+  };
+  visit(tree);
+  selects[1].props.onChange({ target: { value: '__off' } });
+  assert.equal(writes[0][0], 'set');
+  assert.equal(writes[0][2].enabled, false);
+  assert.equal(writes[0][2].provider, '');
+  selects[1].props.onChange({ target: { value: '' } });
+  assert.deepEqual(writes[1], ['reset', 'dev', '/a']);
+  selects[0].props.onChange({ target: { value: '' } });
+  assert.deepEqual(writes[2], ['reset', 'dev', '/a']);
+});
+
+test('看板切换会话或工作区时清空运行选择并隔离旧响应', async () => {
+  const pending = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (url, options) => new Promise(resolve => pending.push({ url: new URL(url), options, resolve }));
+  const slots = [];
+  let cursor = 0;
+  let effects = [];
+  const same = (left, right) => Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((item, index) => Object.is(item, right[index]));
+  const React = {
+    createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+    useState(initial) {
+      const index = cursor++;
+      if (!(index in slots)) slots[index] = initial;
+      return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }];
+    },
+    useEffect(fn, deps) {
+      const index = cursor++;
+      const previous = slots[index];
+      if (!previous || !same(previous.deps, deps)) effects.push(() => {
+        previous?.cleanup?.();
+        const cleanup = fn();
+        slots[index] = { deps, cleanup };
+      });
+    },
+  };
+  const view = createPlugin(name => name === 'react' ? React : runtime(name));
+  const flatten = node => Array.isArray(node) ? node.flatMap(flatten) : node && typeof node === 'object' ? [node, ...(node.props?.children || []).flatMap(flatten)] : [node];
+  const render = props => {
+    cursor = 0; effects = [];
+    const tree = view.RunDashboard({ ctx: {}, ...props });
+    effects.forEach(effect => effect());
+    return tree;
+  };
+  const props = { path: '/one', sessionId: 's1' };
+  try {
+    render(props);
+    assert.equal(pending.length, 1);
+    pending[0].resolve({ ok: true, status: 200, json: async () => ({ run_id: 'run-old', runs: [{ run_id: 'run-old', status: 'active' }] }) });
+    await new Promise(resolve => setImmediate(resolve));
+    let tree = render(props);
+    const runSelect = flatten(tree).find(node => node?.type === 'select');
+    assert.ok(runSelect);
+    runSelect.props.onChange({ target: { value: 'run-old' } });
+    render(props);
+    assert.equal(pending.at(-1).url.searchParams.get('run'), 'run-old');
+
+    tree = render({ path: '/two', sessionId: 's2' });
+    assert.ok(!flatten(tree).includes('run-old'));
+    assert.equal(pending.at(-1).url.searchParams.get('session'), 's2');
+    assert.equal(pending.at(-1).url.searchParams.get('project'), '/two');
+    assert.equal(pending.at(-1).url.searchParams.has('run'), false);
+    pending[1].resolve({ ok: true, status: 200, json: async () => ({ run_id: 'run-old', runs: [{ run_id: 'run-old' }] }) });
+    await new Promise(resolve => setImmediate(resolve));
+    tree = render({ path: '/two', sessionId: 's2' });
+    assert.ok(!flatten(tree).includes('run-old'));
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const slot of slots) slot?.cleanup?.();
+  }
+});
+
+test('活动数量只统计真实 live 且未结算的状态', () => {
+  assert.equal(plugin.activeActivityCount([
+    { live: true, state: 'running' },
+    { live: true, state: 'ended_unknown' },
+    { live: false, state: 'running' },
+    { live: true, state: 'completed' },
+  ]), 1);
 });
 test('DSH restore inheritance removes only the selected role override', async () => {
   const { card, scope } = controller({ projects: [{ path: '/a', enabled: true, maxConcurrent: 4, roles: { dev: { provider: '', model: '' }, reviewer: { provider: 'p', model: 'r' } } }] });
   card.resetRole('dev', '/a');
   await card.actions.save();
-  const project = scope.writes.at(-1)[0].value[0];
+  const project = scope.writes.at(-1).find(change => change.path[0] === 'projects').value[0];
   assert.equal(project.enabled, true);
   assert.equal(project.maxConcurrent, 4);
   assert.deepEqual(project.roles, { reviewer: { provider: 'p', model: 'r' } });
   card.resetRole('reviewer', '/a');
   await card.actions.save();
-  assert.equal(Object.hasOwn(scope.writes.at(-1)[0].value[0], 'roles'), false);
+  assert.equal(Object.hasOwn(scope.writes.at(-1).find(change => change.path[0] === 'projects').value[0], 'roles'), false);
 });
 
 test('DSH removal means unknown project is no longer explicitly enabled', async () => {
   const { card, scope } = controller({ projects: [{ path: 'D:\\A', enabled: true }, { path: '/b', enabled: true }] });
   card.removeProject('d:/a');
   await card.actions.save();
-  assert.deepEqual(scope.writes.at(-1), [{ op: 'set', path: ['projects'], value: [{ path: '/b', enabled: true }] }]);
+  assert.deepEqual(scope.writes.at(-1).find(change => change.path[0] === 'projects'), { op: 'set', path: ['projects'], value: [{ path: '/b', enabled: true }] });
   assert.equal(plugin.samePath('/Project', '/project'), false);
 });
 

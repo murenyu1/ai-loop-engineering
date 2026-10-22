@@ -13,12 +13,14 @@ window.__ModuleLoader__.load({
     reviewer: { name: '评审 (Reviewer)', desc: '独立架构与代码审核' },
     scribe: { name: '记录 (Scribe)', desc: '记忆库与交接持久化' },
   };
-  const emptyRole = () => ({ provider: '', model: '', reasoningEffort: '' });
+  const emptyRole = () => ({ enabled: false, provider: '', model: '', reasoningEffort: '' });
   const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
   const clone = value => JSON.parse(JSON.stringify(value));
   const numberValid = value => Number.isInteger(value) && value >= 1 && value <= 16;
   const phaseLabel = phase => ({ done: '已完成', developed: '等待验证', developing: '开发中', verifying: '验证中', reviewing: '评审中', needs_fix: '待修复', blocked: '阻塞', pending: '待开始' }[phase] || phase || '未知');
-  const roleValid = role => object(role) && Object.keys(role).every(key => ['provider', 'model', 'reasoningEffort'].includes(key) && typeof role[key] === 'string')
+  const agentStateLabel = state => ({ starting: '正在启动', running: '运行中', waiting_to_stop: '已关闭新派发；在途任务未确认停止', requested: '已请求', waiting: '等待中', stop_requested: '已请求停止（未确认）', completed: '子代理已结束（不代表任务通过）', failed: '子代理失败', cancelled: '已取消', stopped: '已停止', unknown: '状态未知', ended_unknown: '已结束（原因未知）' }[state] || state || '未知');
+  const activeActivityCount = agents => (agents ?? []).filter(agent => agent.live === true && !['completed', 'failed', 'cancelled', 'stopped', 'ended_unknown'].includes(agent.state)).length;
+  const roleValid = role => object(role) && Object.keys(role).every(key => key === 'enabled' ? typeof role[key] === 'boolean' : ['provider', 'model', 'reasoningEffort'].includes(key) && typeof role[key] === 'string')
     && Boolean(role.model?.trim()) === Boolean(role.provider?.trim());
   const rolesValid = roles => object(roles) && Object.entries(roles).every(([key, role]) => Object.hasOwn(ROLES, key) && roleValid(role));
   const projectsValid = projects => Array.isArray(projects) && projects.every(project => object(project)
@@ -38,13 +40,25 @@ window.__ModuleLoader__.load({
     constructor(scope) {
       this.form = new SettingsFormModel(scope, [
         jsonField('enabled', false, value => typeof value === 'boolean'),
+        jsonField('workflowEnabled', undefined, value => typeof value === 'boolean'),
+        { field: 'schemaVersion', format: value => value === undefined ? '' : String(value), parse: text => text === '2' ? { kind: 'set', value: 2 } : undefined },
         { field: 'maxConcurrent', format: value => String(value ?? 3), parse: text => numberValid(Number(text)) ? { kind: 'set', value: Number(text) } : undefined },
         jsonField('roles', {}, rolesValid), jsonField('projects', [], projectsValid),
       ]);
       this.actions = this.form.actions();
+      const editField = this.actions.edit.bind(this.actions);
+      this.actions.edit = (field, text) => {
+        const next = field === 'enabled' ? JSON.parse(text) : this.store?.getSnapshot().enabled ?? JSON.parse(this.form.field('workflowEnabled').text || this.form.field('enabled').text || 'false');
+        editField('schemaVersion', '2');
+        editField('enabled', 'false');
+        editField('workflowEnabled', JSON.stringify(next));
+        if (field !== 'enabled') editField(field, text);
+      };
       this.store = this.form.bind(() => ({
         ...this.form.shell(),
-        enabled: JSON.parse(this.form.field('enabled').text),
+        enabled: JSON.parse(this.form.field('schemaVersion').text || '0') === 2
+          ? JSON.parse(this.form.field('workflowEnabled').text || 'false')
+          : JSON.parse(this.form.field('enabled').text || 'false'),
         maxConcurrent: this.form.field('maxConcurrent').text,
         roles: JSON.parse(this.form.field('roles').text),
         projects: JSON.parse(this.form.field('projects').text),
@@ -272,53 +286,112 @@ window.__ModuleLoader__.load({
     },
   };
 
-  async function requestStatus(fetcher, path, run) {
+  async function requestStatus(fetcher, path, run, sessionId, signal) {
     const base = typeof document !== 'undefined' && document.baseURI ? document.baseURI : 'http://dsh.internal/';
     const url = new URL('plugins/ai-loop-engineering/state', base);
-    url.searchParams.set('project', path);
+    if (path) url.searchParams.set('project', path);
+    if (sessionId) url.searchParams.set('session', sessionId);
     if (run) url.searchParams.set('run', run);
-    const response = await fetcher(url.href, { method: 'GET', cache: 'no-store' });
+    const response = await fetcher(url.href, { method: 'GET', cache: 'no-store', signal });
     const parsed = await response.json().catch(() => ({}));
     if (!response.ok || parsed.error) throw new Error(parsed.error || `HTTP ${response.status}`);
     return parsed;
   }
 
-  function RunDashboard({ path, ctx, projects = [], onProjectChange }) {
-    const [runInfo, setRunInfo] = React.useState({ loading: false, data: null, runs: [], error: null });
-    const [run, setRun] = React.useState('');
-    const requestId = React.useRef(0);
-    const lastPath = React.useRef(null);
-    const loadStatus = React.useCallback(async (selectedRun = run) => {
-      const current = ++requestId.current;
-      if (!path) { setRunInfo({ loading: false, data: null, runs: [], error: null }); return; }
-      setRunInfo(s => ({ ...s, loading: true, error: null }));
+  function createStatusPollStore(fetcher = globalThis.fetch, host = globalThis) {
+    const entries = new Map();
+    const keyOf = params => JSON.stringify([params.sessionId || '', params.path || '', params.run || '']);
+    const visible = () => !host.document || host.document.visibilityState !== 'hidden';
+    const notify = entry => entry.listeners.forEach(listener => listener());
+    const clearTimer = entry => { if (entry.timer !== undefined) host.clearTimeout(entry.timer); entry.timer = undefined; };
+    const schedule = (entry, params) => {
+      clearTimer(entry);
+      if (entry.listeners.size && visible()) entry.timer = host.setTimeout(() => poll(entry, params), 5000);
+    };
+    const poll = async (entry, params) => {
+      clearTimer(entry);
+      if (!entry.listeners.size || !visible() || entry.abort) return;
+      const abort = new AbortController();
+      entry.abort = abort;
+      entry.state = { ...entry.state, loading: true, error: null };
+      notify(entry);
       try {
-        const parsed = await requestStatus(globalThis.fetch, path, selectedRun);
-        if (current !== requestId.current) return;
-        if (parsed.run_id) setRunInfo(previous => ({ loading: false, data: parsed, runs: Array.isArray(parsed.runs) ? parsed.runs : previous.runs, error: null }));
-        else if (Array.isArray(parsed.runs)) setRunInfo({ loading: false, data: null, runs: parsed.runs, error: parsed.message || null });
-        else setRunInfo({ loading: false, data: null, runs: [], error: '状态接口返回了无法识别的数据。' });
+        const data = await requestStatus(fetcher, params.path, params.run, params.sessionId, abort.signal);
+        if (entry.abort !== abort) return;
+        entry.state = { loading: false, data: data.run_id ? data : null, runs: Array.isArray(data.runs) ? data.runs : entry.state.runs, error: data.error || data.message || null };
       } catch (error) {
-        if (current === requestId.current) setRunInfo({ loading: false, data: null, runs: [], error: error instanceof Error ? error.message : String(error) });
+        if (entry.abort !== abort) return;
+        if (error?.name === 'AbortError') return;
+        entry.state = { loading: false, data: null, runs: [], error: error instanceof Error ? error.message : String(error) };
+      } finally {
+        if (entry.abort === abort) {
+          entry.abort = undefined;
+          notify(entry);
+          schedule(entry, params);
+        }
       }
-    }, [path, run]);
+    };
+    const get = params => entries.get(keyOf(params))?.state ?? { loading: false, data: null, runs: [], error: null };
+    const subscribe = (params, listener) => {
+      const key = keyOf(params);
+      let entry = entries.get(key);
+      if (!entry) {
+        entry = { state: { loading: false, data: null, runs: [], error: null }, listeners: new Set(), timer: undefined, abort: undefined, visibility: undefined };
+        entries.set(key, entry);
+      }
+      entry.listeners.add(listener);
+      if (entry.listeners.size === 1) {
+        if (host.document?.addEventListener) {
+          entry.visibility = () => {
+            if (!visible()) { clearTimer(entry); const active = entry.abort; entry.abort = undefined; active?.abort(); }
+            else if (entry.listeners.size) poll(entry, params);
+          };
+          host.document.addEventListener('visibilitychange', entry.visibility);
+        }
+        poll(entry, params);
+      }
+      return () => {
+        entry.listeners.delete(listener);
+        if (entry.listeners.size) return;
+        clearTimer(entry);
+        entry.abort?.abort();
+        if (entry.visibility) host.document?.removeEventListener?.('visibilitychange', entry.visibility);
+        entries.delete(key);
+      };
+    };
+    const refresh = params => {
+      const entry = entries.get(keyOf(params));
+      if (entry && !entry.abort) poll(entry, params);
+    };
+    return { get, subscribe, refresh };
+  }
 
+  const statusPollStore = createStatusPollStore((...args) => globalThis.fetch(...args));
+  function useStatus(path, run, sessionId) {
+    const params = { path, run, sessionId };
+    const key = JSON.stringify([sessionId || '', path || '', run || '']);
+    const [snapshot, setSnapshot] = React.useState({ key, ...statusPollStore.get(params) });
     React.useEffect(() => {
-      if (lastPath.current !== path) {
-        lastPath.current = path;
-        setRun('');
-        setRunInfo({ loading: Boolean(path), data: null, runs: [], error: null });
-        loadStatus('');
-      } else if (run) loadStatus(run);
-    }, [path, run, loadStatus]);
-    React.useEffect(() => {
-      if (!path) return undefined;
-      const timer = setInterval(() => loadStatus(run), 5000);
-      return () => clearInterval(timer);
-    }, [path, run, loadStatus]);
-    React.useEffect(() => () => { requestId.current++; }, []);
+      setSnapshot({ key, ...statusPollStore.get(params) });
+      if (!path && !sessionId) return undefined;
+      return statusPollStore.subscribe(params, () => setSnapshot({ key, ...statusPollStore.get(params) }));
+    }, [key]);
+    const state = snapshot.key === key ? snapshot : { loading: Boolean(path || sessionId), data: null, runs: [], error: null };
+    return { ...state, refresh: () => statusPollStore.refresh(params) };
+  }
 
+  function RunDashboard({ path, ctx, projects = [], onProjectChange, sessionId }) {
+    const selectionKey = JSON.stringify([sessionId || '', path || '']);
+    const [selection, setSelection] = React.useState({ key: selectionKey, run: '' });
+    const run = selection.key === selectionKey ? selection.run : '';
+    React.useEffect(() => {
+      if (selection.key !== selectionKey) setSelection({ key: selectionKey, run: '' });
+    }, [selectionKey]);
+    const runInfo = useStatus(path, run, sessionId);
     const data = runInfo.data;
+    React.useEffect(() => {
+      if (!path && data?.project_root && projects.some(row => samePath(row.path, data.project_root))) onProjectChange?.(data.project_root);
+    }, [path, data?.project_root, projects, onProjectChange]);
     return h('div', { style: S.dashCard },
       h('div', { style: S.cardHeader },
         h('div', null,
@@ -330,13 +403,13 @@ window.__ModuleLoader__.load({
             type: 'button',
             style: S.btn(false),
             disabled: runInfo.loading,
-            onClick: () => loadStatus(),
+            onClick: runInfo.refresh,
           }, runInfo.loading ? '正在刷新…' : '🔄 刷新看板'),
         ),
       ),
       h('div', { style: { display: 'grid', gap: 10 } },
         projects.length ? h('label', { style: S.label }, '工作区', h('select', { value: path, style: S.input, onChange: event => onProjectChange?.(event.target.value) }, h('option', { value: '' }, '请选择工作区'), projects.map(row => h('option', { key: row.path, value: row.path }, row.path)))) : null,
-        runInfo.runs.length ? h('label', { style: S.label }, '选择运行', h('select', { value: run, style: S.input, onChange: event => setRun(event.target.value) }, h('option', { value: '' }, '请选择运行'), runInfo.runs.map(row => h('option', { key: row.run_id, value: row.run_id }, `${row.run_id} · ${row.status || '未知'} · ${row.goal || ''}`)))) : null,
+        runInfo.runs.length ? h('label', { style: S.label }, '选择运行', h('select', { value: run, style: S.input, onChange: event => setSelection({ key: selectionKey, run: event.target.value }) }, h('option', { value: '' }, '请选择运行'), runInfo.runs.map(row => h('option', { key: row.run_id, value: row.run_id }, `${row.run_id} · ${row.status || '未知'} · ${row.goal || ''}`)))) : null,
       ),
       !path ? h('div', { style: { color: 'var(--dsw-alias-label-secondary, #888)', fontSize: 13, padding: '12px 0' } }, '请选择一个已启用的工作区。') : runInfo.error || !data ? h('div', { style: { color: 'var(--dsw-alias-label-secondary, #888)', fontSize: 13, padding: '12px 0' } },
         runInfo.loading ? '正在加载当前运行状态…' : (runInfo.error || '当前工作区暂无运行记录。'),
@@ -374,16 +447,44 @@ window.__ModuleLoader__.load({
             ),
           )),
         ),
+        h('section', { style: { display: 'grid', gap: 8 } },
+          h('h4', { style: { margin: 0, fontSize: 13 } }, '子代理观察（完成不等于任务通过）'),
+          data.activity?.agents?.length ? data.activity.agents.map((agent, index) => h('div', { key: agent.native_id || agent.id || `${agent.task}-${agent.role}-${index}`, style: { ...S.taskCard('pending'), gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', alignItems: 'center' } },
+            h('span', null, `${agent.role || '未知角色'} · ${agent.task || '未关联任务'}`),
+            h('code', null, agent.native_id || '无原生子代理 ID'),
+            h('span', null, agent.live ? agentStateLabel(agent.state) : `最后观察 · ${agentStateLabel(agent.state)}`),
+            h('span', null, agent.usage ? `Token ${agent.usage.input_tokens ?? '?'} / ${agent.usage.output_tokens ?? '?'}` : 'Token 用量不可获取'),
+            agent.note ? h('span', { style: S.subtitle }, agent.note) : null,
+          )) : h('p', { style: S.subtitle }, '暂无可显示的子代理观察。'),
+          data.activity?.note ? h('p', { style: S.subtitle }, data.activity.note) : null,
+        ),
       ),
     );
   }
 
-  function SidebarDashboard({ controller, ctx }) {
+  const sessionWorkspace = new Map();
+  function SidebarDashboard({ controller, ctx, sessionId }) {
     const state = React.useSyncExternalStore(controller.store.subscribe, controller.store.getSnapshot, controller.store.getSnapshot);
     const projects = state.enabled ? state.projects.filter(row => row.enabled) : [];
-    const [path, setPath] = React.useState(projects.length === 1 ? projects[0].path : '');
-    React.useEffect(() => { if (!projects.some(row => samePath(row.path, path))) setPath(projects.length === 1 ? projects[0].path : ''); }, [state.enabled, state.projects]);
-    return h(RunDashboard, { path, ctx, projects, onProjectChange: setPath });
+    const sessionKey = typeof sessionId === 'string' ? sessionId : '';
+    const initialPath = sessionWorkspace.get(sessionKey) || '';
+    const [path, setPath] = React.useState(initialPath);
+    React.useEffect(() => {
+      const next = sessionWorkspace.get(sessionKey) || '';
+      if (!projects.some(row => samePath(row.path, next))) setPath('');
+      else setPath(next);
+    }, [sessionKey, state.enabled, state.projects]);
+    const selectProject = value => { if (sessionKey) sessionWorkspace.set(sessionKey, value); setPath(value); };
+    return h(RunDashboard, { path, ctx, projects, sessionId: sessionKey, onProjectChange: selectProject });
+  }
+
+  function SidebarTitle({ sessionId }) {
+    const sessionKey = typeof sessionId === 'string' ? sessionId : '';
+    const path = sessionWorkspace.get(sessionKey) || '';
+    const state = useStatus(path, '', sessionKey);
+    const agents = state.data?.activity?.agents ?? [];
+    const active = activeActivityCount(agents);
+    return h('span', { title: '在右侧栏打开 AI Loop 看板查看运行和子代理详情' }, active ? `AI Loop · ${active} 个活动` : 'AI Loop · 右侧栏看板');
   }
 
   function CustomSelect({ label, value, choices, onChange, disabled }) {
@@ -402,13 +503,14 @@ window.__ModuleLoader__.load({
   function RoleCard({ role, path, state, controller, catalog, disabled }) {
     const project = state.projects.find(row => samePath(row.path, path));
     const own = path === '' ? state.roles[role] : project?.roles?.[role];
-    const value = { ...emptyRole(), ...state.roles[role], ...own };
+    const value = { provider: '', model: '', reasoningEffort: '', ...state.roles[role], ...own };
     const update = patch => controller.setRole(role, path === '' ? { ...value, ...patch } : { ...own, ...patch }, path);
     const group = catalog.groups.find(item => item.id === value.provider);
     const model = group?.models.find(item => item.id === value.model);
-    const inherit = [{ id: '', name: '继承父智能体' }];
+    const selectedModel = value.enabled === false ? '__off' : value.model ?? '__off';
+    const inherit = path ? [{ id: '', name: '继承全局配置' }] : [];
     const meta = ROLES[role] || { name: role, desc: '' };
-    const hasOverride = path !== '' ? Boolean(own) : Boolean(value.model);
+    const hasOverride = path !== '' ? Boolean(own) : Boolean(state.roles[role]);
 
     return h('div', { style: S.roleCard },
       h('div', { style: S.roleHeader },
@@ -429,16 +531,18 @@ window.__ModuleLoader__.load({
           value: value.provider ?? '',
           choices: [...inherit, ...catalog.groups.map(item => ({ id: item.id, name: item.name }))],
           disabled: disabled || catalog.status !== 'ready',
-          onChange: provider => update({ provider, model: '', reasoningEffort: '' }),
+          onChange: provider => provider === '' && path ? controller.resetRole(role, path) : update({ provider, model: '', reasoningEffort: '' }),
         }),
         h(CustomSelect, {
           label: '模型选择',
-          value: value.model ?? '',
-          choices: [...inherit, ...(group?.models ?? []).map(item => ({ id: item.id, name: item.name }))],
-          disabled: disabled || !group,
-          onChange: modelId => update(modelId
-            ? { provider: value.provider, model: modelId, reasoningEffort: '' }
-            : { provider: '', model: '', reasoningEffort: '' }),
+          value: selectedModel,
+          choices: [{ id: '__off', name: '关闭' }, ...inherit, ...(group?.models ?? []).map(item => ({ id: item.id, name: item.name }))],
+          disabled: disabled,
+          onChange: modelId => modelId === '__off'
+            ? update({ enabled: false, provider: '', model: '', reasoningEffort: '' })
+            : modelId === '' && path ? controller.resetRole(role, path)
+              : modelId ? update({ enabled: true, provider: value.provider, model: modelId, reasoningEffort: '' })
+                : update({ enabled: false, provider: '', model: '', reasoningEffort: '' }),
         }),
         h(CustomSelect, {
           label: '思考/推理强度',
@@ -603,9 +707,6 @@ window.__ModuleLoader__.load({
       ) : null,
     ),
 
-    // 3. 运行看板（针对选定项目呈现 DAG 与实时进度）
-    path ? h(RunDashboard, { path, ctx }) : null,
-
     // 4. 并发限制与角色模型矩阵卡片
     h('div', { style: S.card },
       h('div', { style: S.cardHeader },
@@ -682,13 +783,13 @@ window.__ModuleLoader__.load({
       const disposers = [];
       disposers.push(ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
         name: 'sidebar.right.pane.tab', key: PACKAGE, inject: sessionId => ({ sessionId }),
-      }, () => h(SidebarDashboard, { controller, ctx }))));
+      }, props => h(SidebarDashboard, { ...props, controller, ctx }))));
       disposers.push(ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
-        name: 'sidebar.right.pane.tab.title', key: PACKAGE, inject: () => ({}),
-      }, () => h('span', null, 'AI Loop'))));
+        name: 'sidebar.right.pane.tab.title', key: PACKAGE, inject: sessionId => ({ sessionId }),
+      }, props => h(SidebarTitle, props))));
       return () => disposers.forEach(dispose => dispose?.());
     }, 'ai-loop: right sidebar');
   }
-  return { inject: ['slots', 'configForms', 'remote', 'remote.session'], apply, Controller, samePath, rolesValid, projectsValid, requestStatus, RunDashboard, SidebarDashboard, useCatalog, RoleCard };
+  return { inject: ['slots', 'configForms', 'remote', 'remote.session'], apply, Controller, samePath, rolesValid, projectsValid, requestStatus, createStatusPollStore, RunDashboard, SidebarDashboard, SidebarTitle, activeActivityCount, useCatalog, RoleCard };
 }
 });

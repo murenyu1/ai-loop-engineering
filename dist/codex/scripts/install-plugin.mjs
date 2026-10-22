@@ -32,7 +32,7 @@ export function installPlugin(project, options = {}) {
     stage(`${location}/${item.path}`, content);
   }
   const marketplaceFile = `${marketplace}/.agents/plugins/marketplace.json`;
-  const metadata = jsonFile(fs.existsSync(path.join(BUNDLE,'marketplace.json')) ? path.join(BUNDLE,'marketplace.json') : safePath(BUNDLE,'plugins/codex/marketplace.json'));
+  const metadata = jsonFile(fs.existsSync(path.join(BUNDLE,'marketplace.json')) ? path.join(BUNDLE,'marketplace.json') : safePath(BUNDLE,'codex/marketplace.json'));
   metadata.plugins[0].source.path = './plugins/ai-loop-engineering';
   const marketplaceContent = Buffer.from(JSON.stringify(metadata, null, 2)+'\n');
   const existing = safePath(home, marketplaceFile);

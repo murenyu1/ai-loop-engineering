@@ -1,1 +1,1 @@
-export * from '../plugins/codex/scripts/executable.mjs';
+export * from '../codex/scripts/executable.mjs';

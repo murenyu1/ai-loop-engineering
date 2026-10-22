@@ -3,10 +3,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { createConfig, projectKey, projectSettings, roleOptions, validateConfig, validateProjects, validateRoles } from '../plugins/dsh/config.mjs';
+import { createConfig, projectKey, projectSettings, roleOptions, validateConfig, validateProjects, validateRoles } from '../dsh/config.mjs';
+import * as loop from '../core/scripts/loop.mjs';
+import { recordActivity } from '../core/scripts/activity.mjs';
 
 const root = 'D:\\Projects\\example';
-const config = extra => ({ enabled: true, maxConcurrent: 2, roles: {}, projects: [{ path: root, enabled: true }], ...extra });
+const config = extra => ({ enabled: true, maxConcurrent: 2, roles: { reviewer: { provider: 'parent-provider', model: 'parent-model' } }, projects: [{ path: root, enabled: true }], ...extra });
 const signal = () => new AbortController().signal;
 
 test('DSH 精确项目启用、总开关与大小写路径，不启用子目录或未知项目', () => {
@@ -26,6 +28,23 @@ test('DSH volatile、项目角色字段覆盖与无效模型设置不静默回�
   assert.throws(() => roleOptions({ roles: { dev: { provider: 'only' } } }, 'dev'), /同时/);
   assert.throws(() => roleOptions({ roles: {} }, 'unknown'), /未知/);
   assert.throws(() => projectSettings(config({ maxConcurrent: 0 }), root), /并发/);
+});
+
+test('DSH 新角色默认关闭，显式关闭覆盖旧路由；旧显式模型继续启用', () => {
+  assert.equal(roleOptions({ roles: {} }, 'dev'), undefined);
+  assert.equal(roleOptions({ roles: { dev: { provider: 'p', model: 'm' } } }, 'dev').model, 'm');
+  assert.equal(roleOptions({ roles: { dev: { enabled: false, provider: 'p', model: 'm' } } }, 'dev'), undefined);
+  assert.throws(() => roleOptions({ roles: { dev: { enabled: true } } }, 'dev'), /必须配置/);
+});
+
+test('DSH schema v2 使用 workflowEnabled，legacy enabled=false 可阻止旧版继续派发', () => {
+  const legacy = config();
+  assert.equal(projectSettings(legacy, root).enabled, true);
+  const v2 = { ...legacy, schemaVersion: 2, enabled: false, workflowEnabled: true };
+  assert.equal(projectSettings(v2, root).enabled, true);
+  assert.throws(() => validateConfig({ ...v2, enabled: true }), /legacy enabled 必须为 false/);
+  assert.throws(() => projectSettings({ ...v2, schemaVersion: 3 }, root), /不支持.*schemaVersion/);
+  assert.equal(projectSettings({ ...v2, workflowEnabled: false }, root).enabled, false);
 });
 
 test('DSH 运行前配置校验拒绝相对/重复路径、全局半路由和合并后半路由', () => {
@@ -54,7 +73,9 @@ test('DSH Config仅包含浏览器可序列化声明约束，不含transform回�
   const restored = JSON.parse(JSON.stringify(createConfig(z)));
   assert.doesNotMatch(JSON.stringify(restored), /transform|callback/);
   assert.equal(restored.dict.roles.dict.reviewer.type, 'union');
-  assert.equal(restored.dict.roles.dict.reviewer.list.length, 2);
+  assert.equal(restored.dict.roles.dict.reviewer.list.length, 5);
+  assert.ok(restored.dict.schemaVersion);
+  assert.ok(restored.dict.workflowEnabled);
   const rule = restored.dict.projects.inner.dict.path.meta.pattern;
   assert.equal(new RegExp(rule.source, rule.flags).test('D:/example'), true);
   assert.equal(new RegExp(rule.source, rule.flags).test('relative/example'), false);
@@ -62,15 +83,15 @@ test('DSH Config仅包含浏览器可序列化声明约束，不含transform回�
 
 // Contract tests use SDK doubles; real DSH loading and model calls are separate
 // acceptance checks. No SDK is downloaded or copied into the source repository.
-let source = fs.readFileSync(new URL('../plugins/dsh/index.mjs', import.meta.url), 'utf8');
+let source = fs.readFileSync(new URL('../dsh/index.mjs', import.meta.url), 'utf8');
 source = source.replace("import z from '@deepseek-ai/schemastery';", 'const chain = new Proxy(function(){ return chain; }, {get:()=>chain}); const z=chain;');
 source = source.replace("import { defineTool } from '@deepseek-ai/dsh-tools';", 'const defineTool = value => { for (const [name, spec] of Object.entries(value.parameters ?? {})) { if (spec.required !== undefined && spec.required !== true) throw new Error(`unsupported JSON schema: parameters.${name}.required must be true when present`); } return value; };');
 source = source.replace("import { delegationDepthOf, parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent';", 'const delegationDepthOf = agent => agent.depth ?? 0; const parentAgentOptionsForDelegation = agent => agent.options;');
-source = source.replace("'./config.mjs'", JSON.stringify(new URL('../plugins/dsh/config.mjs', import.meta.url).href));
-source = source.replaceAll('import.meta.url', JSON.stringify(new URL('../plugins/dsh/index.mjs', import.meta.url).href));
+source = source.replace("'./config.mjs'", JSON.stringify(new URL('../dsh/config.mjs', import.meta.url).href));
+source = source.replaceAll('import.meta.url', JSON.stringify(new URL('../dsh/index.mjs', import.meta.url).href));
 const { apply } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
-function fixture(settings = config()) {
+function fixture(settings = config(), { managedExecution = false } = {}) {
   const skills = [], contexts = [], tools = [], calls = [], pending = [], preflights = [], routes = [];
   const connection = { requestRejection: () => undefined };
   const provider = { inheritsParentContext: false, prepareContinuable() {}, capabilities: { agentOptions: true, depthLimit: true } };
@@ -86,7 +107,7 @@ function fixture(settings = config()) {
     skills: { register: skill => skills.push(skill) },
     systemPrompt: { context: entry => contexts.push(entry) },
     tools: { register: tool => tools.push(tool) },
-    workingDirectory: { ensure: async () => `${root}\\src` },
+    workingDirectory: { ensure: async agent => `${agent.session.header.cwd}\\src` },
     llm: { resolveCallConfig: async route => preflights.push(route) },
     subagents: {
       getProvider: () => provider,
@@ -100,9 +121,25 @@ function fixture(settings = config()) {
       }
     }
   };
+  const configuredPath = settings.projects?.[0]?.path;
+  const project = configuredPath && fs.existsSync(configuredPath) ? configuredPath : fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-dsh-dispatch-'));
+  ctx.sessions = { get: id => id === 'session-1' ? { header: { cwd: project } } : undefined };
+  settings.projects = [{ ...settings.projects?.[0], path: project, enabled: true }];
+  if (!configuredPath || !fs.existsSync(configuredPath)) {
+    loop.create(project, { goal: '测试派发', tasks: [
+      { id: 'task1', title: '实现', acceptance: ['完成'], review: 'none', ...(managedExecution ? { managed_execution: true } : {}), checks: [{ id: 'check1', command: 'node --version' }] },
+      { id: 'task2', title: '实现另一个任务', acceptance: ['完成'], review: 'none', checks: [{ id: 'check2', command: 'node --version' }] }
+    ] }, 'dispatch-run');
+    const stateFile = path.join(project, '.ai-loop', 'runs', 'dispatch-run', 'state.json');
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    state.tasks[0].phase = 'reviewing';
+    state.tasks[1].phase = 'reviewing';
+    if (managedExecution) state.tasks[0].attempts = { reviewer: 0, tester: 0 };
+    fs.writeFileSync(stateFile, JSON.stringify(state));
+  }
   apply(ctx, settings);
-  const parent = { id: 'parent', session: { header: { cwd: root } }, options: { provider: 'parent-provider', model: 'parent-model', reasoningEffort: 'low' } };
-  return { ctx, skills, contexts, tools, calls, pending, preflights, routes, connection, parent, run: (role = 'reviewer', extra = {}) => tools[0].execute({ role, description: '审查改动', prompt: '审查 src/main.mjs 正确性。' }, { agent: parent, signal: signal(), ...extra }) };
+  const parent = { id: 'parent', session: { header: { cwd: project } }, options: { provider: 'parent-provider', model: 'parent-model', reasoningEffort: 'low' } };
+  return { ctx, skills, contexts, tools, calls, pending, preflights, routes, connection, parent, project, run: (role = 'reviewer', extra = {}, attempt = 0, task = 'task1') => tools[0].execute({ role, run: 'dispatch-run', task, attempt, description: '审查改动', prompt: '审查 src/main.mjs 正确性。' }, { agent: parent, signal: signal(), ...extra }) };
 }
 
 test('DSH 技能与动态上下文仅提供必要恢复入口，不写入项目', () => {
@@ -112,7 +149,7 @@ test('DSH 技能与动态上下文仅提供必要恢复入口，不写入项目'
   assert.match(f.contexts[0].text({ agent: f.parent }), /此项目已启用/);
   f.parent.session.header.cwd = 'D:/unknown';
   assert.equal(f.contexts[0].text({ agent: f.parent }), '');
-  const file = fs.readFileSync(new URL('../plugins/dsh/index.mjs', import.meta.url), 'utf8');
+  const file = fs.readFileSync(new URL('../dsh/index.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(file, /writeFile|appendFile|mkdir|child_process|execFile|spawn\(/);
   assert.doesNotMatch(file, /ops_bash|callTool\(/);
 });
@@ -132,6 +169,21 @@ test('状态路由只允许精确启用项目并要求宿主请求校验', async
   res = response();
   await route.handler({ method: 'GET', url: '/plugins/ai-loop-engineering/state?project=D%3A%2FProjects%2Fexample' }, res);
   assert.equal(res.status, 401);
+});
+
+test('状态路由以公开 sessions.get 会话 cwd 为权威，不接受工作区错配', async () => {
+  const f = fixture();
+  const response = () => ({ status: 0, body: '', writeHead(code) { this.status = code; }, end(body) { this.body = body; } });
+  let res = response();
+  await f.routes[0].handler({ method: 'GET', url: `/plugins/ai-loop-engineering/state?session=session-1` }, res);
+  assert.equal(res.status, 200);
+  assert.equal(JSON.parse(res.body).project_root, f.project);
+  res = response();
+  await f.routes[0].handler({ method: 'GET', url: `/plugins/ai-loop-engineering/state?session=session-1&project=${encodeURIComponent(root)}` }, res);
+  assert.equal(res.status, 403);
+  res = response();
+  await f.routes[0].handler({ method: 'GET', url: '/plugins/ai-loop-engineering/state?session=unknown' }, res);
+  assert.equal(res.status, 400);
 });
 
 test('状态路由返回活动与历史运行供前端切换，工作区路径须精确启用', async () => {
@@ -166,20 +218,93 @@ test('DSH 独立评审使用原生 spawn、准确模型预检和原生生命周�
   assert.equal(spec.delivery, 'parent');
   assert.equal(spec.request.parent, f.parent);
   assert.equal(spec.request.maxDepth, 1);
-  assert.equal(spec.request.cwd, `${root}\\src`);
+  assert.equal(spec.request.cwd, `${f.project}\\src`);
   assert.match(spec.request.prompt[0].text, /这是叶角色任务/);
   assert.match(spec.request.prompt[0].text, /审批策略为 never/);
   assert.deepEqual(spec.request.agentOptions, { provider: 'deepseek', model: 'reasoner', reasoningEffort: 'high' });
+  await assert.rejects(f.run('reviewer', {}, 1), /即使 attempt 改变/);
   f.pending[0].resolve({ stopReason: 'completed' });
+});
+
+test('DSH 阶段或批次不匹配时在 spawn 前阻止派发', async () => {
+  const f = fixture(config({ roles: { tester: { provider: 'test-provider', model: 'test-model' } } }));
+  await assert.rejects(f.run('tester'), /不能在任务阶段 reviewing 派发/);
+  assert.equal(f.calls.length, 0);
+});
+
+test('模型预检后重验运行和 attempt，期间停止或批次变化不会启动子代理', async () => {
+  const stopped = fixture(config({ roles: { reviewer: { provider: 'p', model: 'm' } } }));
+  stopped.ctx.llm.resolveCallConfig = async () => {
+    const file = path.join(stopped.project, '.ai-loop', 'runs', 'dispatch-run', 'state.json');
+    const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    state.status = 'stopped';
+    fs.writeFileSync(file, JSON.stringify(state));
+  };
+  await assert.rejects(stopped.run(), /运行已关闭或停止/);
+  assert.equal(stopped.calls.length, 0);
+
+  const staleAttempt = fixture(config({ roles: { reviewer: { provider: 'p', model: 'm' } } }), { managedExecution: true });
+  const file = path.join(staleAttempt.project, '.ai-loop', 'runs', 'dispatch-run', 'state.json');
+  staleAttempt.ctx.llm.resolveCallConfig = async () => {
+    const current = JSON.parse(fs.readFileSync(file, 'utf8'));
+    current.tasks[0].attempts.reviewer = 1;
+    fs.writeFileSync(file, JSON.stringify(current));
+  };
+  await assert.rejects(staleAttempt.run(), /attempt 缺失或已过期/);
+  assert.equal(staleAttempt.calls.length, 0);
+
+  const duplicated = fixture(config({ roles: { reviewer: { provider: 'p', model: 'm' } } }));
+  duplicated.ctx.llm.resolveCallConfig = async () => recordActivity(duplicated.project, 'dispatch-run', {
+    id: 'preflight-child', task: 'task1', role: 'reviewer', attempt: 0, harness: 'DSH', state: 'requested', summary: '预检期间出现的持久执行者'
+  });
+  await assert.rejects(duplicated.run(), /预检期间核心代理台账出现非终态/);
+  assert.equal(duplicated.calls.length, 0);
+});
+
+test('DSH 插件重载后仍以核心非终态代理观察阻止重复派发', async () => {
+  const f = fixture();
+  recordActivity(f.project, 'dispatch-run', { id: 'old-agent', task: 'task1', role: 'reviewer', attempt: 0, harness: 'DSH', state: 'requested', summary: '等待核对' });
+  const activityFile = path.join(f.project, '.ai-loop', 'runs', 'dispatch-run', 'activity.json');
+  const data = JSON.parse(fs.readFileSync(activityFile, 'utf8'));
+  data.agents[0].updated_at = '2000-01-01T00:00:00.000Z';
+  fs.writeFileSync(activityFile, JSON.stringify(data));
+  await assert.rejects(f.run('reviewer', {}, 1), /核心代理台账中仍为非终态/);
+  assert.equal(f.calls.length, 0);
+});
+
+test('状态路由用同 native_id 的 live 状态覆盖旧观察，终态保留磁盘观察且不再显示待停止', async () => {
+  const settings = config();
+  const f = fixture(settings);
+  await f.run();
+  recordActivity(f.project, 'dispatch-run', { id: 'child-1', native_id: 'child-1', task: 'task1', role: 'reviewer', attempt: 0, harness: 'DSH', state: 'requested', summary: '原生派发记录' });
+  recordActivity(f.project, 'dispatch-run', { id: 'child-1', native_id: 'child-1', state: 'running', summary: '子代理运行中' });
+  const respond = async () => {
+    const res = { status: 0, body: '', writeHead(code) { this.status = code; }, end(body) { this.body = body; } };
+    await f.routes[0].handler({ method: 'GET', url: `/plugins/ai-loop-engineering/state?project=${encodeURIComponent(f.project)}&run=dispatch-run` }, res);
+    return JSON.parse(res.body).activity.agents;
+  };
+  let agents = await respond();
+  assert.equal(agents.length, 1);
+  assert.equal(agents[0].native_id, 'child-1');
+  assert.equal(agents[0].state, 'running');
+  settings.roles.reviewer = { enabled: false, provider: 'parent-provider', model: 'parent-model' };
+  f.pending[0].resolve({ stopReason: 'completed' });
+  await Promise.resolve(); await Promise.resolve();
+  agents = await respond();
+  assert.equal(agents.length, 1);
+  assert.equal(agents[0].state, 'completed');
+  assert.equal(agents[0].live, false);
+  assert.equal(agents[0].observation.state, 'running');
+  assert.notEqual(agents[0].state, 'waiting_to_stop');
 });
 
 test('DSH 并发覆盖启动中及运行中的activation，失败和取消后释放', async () => {
   const f = fixture(config({ maxConcurrent: 1 }));
   await f.run();
-  await assert.rejects(f.run(), /并发上限/);
+  await assert.rejects(f.run('reviewer', {}, 1, 'task2'), /并发上限/);
   f.pending[0].reject(new Error('child failed'));
   await Promise.resolve();
-  await f.run();
+  await f.run('reviewer', {}, 1);
   f.pending[1].resolve({ stopReason: 'completed' });
   await Promise.resolve();
   f.ctx.subagents.startActivation = async () => { throw new Error('startup failed'); };
@@ -207,7 +332,7 @@ test('DSH 路由改变不误继承父模型强度，后端预检竞态明确失�
   await f.run();
   assert.deepEqual(f.preflights, [{ provider: 'child', model: 'child-model' }]);
   f.pending[0].resolve({ stopReason: 'completed' });
-  const changed = fixture(config({ roles: { reviewer: { reasoningEffort: 'high' } } }));
+  const changed = fixture(config({ roles: { reviewer: { provider: 'parent-provider', model: 'parent-model', reasoningEffort: 'high' } } }));
   changed.ctx.llm.resolveCallConfig = async () => { changed.ctx.subagents.getProvider = () => ({}); };
   await assert.rejects(changed.run(), /后端.*发生变化/);
   assert.equal(changed.calls.length, 0);
@@ -219,7 +344,7 @@ test('DSH 项目并发包括尚未发布的子代理启动操作', async () => {
   f.ctx.subagents.startActivation = async () => new Promise(resolve => { start = resolve; });
   const first = f.run();
   await new Promise(resolve => setImmediate(resolve));
-  await assert.rejects(f.run(), /并发上限/);
+  await assert.rejects(f.run('reviewer', {}, 1, 'task2'), /并发上限/);
   start({ childId: 'starting-child', result: Promise.resolve({ stopReason: 'completed' }) });
   assert.match(await first, /starting-child/);
 });

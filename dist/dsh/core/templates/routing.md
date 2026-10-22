@@ -1,6 +1,6 @@
 ## 调度与上下文
 
-本工作流明确要求：已批准的 standard/full 任务使用原生 loop-* 子代理执行开发、验证和必要评审。主代理负责需求、计划、调度、难点定位、证据与最终验收；简单 lite 任务可直接处理，不为每个机械步骤启动代理。子代理不得继续派发。最多同时运行配置中的并发数；同一工作区开发、测试与评审按依赖串行，只读研究可安全并行。
+本工作流明确要求：已批准的 standard/full 任务只使用用户已开启的原生 loop-* 子代理；新配置默认关闭，关闭角色由主代理完成必要工作，独立评审不可执行时保留待复核。主代理负责需求、计划、调度、难点定位、证据与最终验收；简单 lite 任务可直接处理，不为每个机械步骤启动代理。子代理不得继续派发。最多同时运行配置中的并发数；同一工作区开发、测试与评审按依赖串行，只读研究可安全并行。
 
 启用分工时同时生成原生 ai-loop 技能：Codex `.agents/skills/ai-loop/SKILL.md`，Claude Code `.claude/skills/ai-loop/SKILL.md`。该技能明确请求原生委派，避免仅列出角色却没有调用要求。新会话可显式调用 Codex `$ai-loop` 或 Claude Code `/ai-loop`；也可直接要求“使用原生子代理按 AI Loop 工作流完成任务”。
 
@@ -10,7 +10,7 @@
 
 ## 用户选择与中途切换
 
-安装前展示 main/planner/reviewer/dev/tester/scribe 各自模型、强度与并发数，询问使用预设还是逐项自定义。不能把推荐值说成已确认值。可用本部署 `models.mjs configure` 的逐项问答，或由 AI 收集选择后提供 JSON；非交互调用必须明确给 preset/input。
+新配置的五个子代理默认关闭；用户开启后选择模型和强度。显式 balanced 预设仍启用角色。set 支持 --enabled false 或 --model off，off 不作为真实模型；项目显式关闭优先，主会话由宿主选择器控制。不能把推荐值说成已确认值。可用本部署 `models.mjs configure` 的逐项问答，或由 AI 收集选择后提供 JSON；非交互调用必须明确给 preset/input。
 
 用户可随时说“把开发代理换成 MODEL，思考强度 high”。主代理执行 `models.mjs set --project ROOT --harness HARNESS --role dev --model MODEL --effort high` 预演，按已有授权加 `--apply`。支持 main 及五个子角色；`--effort inherit` 省略强度（Codex main 必须明确）。模型支持的强度、账户可用模型须在当前客户端核对，配置校验不证明可调用。
 

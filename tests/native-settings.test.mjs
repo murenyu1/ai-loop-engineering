@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createSettingsManager } from '../plugins/codex/scripts/native-settings.mjs';
+import { createSettingsManager } from '../codex/scripts/native-settings.mjs';
 import { balanced } from '../scripts/routing.mjs';
-import { configureProfile, resetProjectProfile, resolveProfile } from '../plugins/codex/scripts/profiles.mjs';
-import { listWorkspaces } from '../scripts/workspaces.mjs';
+import { configureProfile, resetProjectProfile, resolveProfile } from '../codex/scripts/profiles.mjs';
+import { listWorkspaces, setWorkspaceEnabled, workspaceEntry, restoreWorkspaceEntry } from '../scripts/workspaces.mjs';
 import { link } from './support.mjs';
 
 const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-native-settings-'));
@@ -37,9 +37,12 @@ test('原生读取返回schema、当前值和动作布局，构造阶段不探�
   const result = await manager.read();
   assert.equal(calls, 1);
   assert.equal(result.schema.properties['model.dev'].type, 'string');
-  assert.deepEqual(result.schema.properties['model.dev'].enum, ['gpt-6.1-sol', 'gpt-6-luna']);
-  assert.equal(result.values['model.dev'], 'gpt-6-luna');
+  assert.deepEqual(result.schema.properties['model.dev'].enum, ['关闭', 'gpt-6.1-sol', 'gpt-6-luna']);
+  assert.equal(result.values['model.dev'], '关闭', '无配置时角色默认关闭');
   assert.ok(result.layout.some(group => group.items.some(item => item.tool === 'ai_loop.settings.apply')));
+  assert.ok(result.layout.every(group => !group.items.some(item => item.tool === 'ai_loop.workspace.toggle')), '工作区不再显示独立应用按钮');
+  assert.equal(result.schema.properties['model.planner'].enum[0], '关闭');
+  assert.equal(result.schema.properties['model.reviewer'].enum[0], '关闭');
   assert.equal(fs.existsSync(path.join(home, 'ai-loop')), false, 'read 不应创建持久化目录');
 });
 
@@ -96,7 +99,7 @@ test('范围中文显示，切换工作区默认项目；明确选择全局时�
   await manager.update({ 'model.dev': 'gpt-6.1-sol' });
   await manager.update({ workspace_root: a });
   assert.equal(manager.getSelection().scope, 'project');
-  assert.equal((await manager.read()).values['model.dev'], 'gpt-6-luna', '全局草稿不带入项目');
+  assert.equal((await manager.read()).values['model.dev'], '关闭', '全局草稿不带入项目，未配置时默认关闭');
   await manager.update({ scope: '全局默认' });
   await manager.update({ workspace_root: a });
   assert.equal((await manager.read()).values.scope, '全局默认', '相同工作区刷新不重置显式范围');
@@ -308,7 +311,7 @@ test('project切换不会把A的模型草稿带到B，切回A仍保留A草稿', 
   await manager.update({ scope: 'project', 'model.dev': 'gpt-6.1-sol' });
   await selectWorkspace(manager, home, projectB);
   assert.equal(manager.getSelection().selectedRoot, fs.realpathSync(projectB));
-  assert.equal((await manager.read()).values['model.dev'], 'gpt-6-luna', 'B沿用global/default，没有继承A草稿');
+  assert.equal((await manager.read()).values['model.dev'], '关闭', '未配置的B默认关闭，没有继承A草稿');
   await manager.update({ workspace_root: fs.realpathSync(projectA) });
   assert.equal((await manager.read()).values['model.dev'], 'gpt-6.1-sol', 'A草稿仍绑定A');
 });
@@ -318,7 +321,7 @@ test('project scope 可显式应用并安全恢复到全局继承', async t => {
   const manager = createSettingsManager({ home, project, modelsProvider: modelList });
   t.after(() => { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(project, { recursive: true, force: true }); });
   await selectWorkspace(manager, home, project);
-  await manager.update({ scope: 'global' });
+  await manager.update({ scope: 'global', 'model.dev': 'gpt-6-luna' });
   await manager.action('ai_loop.settings.apply');
   await manager.update({ scope: 'project', 'model.dev': 'gpt-6.1-sol' });
   await manager.action('ai_loop.settings.apply');
@@ -328,6 +331,53 @@ test('project scope 可显式应用并安全恢复到全局继承', async t => {
   assert.equal(resolveProfile(project, { home, scope: 'project' }).profile, null);
   assert.equal(resolveProfile(project, { home }).scope, 'global');
   assert.deepEqual(listWorkspaces(home), [], '保存模型和恢复继承不登记或启用工作区');
+});
+
+test('恢复项目配置后开关草稿仍拒绝外部revision变化', async t => {
+  for (const hasProjectOverride of [false, true]) {
+    const home = temp(), project = temp();
+    t.after(() => { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(project, { recursive: true, force: true }); });
+    const global = balanced('codex'); global.roles.dev.model = 'gpt-6-luna';
+    configureProfile(project, global, { home, scope: 'global', apply: true });
+    if (hasProjectOverride) {
+      const local = balanced('codex'); local.roles.dev.model = 'gpt-6.1-sol';
+      configureProfile(project, local, { home, scope: 'project', apply: true });
+    }
+    const manager = createSettingsManager({ home, modelsProvider: modelList });
+    await selectWorkspace(manager, home, project);
+    setWorkspaceEnabled(home, project, false, { create: true, revision: 'initial' });
+    await manager.read();
+    await manager.update({ workspace_enabled: true });
+    setWorkspaceEnabled(home, project, false, { revision: 'external' });
+
+    manager.action('ai_loop.settings.reset_project');
+    await manager.read();
+    await assert.rejects(manager.action('ai_loop.settings.apply'), /工作区开关在编辑期间变化/);
+    assert.equal(workspaceEntry(home, project).enabled, false);
+    assert.equal(workspaceEntry(home, project).revision, 'external');
+    assert.equal(Boolean(resolveProfile(project, { home, scope: 'project' }).profile), false);
+  }
+});
+
+test('恢复项目配置后没有开关草稿时可读取新基线并新建保存', async t => {
+  const home = temp(), project = temp();
+  t.after(() => { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(project, { recursive: true, force: true }); });
+  const local = balanced('codex'); local.roles.dev.model = 'gpt-6.1-sol';
+  configureProfile(project, local, { home, scope: 'project', apply: true });
+  const manager = createSettingsManager({ home, modelsProvider: modelList });
+  await selectWorkspace(manager, home, project);
+  setWorkspaceEnabled(home, project, false, { create: true, revision: 'initial' });
+  await manager.read();
+  await manager.update({ 'model.dev': 'gpt-6-luna' });
+
+  manager.action('ai_loop.settings.reset_project');
+  setWorkspaceEnabled(home, project, false, { revision: 'external' });
+  assert.equal((await manager.read()).values.workspace_enabled, false);
+  await manager.update({ workspace_enabled: true });
+
+  await manager.action('ai_loop.settings.apply');
+  assert.equal(workspaceEntry(home, project).enabled, true);
+  assert.equal(resolveProfile(project, { home, scope: 'project' }).profile, null);
 });
 
 test('损坏全局fallback时恢复项目默认失败且项目配置保持原样', t => {
@@ -361,16 +411,181 @@ test('有项目模型草稿时，全局继承变化仍拒绝覆盖', async t => 
   assert.equal(resolveProfile(project, { home, scope: 'project' }).profile, null);
 });
 
-test('模型保存保留独立的开关草稿，模型应用本身不会启用工作区', async t => {
+test('全局模型和并发草稿迁移到其他工作区时保留来源基线', async t => {
+  for (const field of ['model.dev', 'concurrency']) {
+    const home = temp(), first = temp(), second = temp();
+    t.after(() => { for (const root of [home, first, second]) fs.rmSync(root, { recursive: true, force: true }); });
+    const initial = balanced('codex'); initial.roles.dev.model = 'gpt-6-luna';
+    configureProfile(first, initial, { home, scope: 'global', apply: true });
+    const manager = createSettingsManager({ home, modelsProvider: modelList });
+    await selectWorkspace(manager, home, first);
+    addCodexProject(home, second, '目标工作区');
+    await manager.update({ scope: 'global' });
+    await manager.read();
+    await manager.update({ [field]: field === 'model.dev' ? 'gpt-6.1-sol' : 4 });
+
+    const external = balanced('codex');
+    external.roles.dev.model = 'gpt-6-luna';
+    external.concurrency = 5;
+    configureProfile(first, external, { home, scope: 'global', apply: true });
+    await manager.update({ workspace_root: second, scope: 'global' });
+
+    await assert.rejects(manager.action('ai_loop.settings.apply'), /配置在编辑期间发生变化/, `${field} 草稿迁移后须保留原模型基线`);
+    const saved = resolveProfile(second, { home, scope: 'global' }).profile;
+    assert.equal(saved.roles.dev.model, 'gpt-6-luna');
+    assert.equal(saved.concurrency, 5);
+  }
+});
+
+test('没有外部变化时迁移全局草稿仍可保存', async t => {
+  const home = temp(), first = temp(), second = temp();
+  t.after(() => { for (const root of [home, first, second]) fs.rmSync(root, { recursive: true, force: true }); });
+  const initial = balanced('codex'); initial.roles.dev.model = 'gpt-6-luna';
+  configureProfile(first, initial, { home, scope: 'global', apply: true });
+  const manager = createSettingsManager({ home, modelsProvider: modelList });
+  await selectWorkspace(manager, home, first);
+  addCodexProject(home, second, '目标工作区');
+  await manager.update({ scope: 'global' });
+  await manager.update({ concurrency: 4 });
+  await manager.update({ workspace_root: second, scope: 'global' });
+
+  await manager.action('ai_loop.settings.apply');
+  assert.equal(resolveProfile(second, { home, scope: 'global' }).profile.concurrency, 4);
+});
+
+test('全局草稿迁移保留目标工作区开关基线', async t => {
+  const home = temp(), first = temp(), second = temp();
+  t.after(() => { for (const root of [home, first, second]) fs.rmSync(root, { recursive: true, force: true }); });
+  const manager = createSettingsManager({ home, modelsProvider: modelList });
+  await selectWorkspace(manager, home, first);
+  addCodexProject(home, second, '目标工作区');
+  setWorkspaceEnabled(home, first, false, { create: true, revision: 'first' });
+  setWorkspaceEnabled(home, second, false, { create: true, revision: 'second' });
+  await manager.update({ scope: 'global' });
+  await manager.update({ workspace_enabled: true });
+  await manager.update({ workspace_root: second, scope: 'global' });
+  await manager.update({ workspace_enabled: true });
+  await manager.update({ workspace_root: first, scope: 'global' });
+  await manager.update({ concurrency: 4 });
+
+  await manager.update({ workspace_root: second, scope: 'global' });
+  setWorkspaceEnabled(home, second, false, { revision: 'external-second' });
+  await assert.rejects(manager.action('ai_loop.settings.apply'), /工作区开关在编辑期间变化/);
+  assert.equal(workspaceEntry(home, second).revision, 'external-second');
+  assert.equal(workspaceEntry(home, second).enabled, false);
+});
+
+test('全局迁移遇到目标模型草稿时保留目标草稿和基线', async t => {
+  const home = temp(), first = temp(), second = temp();
+  t.after(() => { for (const root of [home, first, second]) fs.rmSync(root, { recursive: true, force: true }); });
+  const initial = balanced('codex'); initial.roles.dev.model = 'gpt-6-luna';
+  configureProfile(first, initial, { home, scope: 'global', apply: true });
+  const manager = createSettingsManager({ home, modelsProvider: modelList });
+  await selectWorkspace(manager, home, second);
+  addCodexProject(home, first, '来源工作区');
+  await manager.update({ scope: 'global', 'model.dev': 'gpt-6.1-sol' });
+  await manager.update({ workspace_root: first, scope: 'global' });
+  await manager.update({ concurrency: 4 });
+  await manager.update({ workspace_root: second, scope: 'global' });
+
+  const view = await manager.read();
+  assert.equal(view.values['model.dev'], 'gpt-6.1-sol', '目标模型草稿保留');
+  assert.equal(view.values.concurrency, initial.concurrency, '来源并发草稿不混入已有目标模型草稿');
+  await manager.action('ai_loop.settings.apply');
+  const saved = resolveProfile(second, { home, scope: 'global' }).profile;
+  assert.equal(saved.roles.dev.model, 'gpt-6.1-sol');
+  assert.equal(saved.concurrency, initial.concurrency);
+});
+
+test('外部模型配置变化后读取刷新模型基线，仅保存工作区开关成功', async t => {
+  const home = temp(), project = temp();
+  t.after(() => { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(project, { recursive: true, force: true }); });
+  const manager = createSettingsManager({ home, modelsProvider: modelList });
+  await selectWorkspace(manager, home, project);
+  await manager.read();
+
+  const external = balanced('codex');
+  external.concurrency = 5;
+  configureProfile(project, external, { home, scope: 'global', apply: true });
+  await manager.read();
+  await manager.update({ workspace_enabled: true });
+
+  const applied = await manager.action('ai_loop.settings.apply');
+  assert.equal(applied.status, 'unchanged');
+  assert.deepEqual(listWorkspaces(home).map(item => [item.root, item.enabled]), [[fs.realpathSync(project), true]]);
+});
+
+test('工作区开关草稿跨范围和工作区切换仍检测revision变化', async t => {
+  for (const departure of ['scope', 'workspace']) {
+    const home = temp(), project = temp(), other = temp();
+    t.after(() => { for (const root of [home, project, other]) fs.rmSync(root, { recursive: true, force: true }); });
+    const manager = createSettingsManager({ home, modelsProvider: modelList });
+    await selectWorkspace(manager, home, project);
+    addCodexProject(home, other, '另一个项目');
+    setWorkspaceEnabled(home, project, false, { create: true, revision: 'initial' });
+    await manager.read();
+    await manager.update({ workspace_enabled: true });
+
+    if (departure === 'scope') await manager.update({ scope: 'global' });
+    else await manager.update({ workspace_root: other });
+
+    const external = balanced('codex');
+    external.concurrency = 5;
+    configureProfile(project, external, { home, scope: 'global', apply: true });
+    setWorkspaceEnabled(home, project, false, { revision: 'external' });
+    await manager.read();
+
+    if (departure === 'scope') await manager.update({ scope: 'project' });
+    else await manager.update({ workspace_root: project });
+
+    await assert.rejects(manager.action('ai_loop.settings.apply'), /工作区开关在编辑期间变化/, `${departure}切换返回后仍须发现开关revision变化`);
+    assert.deepEqual(listWorkspaces(home).map(item => [item.root, item.enabled]), [[fs.realpathSync(project), false]]);
+    assert.equal(workspaceEntry(home, project).revision, 'external', '拒绝保存后保留外部revision');
+  }
+});
+
+test('无工作区草稿时读取外部开关后新草稿使用最新基线', async t => {
+  const home = temp(), project = temp();
+  t.after(() => { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(project, { recursive: true, force: true }); });
+  const manager = createSettingsManager({ home, modelsProvider: modelList });
+  await selectWorkspace(manager, home, project);
+  setWorkspaceEnabled(home, project, false, { create: true, revision: 'initial' });
+  await manager.read();
+
+  setWorkspaceEnabled(home, project, false, { revision: 'external' });
+  assert.equal((await manager.read()).values.workspace_enabled, false);
+  await manager.update({ workspace_enabled: true });
+
+  const applied = await manager.action('ai_loop.settings.apply');
+  assert.equal(applied.status, 'unchanged');
+  assert.equal(workspaceEntry(home, project).enabled, true);
+});
+
+test('统一应用同时保存工作区开关，关闭或开启都不需要无故查询模型', async t => {
   const home = temp(), project = temp();
   t.after(() => { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(project, { recursive: true, force: true }); });
   const manager = createSettingsManager({ home, modelsProvider: modelList });
   await selectWorkspace(manager, home, project);
   await manager.update({ scope: 'project', workspace_enabled: true });
   await manager.action('ai_loop.settings.apply');
-  assert.deepEqual(listWorkspaces(home), []);
-  assert.equal((await manager.read()).values.workspace_enabled, true, '保留尚未应用的开关草稿');
-  assert.equal(manager.action('ai_loop.workspace.toggle').enabled, true);
+  assert.deepEqual(listWorkspaces(home).map(item => [item.root, item.enabled]), [[fs.realpathSync(project), true]]);
+  assert.equal((await manager.read()).values.workspace_enabled, true, '统一应用后刷新到已保存开关');
+  setWorkspaceEnabled(home, project, false);
+  assert.equal((await manager.read()).values.workspace_enabled, false, '已保存开关草稿不遮盖后续外部变更');
+  await manager.update({ concurrency: 2 });
+  await manager.action('ai_loop.settings.apply');
+  assert.equal(listWorkspaces(home)[0].enabled, false, '仅保存模型或并发不覆写外部开关');
+  assert.equal(manager.action('ai_loop.workspace.toggle').enabled, false);
+});
+test('工作区回滚仅允许撤销自己的写入，外部变更保留', t => {
+  const home = temp(), project = temp();
+  t.after(() => { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(project, { recursive: true, force: true }); });
+  setWorkspaceEnabled(home, project, false, { create: true });
+  const previous = workspaceEntry(home, project);
+  setWorkspaceEnabled(home, project, true, { revision: 'own-write' });
+  setWorkspaceEnabled(home, project, false);
+  assert.throws(() => restoreWorkspaceEntry(home, project, previous, { expectedRevision: 'own-write', expectedEnabled: true }), /其他进程|外部修改/);
+  assert.equal(workspaceEntry(home, project).enabled, false);
 });
 
 test('探测子进程模式不查询模型、不允许任何配置写入', async t => {

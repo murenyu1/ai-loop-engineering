@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { VERSION, BUNDLE, assert, validId, inside, rootPath, safePath, jsonFile, atomicWrite, writeJson, locked, args, allowArgs, mainModule, printResult } from './lib.mjs';
+import { validateRoles } from './roles.mjs';
 
 const now = () => new Date().toISOString();
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
@@ -63,7 +64,7 @@ export function validateSpec(input) {
     assert(nonempty(prefix) && !path.isAbsolute(prefix) && !prefix.includes('\\') && !prefix.split('/').some(part => !part || part === '.' || part === '..'), '排除项须为规范的项目内相对路径');
     assert(prefix !== '.git' && prefix !== '.ai-loop', '工具已经排除元数据目录，无须再次声明');
   }
-  return { goal: input.goal, tasks: input.tasks, max_fixes: maxFixes, ignore_paths: ignore };
+  return { goal: input.goal, tasks: input.tasks, max_fixes: maxFixes, ignore_paths: ignore, ...(input.role_policy !== undefined ? { role_policy: validateRoles(input.role_policy) } : {}) };
 }
 
 export function snapshot(project, ignore = [], bundle = BUNDLE) {
@@ -137,10 +138,12 @@ function compareVersions(left, right) {
 function load(root, run) {
   const files = paths(root, run);
   const state = jsonFile(files.state);
-  assert([1, 2].includes(state.schema_version) && state.run_id === run && Array.isArray(state.tasks), '运行状态格式错误');
+  assert([1, 2, 3].includes(state.schema_version) && state.run_id === run && Array.isArray(state.tasks), '运行状态格式错误');
   const versionOrder = compareVersions(state.version, VERSION);
   assert(versionOrder !== null && versionOrder <= 0, '运行由较新核心创建；请先升级当前核心');
   const spec = validateSpec(jsonFile(files.spec));
+  if (spec.role_policy) assert(state.schema_version === 3, '角色关闭策略须使用 schema 3，禁止旧核心忽略策略');
+  if (state.schema_version === 3) assert(spec.role_policy && compareVersions(state.version, '4.5.0') >= 0, 'schema 3 角色策略或核心版本不匹配');
   if (state.schema_version === 2) assert(compareVersions(state.version, '4.4.0') >= 0, 'schema 2 运行版本不匹配');
   assert(state.spec_hash === crypto.createHash('sha256').update(JSON.stringify(spec)).digest('hex'), '运行方案已被直接改写；先批准新方案并创建新运行');
   assert(state.max_fixes === spec.max_fixes && state.goal === spec.goal && state.tasks.length === spec.tasks.length, '状态与批准方案不一致');
@@ -186,7 +189,7 @@ function mutable(root, run, action) {
   return locked(root, `run-${validId(run)}`, () => {
     const loaded = load(root, run);
     assert(loaded.state.status === 'active', '运行已完成或已停止；不能继续修改状态');
-    assert(loaded.state.schema_version === 2 || compareVersions(loaded.state.version, '4.4.0') < 0 &&
+    assert([2, 3].includes(loaded.state.schema_version) || compareVersions(loaded.state.version, '4.4.0') < 0 &&
       !loaded.spec.tasks.some(task => ['owner', 'in_scope', 'out_of_scope', 'managed_execution'].some(field => Object.hasOwn(task, field))) &&
       !loaded.state.tasks.some(task => task.phase === 'developed' || Object.hasOwn(task, 'attempts')),
     'schema 1 运行须先迁移才能由当前核心写入');
@@ -272,7 +275,7 @@ export function create(project, input, requestedId) {
     const revision = snapshot(root, spec.ignore_paths);
     fs.mkdirSync(safePath(root, `.ai-loop/runs/${run}/reports`), { recursive: true });
     fs.mkdirSync(safePath(root, `.ai-loop/runs/${run}/mailbox`), { recursive: true });
-    const state = { schema_version: 2, version: VERSION, run_id: run, goal: spec.goal, status: 'active', created_at: now(), updated_at: now(), event_seq: 0,
+    const state = { schema_version: spec.role_policy ? 3 : 2, version: VERSION, run_id: run, goal: spec.goal, status: 'active', created_at: now(), updated_at: now(), event_seq: 0,
       spec_hash: crypto.createHash('sha256').update(JSON.stringify(spec)).digest('hex'), max_fixes: spec.max_fixes, base_revision: revision,
       tasks: spec.tasks.map(task => ({ id: task.id, title: task.title, review: task.review, phase: 'pending', fixes: 0, verification: null, assessment: null, reason: null })) };
     writeJson(files.spec, spec);
@@ -319,7 +322,7 @@ export function begin(project, run, id, phase) {
 export function finish(project, run, id) {
   const root = rootPath(project);
   return mutable(root, run, ({ files, state, spec }) => {
-    assert(state.schema_version === 2, 'schema 1 运行须先显式迁移，再使用 developed 阶段');
+    assert([2, 3].includes(state.schema_version), 'schema 1 运行须先显式迁移，再使用 developed 阶段');
     const task = taskOf(state, id);
     assert(task.phase === 'developing', 'finish 仅适用于正在开发的任务');
     task.phase = 'developed';
