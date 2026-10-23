@@ -1,0 +1,5 @@
+packages:
+  - 'dsh'
+  - 'codex'
+  - 'cursor'
+  - 'claudecode'

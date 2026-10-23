@@ -1,0 +1,21 @@
+这是用户授权的 AI Loop 4.6.2 完整流程验收。请在当前“插件开发”工作区执行一个隔离测试任务，不修改 ai-loop-engineering 产品源码、个人配置、模型或权限，不提交、不发布。遇到任何 deny 立即停止，不换方式绕过。
+
+工作区根：D:/Projects/插件开发
+唯一验收目录：D:/Projects/插件开发/.validation/dsh-e2e-462
+运行记录：工作区根 .ai-loop/runs/dsh-full-cycle-20261023
+run_id：dsh-full-cycle-20261023
+project_path：.validation/dsh-e2e-462
+snapshot_paths：[".validation/dsh-e2e-462"]
+本次为新的隔离验收任务，不是重新开启三版本源码修复，也不增加其已用完的 3/3 修复预算。
+
+用户已批准以下方案：在唯一验收目录实现 percent.mjs 和 percent.test.mjs 两个文件。percent.mjs 导出 boundedPercent(value)：仅接受有限 number，返回限制在闭区间 [0,100] 的数；其他类型、NaN、Infinity、-Infinity 抛 TypeError。测试至少覆盖负数、0、区间内小数、100、大于100，以及上述非法输入。使用 Node.js 自带 node:test/assert，不下载依赖。
+必需检查命令（从工作区根执行）：node --test .validation/dsh-e2e-462/percent.test.mjs
+
+执行要求：
+1. 读取当前已安装 DSH 插件的 ai-loop 技能与协议，检查已有 run_id，禁止覆盖旧记录或重复派发未确认终止的执行者。若目录或 run 已存在，先核对内容与运行状态，有冲突就报告，不覆盖。确认 Node 可用；不可用直接 BLOCKED，不安装运行时。
+2. 必须真实使用 ai_loop_prepare → 获准原生工具保存 requested（含本次 revision）→ ai_loop_delegate → ai_loop_observe → 获准原生工具持久化 running、不同父子上下文和终态证据。严格使用该工作区当前已开启且可用的原角色模型，不切模型或用角色扮演代替。插件宿主不能直接写项目；项目操作通过正常原生工具及现有沙箱进行。
+3. 顺序真实派发 planner、dev、tester、reviewer、scribe 五个叶子角色，每个至少一次。任务包给出完整绝对路径、批准范围、角色、run/task、当前 attempt/revision。子代理不得再派发。planner 只规划验收，dev 只修改上面两个文件，tester 不改源码或测试，reviewer 只读独立评审，scribe 仅整理本运行记录，不改状态文件或计数。
+4. 创建核心运行时声明 managed_execution=true、review=independent、execution_evidence=required、上述 project_path/snapshot_paths 和必需检查命令。先进入 development，再派 dev；dev 停止写入后进入 verification，真实 tester 亲自执行必需命令，保存真实退出码及原始日志，前后核对完整 revision，提交带当前 attempt/execution_id 的报告。只有 PASS 才进入 review，再真实派 reviewer；只有 APPROVED 才继续。失败不得跳过或伪造通过；隔离任务最多修复一次，仍失败就停止报告。
+5. 真实 scribe 整理调用链、五个原生 childId、执行证据文件、命令、退出码、评审结果、实际可观察的模型/强度。实际模型不可观察就标 unverified，不用配置名或自述认证。子代理 completed 只代表结束，不代表任务 PASS。
+6. 若要把本隔离运行标记 complete，必须另行执行 task=final、attempt=当时 event_seq 的真实独立 tester 与 reviewer，并保存证据；任务报告不能冒充最终整体报告。若缺少这些证据，保留 active/待验收并说明。不要手改 state.json 或重置计数。
+7. 最终回复中文并先称呼“主人”，列出各阶段真实 ID、实际状态、运行路径、两文件路径、测试结果、独立评审结论、final 是否真正完成及未验证项。任何工具/权限/模型故障都保留原文与证据，不盲目重试。不要修改工作区开关、settings.json、信任或插件安装。
