@@ -4,11 +4,11 @@
   "files": [
     {
       "path": "client.js",
-      "hash": "38ce03bb534ca703bb975bb628503dc9bf2c734576ba217efc53e9e48298f566"
+      "hash": "9b44d41cec964dd9d3707da823b0f93bce696ee285df7764129f155c22e6a42a"
     },
     {
       "path": "config.mjs",
-      "hash": "47acd1d7f927b3862141cdc7d7c7208dbfe4b5683bb0fbea3522c7078cab2e85"
+      "hash": "a19d58cfe01f0cea7284d4f9c61ba7a028d32fe5e0f361a33784aa84f2d6f6da"
     },
     {
       "path": "cordis.patch.yml",
@@ -48,7 +48,7 @@
     },
     {
       "path": "core/scripts/activity.mjs",
-      "hash": "237222c5bb2850db0798ad65333f37bd5bee0f91fe8628e4804cffe7c8ed350a"
+      "hash": "03aa240baf8dcddeab3187dd184b5967c85f8c0f7faad432f269842ba42cf402"
     },
     {
       "path": "core/scripts/execution.mjs",
@@ -96,7 +96,7 @@
     },
     {
       "path": "index.mjs",
-      "hash": "cbcfac34c62e7c7d2c1319f1258cac924a818ffce1c0441d80ce9ced8378536c"
+      "hash": "a62d04feae8e962791c8133f3980ba45503aacb5ac90085e9295a35794e74624"
     },
     {
       "path": "package.json",

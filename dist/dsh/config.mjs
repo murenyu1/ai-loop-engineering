@@ -18,12 +18,12 @@ export function createConfig(z) {
     enabled: z.boolean().default(false).volatile(),
     schemaVersion: z.number().step(1).min(2).max(2).volatile(),
     workflowEnabled: z.boolean().volatile(),
-    maxConcurrent: z.number().step(1).min(1).max(16).default(3).volatile(),
+    maxConcurrent: z.number().step(1).min(1).max(32).default(6).volatile(),
     roles: roles().default({}).volatile(),
     projects: z.array(z.object({
       path: z.string().pattern(/^(?:[a-z]:[\\/]|\\\\[^\\]+\\[^\\]+|\/)/i).required(),
       enabled: z.boolean().default(false),
-      maxConcurrent: z.number().step(1).min(1).max(16),
+      maxConcurrent: z.number().step(1).min(1).max(32),
       roles: roles().default(undefined)
     })).default([]).volatile()
   });
@@ -85,8 +85,8 @@ export function projectSettings(config, root) {
   const matches = projects.filter(item => key && projectKey(item.path) === key);
   if (matches.length > 1) throw new Error('AI Loop 项目配置重复，请保留同一路径的一条设置。');
   const project = matches[0];
-  const maxConcurrent = project?.maxConcurrent ?? valueOf(config.maxConcurrent) ?? 3;
-  if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 16) throw new Error('AI Loop 并发数必须是 1 到 16 的整数。');
+  const maxConcurrent = project?.maxConcurrent ?? valueOf(config.maxConcurrent) ?? 6;
+  if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 32) throw new Error('AI Loop 并发数必须是 1 到 32 的整数。');
   const globalRoles = valueOf(config.roles) ?? {};
   const settings = {
     enabled: (schemaVersion === 2 ? valueOf(config.workflowEnabled) === true && valueOf(config.enabled) === false : valueOf(config.enabled) === true) && project?.enabled === true,

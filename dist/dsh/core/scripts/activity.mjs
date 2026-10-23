@@ -11,7 +11,8 @@ export function dispatchCheck(project, run, taskId, role, attempt) {
   const root = rootPath(project), current = status(root, validId(run));
   assert(current.status === 'active', '运行已关闭或停止，不能派发');
   assert(ROLE_NAMES.includes(role), '未知子代理角色');
-  const task = taskId === 'final' && ['tester', 'reviewer'].includes(role) && current.tasks.every(item => item.phase === 'done') ? { id: 'final', phase: role === 'reviewer' ? 'reviewing' : 'verifying', managed_execution: true, attempts: { tester: current.event_seq, reviewer: current.event_seq } } : current.tasks.find(item => item.id === taskId);
+  const baseTaskId = typeof taskId === 'string' && taskId.includes('#') ? taskId.split('#')[0] : taskId;
+  const task = baseTaskId === 'final' && ['tester', 'reviewer'].includes(role) && current.tasks.every(item => item.phase === 'done') ? { id: 'final', phase: role === 'reviewer' ? 'reviewing' : 'verifying', managed_execution: true, attempts: { tester: current.event_seq, reviewer: current.event_seq } } : current.tasks.find(item => item.id === baseTaskId);
   assert(task, '任务不属于当前运行');
   const spec = jsonFile(safePath(root, `.ai-loop/runs/${run}/spec.json`));
   if (spec.role_policy) assert(roleEnabled(spec.role_policy[role]), `角色 ${role} 已关闭，禁止派发`);
@@ -36,7 +37,7 @@ function legacyAgents(root, run) {
 }
 export function recordActivity(project, run, input) {
   const root = rootPath(project);
-  assert(input && Object.keys(input).every(key => ['id', 'task', 'role', 'attempt', 'harness', 'native_id', 'session_id', 'state', 'requested', 'observed_model', 'observed_effort', 'usage', 'source', 'summary', 'context', 'revision', 'evidence'].includes(key)), '代理观察字段无效');
+  assert(input && Object.keys(input).every(key => ['id', 'task', 'direction', 'role', 'attempt', 'harness', 'native_id', 'session_id', 'state', 'requested', 'observed_model', 'observed_effort', 'usage', 'source', 'summary', 'context', 'revision', 'evidence'].includes(key)), '代理观察字段无效');
   validId(input.id);
   assert(states.includes(input.state) && text(input.summary), '代理状态或摘要无效');
   return locked(root, `run-${validId(run)}`, () => {
@@ -49,12 +50,12 @@ export function recordActivity(project, run, input) {
       assert(input.state === 'requested', '首次观察须为 requested');
       dispatchCheck(root, run, input.task, input.role, input.attempt);
       assert(text(input.harness), '须提供宿主名称');
-      assert(![...data.agents, ...legacyAgents(root, run)].some(row => row.task === input.task && row.role === input.role && !terminal.has(row.state)), '同任务同角色已有未确认停止的执行者');
-      item = { id: input.id, run_id: run, task: input.task, role: input.role, attempt: input.attempt ?? null, harness: input.harness, state: 'requested', native_id: null, requested: input.requested ?? null, started_at: at, history: [] };
+      assert(![...data.agents, ...legacyAgents(root, run)].some(row => row.task === input.task && (row.direction || '') === (input.direction || '') && row.role === input.role && !terminal.has(row.state)), '同任务同方向同角色已有未确认停止的执行者');
+      item = { id: input.id, run_id: run, task: input.task, direction: input.direction ?? null, role: input.role, attempt: input.attempt ?? null, harness: input.harness, state: 'requested', native_id: null, requested: input.requested ?? null, started_at: at, history: [] };
       data.agents.push(item);
     } else {
       assert(!terminal.has(item.state) && input.state !== 'requested', '终态不能恢复或重复派发，请创建新观察');
-      for (const key of ['task', 'role', 'attempt', 'harness']) assert(input[key] === undefined || input[key] === item[key], '不能改变执行者身份或批次');
+      for (const key of ['task', 'direction', 'role', 'attempt', 'harness']) assert(input[key] === undefined || input[key] === item[key], '不能改变执行者身份或批次');
     }
     if (input.native_id !== undefined) { assert(text(input.native_id) && (!item.native_id || item.native_id === input.native_id), '真实代理 ID 不能缺失或变化'); item.native_id = input.native_id; }
     if (input.context !== undefined) {

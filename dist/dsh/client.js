@@ -16,7 +16,11 @@ window.__ModuleLoader__.load({
   const emptyRole = () => ({ enabled: false, provider: '', model: '', reasoningEffort: '' });
   const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
   const clone = value => JSON.parse(JSON.stringify(value));
-  const numberValid = value => Number.isInteger(value) && value >= 1 && value <= 16;
+  const safeParseJson = (str, fallback) => {
+    try { return str ? JSON.parse(str) : fallback; }
+    catch { return fallback; }
+  };
+  const numberValid = value => Number.isInteger(value) && value >= 1 && value <= 32;
   const phaseLabel = phase => ({ done: '已完成', developed: '等待验证', developing: '开发中', verifying: '验证中', reviewing: '评审中', needs_fix: '待修复', blocked: '阻塞', pending: '待开始' }[phase] || phase || '未知');
   const agentStateLabel = state => ({ starting: '正在启动', running: '运行中', waiting_to_stop: '已关闭新派发；在途任务未确认停止', requested: '已请求', waiting: '等待中', stop_requested: '已请求停止（未确认）', completed: '子代理已结束（不代表任务通过）', failed: '子代理失败', cancelled: '已取消', stopped: '已停止', unknown: '状态未知', ended_unknown: '已结束（原因未知）' }[state] || state || '未知');
   const activeActivityCount = agents => (agents ?? []).filter(agent => agent.live === true && !['completed', 'failed', 'cancelled', 'stopped', 'ended_unknown'].includes(agent.state)).length;
@@ -56,12 +60,12 @@ window.__ModuleLoader__.load({
       };
       this.store = this.form.bind(() => ({
         ...this.form.shell(),
-        enabled: JSON.parse(this.form.field('schemaVersion').text || '0') === 2
-          ? JSON.parse(this.form.field('workflowEnabled').text || 'false')
-          : JSON.parse(this.form.field('enabled').text || 'false'),
+        enabled: safeParseJson(this.form.field('schemaVersion').text || '0', 0) === 2
+          ? safeParseJson(this.form.field('workflowEnabled').text, false)
+          : safeParseJson(this.form.field('enabled').text, false),
         maxConcurrent: this.form.field('maxConcurrent').text,
-        roles: JSON.parse(this.form.field('roles').text),
-        projects: JSON.parse(this.form.field('projects').text),
+        roles: safeParseJson(this.form.field('roles').text, {}),
+        projects: safeParseJson(this.form.field('projects').text, []),
       }));
     }
     edit(field, value) { this.actions.edit(field, JSON.stringify(value)); }
@@ -485,7 +489,77 @@ window.__ModuleLoader__.load({
     return sessionWorkspace.get(key) || '';
   }
 
-  function ConversationDashboard({ ctx, sessionId, controller }) {
+  async function openAgentSession(ctx, parentSessionId, agent) {
+    const childId = agent?.native_id || agent?.context?.id || agent?.id;
+    if (!childId) return false;
+    const sessions = ctx?.get?.('sessions') || ctx?.sessions;
+    const workspaces = ctx?.get?.('workspaces') || ctx?.workspaces;
+    const layout = ctx?.get?.('layout') || ctx?.layout;
+    try {
+      if (sessions?.openSubagent) {
+        if (typeof sessions.refreshSubagents === 'function' && parentSessionId) {
+          try { await sessions.refreshSubagents(parentSessionId); } catch {}
+        }
+        const retained = sessions.subagentAddress?.(childId);
+        sessions.openSubagent(retained?.parentSessionId === parentSessionId
+          ? retained
+          : { parentSessionId, childSessionId: childId, mode: 'continuable' });
+        layout?.selectPanel?.(null);
+        return true;
+      }
+      if (typeof sessions?.open === 'function') {
+        sessions.open(childId);
+        layout?.selectPanel?.(null);
+        return true;
+      }
+      if (typeof workspaces?.openSession === 'function') {
+        workspaces.openSession({ parentSessionId, childSessionId: childId, mode: 'continuable' });
+        return true;
+      }
+    } catch (err) {
+      console.warn('[AI Loop] 切换子代理会话失败:', err);
+    }
+    return false;
+  }
+
+  class SafeErrorBoundary extends React.Component {
+    constructor(props) {
+      super(props);
+      this.state = { hasError: false, error: null };
+    }
+    static getDerivedStateFromError(error) {
+      return { hasError: true, error };
+    }
+    componentDidCatch(error, errorInfo) {
+      console.error('[AI Loop] 看板渲染异常:', error, errorInfo);
+    }
+    render() {
+      if (this.state.hasError) {
+        return h('div', {
+          style: {
+            padding: '24px',
+            color: '#f87171',
+            background: 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid rgba(239, 68, 68, 0.2)',
+            borderRadius: '8px',
+            margin: '20px',
+            boxSizing: 'border-box'
+          }
+        },
+          h('h3', { style: { margin: '0 0 8px 0', fontSize: '15px' } }, '⚠️ AI Loop 看板加载遇到异常'),
+          h('div', { style: { fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', marginBottom: '12px' } }, String(this.state.error?.message || this.state.error)),
+          h('button', {
+            type: 'button',
+            style: S.btn(true),
+            onClick: () => this.setState({ hasError: false, error: null })
+          }, '重试加载看板')
+        );
+      }
+      return this.props.children;
+    }
+  }
+
+  function ConversationDashboardView({ ctx, sessionId, controller }) {
     const sessionKey = typeof sessionId === 'string' ? sessionId.trim() : '';
     const [cwd, setCwd] = React.useState(() => sessionCwdOf(ctx, sessionKey));
 
@@ -523,6 +597,7 @@ window.__ModuleLoader__.load({
     const isProjectEnabled = (isGlobalEnabled && (projectRow?.enabled ?? false)) ?? false;
 
     const [expandedAgentId, setExpandedAgentId] = React.useState(null);
+    const [filterMode, setFilterMode] = React.useState('all'); // 'all' | 'active'
 
     const agents = data?.activity?.agents || [];
     const activeAgentsCount = activeActivityCount(agents);
@@ -536,47 +611,108 @@ window.__ModuleLoader__.load({
     }, { in: 0, out: 0 });
 
     const roleColors = {
-      planner: { color: '#818cf8', bg: 'rgba(99, 102, 241, 0.15)', border: 'rgba(99, 102, 241, 0.3)', icon: '📐' },
-      dev: { color: '#34d399', bg: 'rgba(16, 185, 129, 0.15)', border: 'rgba(16, 185, 129, 0.3)', icon: '💻' },
-      tester: { color: '#fbbf24', bg: 'rgba(245, 158, 11, 0.15)', border: 'rgba(245, 158, 11, 0.3)', icon: '🧪' },
-      reviewer: { color: '#c084fc', bg: 'rgba(139, 92, 246, 0.15)', border: 'rgba(139, 92, 246, 0.3)', icon: '🔍' },
-      scribe: { color: '#60a5fa', bg: 'rgba(59, 130, 246, 0.15)', border: 'rgba(59, 130, 246, 0.3)', icon: '📝' },
+      planner: { color: '#818cf8', bg: 'rgba(99, 102, 241, 0.15)', border: 'rgba(99, 102, 241, 0.35)', icon: '📐' },
+      dev: { color: '#34d399', bg: 'rgba(16, 185, 129, 0.15)', border: 'rgba(16, 185, 129, 0.35)', icon: '💻' },
+      tester: { color: '#fbbf24', bg: 'rgba(245, 158, 11, 0.15)', border: 'rgba(245, 158, 11, 0.35)', icon: '🧪' },
+      reviewer: { color: '#c084fc', bg: 'rgba(139, 92, 246, 0.15)', border: 'rgba(139, 92, 246, 0.35)', icon: '🔍' },
+      scribe: { color: '#60a5fa', bg: 'rgba(59, 130, 246, 0.15)', border: 'rgba(59, 130, 246, 0.35)', icon: '📝' },
     };
 
-    const renderAgentCard = (agent, index) => {
-      const agentId = agent.native_id || agent.id || `${agent.task}-${agent.role}-${index}`;
+    // 组织一轮轮的任务与挂载的子 agent
+    const taskGroups = React.useMemo(() => {
+      const groups = [];
+      const assignedAgentIds = new Set();
+
+      tasks.forEach((task, index) => {
+        const taskIdStr = String(task.id);
+        const matchedAgents = agents.filter(a => {
+          if (!a.task) return false;
+          const aTaskId = String(a.task);
+          return aTaskId === taskIdStr || aTaskId.startsWith(taskIdStr + '#');
+        });
+        matchedAgents.forEach(a => assignedAgentIds.add(a.native_id || a.id));
+        groups.push({
+          round: index + 1,
+          task,
+          agents: matchedAgents,
+        });
+      });
+
+      // 未归属具体任务的子 agent（如全局规划、整体记录等）
+      const unassignedAgents = agents.filter(a => !assignedAgentIds.has(a.native_id || a.id));
+      if (unassignedAgents.length > 0 || groups.length === 0) {
+        groups.push({
+          round: groups.length + 1,
+          task: { id: 'workflow', title: '全局协作与支撑阶段', phase: 'developing' },
+          agents: unassignedAgents,
+          isGlobal: true,
+        });
+      }
+
+      return groups;
+    }, [tasks, agents]);
+
+    const displayedGroups = React.useMemo(() => {
+      if (filterMode === 'active') {
+        return taskGroups.filter(g => g.agents.some(a => a.live === true) || (g.task.phase !== 'done' && g.task.phase !== 'pending'));
+      }
+      return taskGroups;
+    }, [taskGroups, filterMode]);
+
+    const renderAgentNode = (agent, index) => {
+      const agentId = agent.native_id || agent.id || `agent-${index}`;
       const isExpanded = expandedAgentId === agentId;
-      const roleMeta = roleColors[agent.role] || { color: '#94a3b8', bg: 'rgba(255,255,255,0.08)', border: 'rgba(255,255,255,0.12)', icon: '🤖' };
+      const roleMeta = roleColors[agent.role] || { color: '#94a3b8', bg: 'rgba(255,255,255,0.08)', border: 'rgba(255,255,255,0.15)', icon: '🤖' };
       const roleDesc = ROLES[agent.role]?.name || agent.role || '未知角色';
       const isLive = agent.live === true && !['completed', 'failed', 'cancelled', 'stopped', 'ended_unknown'].includes(agent.state);
+      const direction = agent.direction || (typeof agent.task === 'string' && agent.task.includes('#') ? agent.task.split('#')[1] : null);
 
       return h('div', {
         key: agentId,
+        onClick: () => openAgentSession(ctx, sessionKey, agent),
+        title: '点击直接进入该子 Agent 的独立聊天上下文',
         style: {
-          background: 'var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.22))',
-          border: `1px solid ${isLive ? roleMeta.border : 'var(--dsw-alias-border-l1, rgba(255, 255, 255, 0.08))'}`,
-          borderRadius: 8,
+          background: 'var(--dsw-alias-bg-layer-2, rgba(20, 24, 33, 0.85))',
+          border: `1.5px solid ${isLive ? roleMeta.color : roleMeta.border}`,
+          borderRadius: 10,
           padding: '12px 14px',
           display: 'grid',
           gap: 8,
-          transition: 'all 0.2s ease',
-          boxShadow: isLive ? `0 0 12px ${roleMeta.bg}` : 'none',
+          cursor: 'pointer',
+          minWidth: 260,
+          maxWidth: 320,
+          flex: '1 1 260px',
+          boxSizing: 'border-box',
+          position: 'relative',
+          transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+          boxShadow: isLive ? `0 0 16px ${roleMeta.bg}, inset 0 0 8px ${roleMeta.bg}` : '0 2px 8px rgba(0,0,0,0.2)',
         },
       },
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 } },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+        // 顶部角色与状态
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
             h('span', { style: { fontSize: 16 } }, roleMeta.icon),
             h('span', {
               style: {
                 fontSize: 12,
-                fontWeight: 600,
+                fontWeight: 700,
                 color: roleMeta.color,
                 background: roleMeta.bg,
                 padding: '2px 8px',
                 borderRadius: 4,
               },
             }, roleDesc),
-            agent.task ? h('span', { style: { fontSize: 12, fontWeight: 500, color: 'var(--dsw-alias-text-primary, #e2e8f0)' } }, `任务 #${agent.task}`) : null,
+            direction ? h('span', {
+              style: {
+                fontSize: 11,
+                fontWeight: 600,
+                color: '#38bdf8',
+                background: 'rgba(56, 189, 248, 0.15)',
+                border: '1px solid rgba(56, 189, 248, 0.3)',
+                padding: '1px 6px',
+                borderRadius: 4,
+              },
+            }, `方向: ${direction}`) : null,
           ),
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
             isLive ? h('span', {
@@ -586,7 +722,8 @@ window.__ModuleLoader__.load({
                 height: 8,
                 borderRadius: '50%',
                 background: '#22c55e',
-                boxShadow: '0 0 8px rgba(34, 197, 94, 0.8)',
+                boxShadow: '0 0 8px rgba(34, 197, 94, 0.9)',
+                animation: 'pulse 1.5s infinite',
               },
             }) : null,
             h('span', {
@@ -601,16 +738,36 @@ window.__ModuleLoader__.load({
             }, agentStateLabel(agent.state)),
           ),
         ),
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)', flexWrap: 'wrap', gap: 6 } },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
-            h('span', null, '实例 ID:'),
-            h('code', { style: { fontSize: 11, color: 'var(--dsw-alias-brand-primary, #60a5fa)', background: 'rgba(0,0,0,0.3)', padding: '1px 5px', borderRadius: 4 } }, agent.native_id || agent.id || 'native-subagent'),
+
+        // 实例信息与进入快捷指示
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)', gap: 6 } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
+            h('span', null, 'ID:'),
+            h('code', { style: { fontSize: 11, color: 'var(--dsw-alias-brand-primary, #60a5fa)', background: 'rgba(0,0,0,0.3)', padding: '1px 4px', borderRadius: 4 } },
+              (agent.native_id || agent.id || 'agent').slice(0, 14),
+            ),
           ),
-          h('div', null,
-            agent.usage ? `Tokens: ${agent.usage.input_tokens ?? '?'} In / ${agent.usage.output_tokens ?? '?'} Out` : 'Token 消耗统计中',
-          ),
+          h('div', {
+            style: {
+              color: 'var(--dsw-alias-brand-primary, #60a5fa)',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 2,
+            },
+          }, '💬 进入上下文 ↗'),
         ),
-        agent.note || agent.observation ? h('div', { style: { marginTop: 4 } },
+
+        // Token 统计
+        h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 6 } },
+          agent.usage ? `Tokens: ${agent.usage.input_tokens ?? 0} In / ${agent.usage.output_tokens ?? 0} Out` : 'Token 消耗统计中',
+        ),
+
+        // 观察产物与指令
+        agent.note || agent.observation ? h('div', {
+          style: { marginTop: 2 },
+          onClick: e => e.stopPropagation(),
+        },
           h('button', {
             type: 'button',
             style: {
@@ -631,13 +788,13 @@ window.__ModuleLoader__.load({
               marginTop: 6,
               padding: '8px 10px',
               borderRadius: 6,
-              background: 'rgba(0, 0, 0, 0.35)',
+              background: 'rgba(0, 0, 0, 0.45)',
               fontSize: 11,
               lineHeight: 1.5,
               fontFamily: 'monospace',
               color: 'var(--dsw-alias-text-primary, #cbd5e1)',
               whiteSpace: 'pre-wrap',
-              maxHeight: 200,
+              maxHeight: 180,
               overflowY: 'auto',
             },
           }, agent.note || agent.observation || '无额外观察记录。') : null,
@@ -647,21 +804,26 @@ window.__ModuleLoader__.load({
 
     return h('div', {
       style: {
-        flex: '1 1 0',
-        minHeight: 0,
+        width: '100%',
+        height: '100%',
+        minHeight: '100%',
+        flex: '1 1 auto',
         overflowY: 'auto',
+        overflowX: 'hidden',
         padding: '20px 24px',
         boxSizing: 'border-box',
         display: 'flex',
         flexDirection: 'column',
-        gap: 16,
+        gap: 20,
         color: 'var(--dsw-alias-text-primary, #e2e8f0)',
+        background: 'var(--dsw-alias-bg-canvas, #0d1117)',
       },
     },
+      // 顶部导航栏
       h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.08))', paddingBottom: 14 } },
         h('div', null,
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
-            h('h2', { style: { margin: 0, fontSize: 17, fontWeight: 700 } }, '🤖 AI Loop 协同工作流看板'),
+            h('h2', { style: { margin: 0, fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 } }, '🌳 AI Loop 协同工作流看板'),
             data?.status ? h('span', { style: S.badge(data.status === 'active') }, data.status.toUpperCase()) : null,
           ),
           h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 8 } },
@@ -669,7 +831,35 @@ window.__ModuleLoader__.load({
             isProjectEnabled ? h('span', { style: { color: '#22c55e', fontSize: 11, background: 'rgba(34,197,94,0.1)', padding: '1px 6px', borderRadius: 4 } }, '已激活') : h('span', { style: { color: '#f59e0b', fontSize: 11, background: 'rgba(245,158,11,0.1)', padding: '1px 6px', borderRadius: 4 } }, '未激活'),
           ),
         ),
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+          h('div', { style: { display: 'flex', background: 'rgba(255,255,255,0.06)', borderRadius: 6, padding: 2 } },
+            h('button', {
+              type: 'button',
+              style: {
+                border: 'none',
+                background: filterMode === 'all' ? 'var(--dsw-alias-brand-primary, #2563eb)' : 'transparent',
+                color: filterMode === 'all' ? '#fff' : 'var(--dsw-alias-text-secondary, #94a3b8)',
+                fontSize: 12,
+                padding: '4px 10px',
+                borderRadius: 4,
+                cursor: 'pointer',
+              },
+              onClick: () => setFilterMode('all'),
+            }, `全部任务轮次 (${taskGroups.length})`),
+            h('button', {
+              type: 'button',
+              style: {
+                border: 'none',
+                background: filterMode === 'active' ? 'var(--dsw-alias-brand-primary, #2563eb)' : 'transparent',
+                color: filterMode === 'active' ? '#fff' : 'var(--dsw-alias-text-secondary, #94a3b8)',
+                fontSize: 12,
+                padding: '4px 10px',
+                borderRadius: 4,
+                cursor: 'pointer',
+              },
+              onClick: () => setFilterMode('active'),
+            }, '仅看当前轮次'),
+          ),
           statusInfo.runs.length ? h('select', {
             value: run,
             style: { ...S.input, width: 'auto', minWidth: 160 },
@@ -687,6 +877,7 @@ window.__ModuleLoader__.load({
         ),
       ),
 
+      // 未激活提醒
       !isProjectEnabled && cwd ? h('div', {
         style: {
           background: 'rgba(245, 158, 11, 0.08)',
@@ -704,7 +895,7 @@ window.__ModuleLoader__.load({
           h('span', { style: { fontSize: 20 } }, '⚡'),
           h('div', null,
             h('div', { style: { fontSize: 13, fontWeight: 600, color: '#f59e0b' } }, '当前工作区尚未启用 AI Loop 工作流'),
-            h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)', marginTop: 2 } }, '启用后将自动编排 5 大独立角色（Planner、Dev、Tester、Reviewer、Scribe）进行闭环工程开发。'),
+            h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)', marginTop: 2 } }, '启用后将自动编排独立角色，支持多方向任务动态分解与闭环开发。'),
           ),
         ),
         h('button', {
@@ -719,6 +910,7 @@ window.__ModuleLoader__.load({
         }, '为此工作区一键激活 AI Loop'),
       ) : null,
 
+      // 统计卡片网格
       h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 } },
         h('div', { style: S.dashCard },
           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
@@ -726,7 +918,7 @@ window.__ModuleLoader__.load({
             h('span', { style: { fontSize: 16 } }, '🚀'),
           ),
           h('div', { style: { fontSize: 22, fontWeight: 700, color: activeAgentsCount > 0 ? '#22c55e' : 'inherit' } }, `${activeAgentsCount} 运行中`),
-          h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, `历史累计派发 ${agents.length} 个子代理实例`),
+          h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, `当前会话累计派发 ${agents.length} 个子代理实例`),
         ),
         h('div', { style: S.dashCard },
           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
@@ -748,60 +940,189 @@ window.__ModuleLoader__.load({
         ),
         h('div', { style: S.dashCard },
           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
-            h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '并发配额与状态'),
+            h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '并发配额与分解模式'),
             h('span', { style: { fontSize: 16 } }, '⚡'),
           ),
-          h('div', { style: { fontSize: 22, fontWeight: 700, color: 'var(--dsw-alias-brand-primary, #60a5fa)' } }, `${activeAgentsCount} / ${projectRow?.maxConcurrent || formState?.maxConcurrent || 3}`),
-          h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, data?.goal ? `目标: ${data.goal}` : '等待工作流任务启动'),
+          h('div', { style: { fontSize: 22, fontWeight: 700, color: 'var(--dsw-alias-brand-primary, #60a5fa)' } }, `${activeAgentsCount} / ${projectRow?.maxConcurrent || formState?.maxConcurrent || 6}`),
+          h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '支持多方向动态任务分解'),
         ),
       ),
 
-      h('div', { style: { display: 'grid', gap: 12 } },
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
-          h('h3', { style: { margin: 0, fontSize: 14, fontWeight: 600 } }, '👥 独立子代理调用与执行态看板'),
-          h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '自动感知原生派发生命周期'),
+      // 思维导图式树形布局区（从上到下垂直延伸）
+      h('div', {
+        style: {
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 0,
+          position: 'relative',
+          padding: '10px 0 40px 0',
+        },
+      },
+        // 1. 顶部主 Agent 节点 (Root Node)
+        h('div', {
+          style: {
+            background: 'var(--dsw-alias-bg-layer-1, #1e222d)',
+            border: '2px solid var(--dsw-alias-brand-primary, #3b82f6)',
+            borderRadius: 12,
+            padding: '14px 24px',
+            minWidth: 320,
+            maxWidth: 540,
+            textAlign: 'center',
+            boxShadow: '0 4px 20px rgba(59, 130, 246, 0.25)',
+            zIndex: 2,
+            display: 'grid',
+            gap: 6,
+          },
+        },
+          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 } },
+            h('span', { style: { fontSize: 20 } }, '👑'),
+            h('span', { style: { fontSize: 15, fontWeight: 700, color: '#60a5fa' } }, '主代理 (Main Orchestrator)'),
+            h('span', { style: { fontSize: 11, background: 'rgba(59, 130, 246, 0.2)', color: '#93c5fd', padding: '2px 8px', borderRadius: 10 } }, '任务中枢'),
+          ),
+          h('div', { style: { fontSize: 13, fontWeight: 500, color: 'var(--dsw-alias-text-primary, #e2e8f0)' } },
+            data?.goal ? `总目标: ${data.goal}` : '已就绪，等待工程任务编排与派发',
+          ),
+          h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } },
+            `运行编号: ${data?.run_id || '暂无运行'} · 状态: ${data?.status || 'idle'}`,
+          ),
         ),
-        agents.length ? h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 } },
-          agents.map((agent, idx) => renderAgentCard(agent, idx)),
-        ) : h('div', {
+
+        // 2. 从主 Agent 延伸向下的主干连接线
+        h('div', {
+          style: {
+            width: 3,
+            height: 36,
+            background: 'linear-gradient(to bottom, #3b82f6, rgba(59, 130, 246, 0.3))',
+            margin: '0 auto',
+          },
+        }),
+
+        // 3. 一轮轮任务的思维导图节点（从上到下排列）
+        displayedGroups.length === 0 ? h('div', {
           style: {
             background: 'var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.15))',
             border: '1px dashed var(--dsw-alias-border-l1, rgba(255, 255, 255, 0.1))',
             borderRadius: 8,
-            padding: '24px 16px',
+            padding: '28px 24px',
             textAlign: 'center',
+            maxWidth: 480,
+            margin: '0 auto',
             display: 'grid',
             gap: 8,
           },
         },
-          h('div', { style: { fontSize: 24 } }, '💤'),
-          h('div', { style: { fontSize: 13, fontWeight: 600 } }, '当前暂无运行中的子代理'),
-          h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '当工作流进入研发阶段时，系统将自动派发对应的独立子代理并在此实时呈现调用轨迹。'),
-        ),
-      ),
+          h('div', { style: { fontSize: 24 } }, '🌱'),
+          h('div', { style: { fontSize: 14, fontWeight: 600 } }, '当前运行暂无已分解的任务轮次'),
+          h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '在当前聊天中向主 Agent 发送工程开发指令，工作流将自动分解多方向任务并在此绘制思维导图。'),
+        ) : displayedGroups.map((group, gIdx) => {
+          const isLastGroup = gIdx === displayedGroups.length - 1;
+          const taskPhase = group.task.phase || 'pending';
 
-      tasks.length ? h('div', { style: { display: 'grid', gap: 12 } },
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
-          h('h3', { style: { margin: 0, fontSize: 14, fontWeight: 600 } }, '📑 DAG 任务推进阶段'),
-          h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, `${tasks.length} 个任务节点`),
-        ),
-        h('div', { style: S.taskGrid },
-          tasks.map(task => h('div', { key: task.id, style: S.taskCard(task.phase) },
-            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-              h('span', { style: { fontWeight: 600, fontSize: 13 } }, `${task.id}: ${task.title}`),
-              h('span', { style: S.phaseBadge(task.phase) }, phaseLabel(task.phase)),
+          return h('div', {
+            key: `group-${group.task.id}-${gIdx}`,
+            style: {
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              width: '100%',
+              position: 'relative',
+            },
+          },
+            // 任务节点卡片 (Round & Task Card)
+            h('div', {
+              style: {
+                background: 'var(--dsw-alias-bg-layer-1, #1a1e29)',
+                border: `1.5px solid ${taskPhase === 'done' ? '#22c55e' : taskPhase === 'developing' ? '#3b82f6' : 'rgba(255,255,255,0.12)'}`,
+                borderRadius: 10,
+                padding: '12px 20px',
+                minWidth: 340,
+                maxWidth: 620,
+                width: '100%',
+                boxSizing: 'border-box',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+                display: 'grid',
+                gap: 8,
+                zIndex: 2,
+              },
+            },
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 } },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                  h('span', {
+                    style: {
+                      fontSize: 11,
+                      fontWeight: 700,
+                      background: 'rgba(59, 130, 246, 0.2)',
+                      color: '#60a5fa',
+                      padding: '2px 8px',
+                      borderRadius: 12,
+                    },
+                  }, `Round ${group.round}`),
+                  h('span', { style: { fontWeight: 700, fontSize: 14 } },
+                    group.isGlobal ? group.task.title : `任务 #${group.task.id}: ${group.task.title || '开发任务'}`,
+                  ),
+                ),
+                h('span', { style: S.phaseBadge(taskPhase) }, phaseLabel(taskPhase)),
+              ),
+
+              h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)', display: 'flex', flexWrap: 'wrap', gap: 12 } },
+                h('span', null, `子代理实例: ${group.agents.length} 个`),
+                group.task.review ? h('span', null, `评审模式: ${group.task.review}`) : null,
+                group.task.fixes ? h('span', null, `修复轮次: ${group.task.fixes}`) : null,
+                group.task.attempts ? h('span', null, `测试/评审尝试: ${group.task.attempts.tester || 0}/${group.task.attempts.reviewer || 0}`) : null,
+                group.task.blocked_reason ? h('span', { style: { color: '#ef4444' } }, `阻塞: ${group.task.blocked_reason}`) : null,
+              ),
             ),
-            h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #888)', display: 'flex', flexWrap: 'wrap', gap: 10 } },
-              h('span', null, `评审: ${task.review || 'none'}`),
-              h('span', null, `修复轮次: ${task.fixes || 0}`),
-              h('span', null, `依赖: ${(task.dependencies || []).join(', ') || '无'}`),
-              task.attempts ? h('span', null, `测试/评审尝试: ${task.attempts.tester || 0}/${task.attempts.reviewer || 0}`) : null,
-              task.blocked_reason ? h('span', { style: { color: '#ef4444' } }, `阻塞: ${task.blocked_reason}`) : null,
-            ),
-          )),
-        ),
-      ) : null,
+
+            // 从任务节点向下延伸的分支导轨
+            group.agents.length > 0 ? h('div', {
+              style: {
+                width: 2,
+                height: 24,
+                background: 'rgba(255, 255, 255, 0.2)',
+              },
+            }) : null,
+
+            // 该任务下的子 Agent 节点群（挂载在任务下方，呈思维导图分支）
+            group.agents.length > 0 ? h('div', {
+              style: {
+                display: 'flex',
+                flexWrap: 'wrap',
+                justifyContent: 'center',
+                gap: 14,
+                width: '100%',
+                maxWidth: 1080,
+                position: 'relative',
+                padding: '0 10px',
+                boxSizing: 'border-box',
+              },
+            },
+              group.agents.map((agent, aIdx) => renderAgentNode(agent, aIdx)),
+            ) : h('div', {
+              style: {
+                fontSize: 11,
+                color: 'var(--dsw-alias-text-secondary, #64748b)',
+                padding: '6px 0',
+              },
+            }, '该轮次暂无派发的独立子代理'),
+
+            // 轮次之间的垂直延伸主线
+            !isLastGroup ? h('div', {
+              style: {
+                width: 3,
+                height: 36,
+                background: 'linear-gradient(to bottom, rgba(59, 130, 246, 0.3), rgba(59, 130, 246, 0.5))',
+                margin: '12px auto',
+              },
+            }) : null,
+          );
+        }),
+      ),
     );
+  }
+
+  function ConversationDashboard(props) {
+    return h(SafeErrorBoundary, null, h(ConversationDashboardView, props));
   }
 
   function SidebarDashboard(props) {
