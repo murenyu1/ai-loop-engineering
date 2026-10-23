@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { VERSION, BUNDLE, assert, validId, inside, rootPath, safePath, jsonFile, atomicWrite, writeJson, locked, args, allowArgs, mainModule, printResult } from './lib.mjs';
 import { validateRoles } from './roles.mjs';
+import { checkExecution } from './execution.mjs';
 
 const now = () => new Date().toISOString();
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
@@ -64,10 +65,14 @@ export function validateSpec(input) {
     assert(nonempty(prefix) && !path.isAbsolute(prefix) && !prefix.includes('\\') && !prefix.split('/').some(part => !part || part === '.' || part === '..'), '排除项须为规范的项目内相对路径');
     assert(prefix !== '.git' && prefix !== '.ai-loop', '工具已经排除元数据目录，无须再次声明');
   }
-  return { goal: input.goal, tasks: input.tasks, max_fixes: maxFixes, ignore_paths: ignore, ...(input.role_policy !== undefined ? { role_policy: validateRoles(input.role_policy) } : {}) };
+  if (input.execution_evidence !== undefined) assert(input.execution_evidence === 'required', 'execution_evidence 只支持 required');
+  const projectScope = value => validRelativeScope(value) && !['.git', '.ai-loop'].includes(value.split('/')[0].toLowerCase());
+  if (input.project_path !== undefined) assert(input.project_path === '.' || projectScope(input.project_path) && !input.project_path.endsWith('/'), 'project_path 须为工作区内相对目录，不能是元数据');
+  if (input.snapshot_paths !== undefined) assert(Array.isArray(input.snapshot_paths) && input.snapshot_paths.length > 0 && input.snapshot_paths.every(projectScope), 'snapshot_paths 须为非空工作区相对路径数组，不能是元数据');
+  return { goal: input.goal, tasks: input.tasks, max_fixes: maxFixes, ignore_paths: ignore, ...(input.role_policy !== undefined ? { role_policy: validateRoles(input.role_policy) } : {}), ...Object.fromEntries(['execution_evidence', 'project_path', 'snapshot_paths'].filter(key => input[key] !== undefined).map(key => [key, input[key]])) };
 }
 
-export function snapshot(project, ignore = [], bundle = BUNDLE) {
+export function snapshot(project, ignore = [], bundle = BUNDLE, scopes) {
   const root = rootPath(project);
   const manifestPath = safePath(root, '.ai-loop/install.json');
   const manifest = fs.existsSync(manifestPath) ? jsonFile(manifestPath) : null;
@@ -91,11 +96,18 @@ export function snapshot(project, ignore = [], bundle = BUNDLE) {
   if (inside(root, realBundle) && realBundle !== root) excluded.push(path.relative(root, realBundle).split(path.sep).join('/'));
   const excludedPath = relative => excluded.some(prefix => relative === prefix || relative.startsWith(`${prefix}/`));
   const hash = crypto.createHash('sha256');
+  if (scopes) {
+    assert(Array.isArray(scopes) && scopes.length && scopes.every(validRelativeScope), '快照范围无效');
+    for (const scope of scopes) assert(fs.existsSync(safePath(root, scope.replace(/\/+$/, ''))), '快照范围不存在：' + scope);
+    hash.update(JSON.stringify({ snapshot_paths: scopes }));
+  }
+  const normalizeScope = value => process.platform === 'win32' ? value.toLowerCase() : value;
+  const selected = raw => !scopes || scopes.some(scope => { const relative = normalizeScope(raw), prefix = normalizeScope(scope.replace(/\/+$/, '')); return relative === prefix || relative.startsWith(prefix + '/') || prefix.startsWith(relative + '/'); });
   let count = 0;
   function walk(directory, relative = '') {
     for (const name of fs.readdirSync(directory).sort()) {
       const item = relative ? `${relative}/${name}` : name;
-      if (excludedPath(item)) continue;
+      if (excludedPath(item) || !selected(item)) continue;
       const target = path.join(directory, name);
       const stat = fs.lstatSync(target);
       assert(!stat.isSymbolicLink(), `快照范围含符号链接：${item}；先明确其验证范围，不自动忽略或跟随`);
@@ -138,11 +150,13 @@ function compareVersions(left, right) {
 function load(root, run) {
   const files = paths(root, run);
   const state = jsonFile(files.state);
-  assert([1, 2, 3].includes(state.schema_version) && state.run_id === run && Array.isArray(state.tasks), '运行状态格式错误');
+  assert([1, 2, 3, 4].includes(state.schema_version) && state.run_id === run && Array.isArray(state.tasks), '运行状态格式错误');
   const versionOrder = compareVersions(state.version, VERSION);
   assert(versionOrder !== null && versionOrder <= 0, '运行由较新核心创建；请先升级当前核心');
   const spec = validateSpec(jsonFile(files.spec));
-  if (spec.role_policy) assert(state.schema_version === 3, '角色关闭策略须使用 schema 3，禁止旧核心忽略策略');
+  if (spec.role_policy) assert([3, 4].includes(state.schema_version), '角色关闭策略须使用 schema 3 或 4，禁止旧核心忽略策略');
+  if (spec.execution_evidence || spec.project_path !== undefined || spec.snapshot_paths) assert(state.schema_version === 4, '原生执行证据与子项目范围须使用 schema 4');
+  if (state.schema_version === 4) assert(compareVersions(state.version, '4.6.0') >= 0, 'schema 4 运行版本不匹配');
   if (state.schema_version === 3) assert(spec.role_policy && compareVersions(state.version, '4.5.0') >= 0, 'schema 3 角色策略或核心版本不匹配');
   if (state.schema_version === 2) assert(compareVersions(state.version, '4.4.0') >= 0, 'schema 2 运行版本不匹配');
   assert(state.spec_hash === crypto.createHash('sha256').update(JSON.stringify(spec)).digest('hex'), '运行方案已被直接改写；先批准新方案并创建新运行');
@@ -175,7 +189,7 @@ function summary(state, definitions = []) {
     const closedReason = task.phase === 'pending' && state.status !== 'active' ? `运行状态为 ${state.status}` : blockedReason;
     return { id: task.id, title: task.title, owner: definition.owner, in_scope: definition.in_scope, out_of_scope: definition.out_of_scope, managed_execution: definition.managed_execution === true, attempts: task.attempts || null, dependencies, ready, blocked_reason: closedReason, phase: task.phase, fixes: task.fixes, review: task.review, verification: task.verification, assessment: task.assessment, reason: task.reason };
   });
-  return { run_id: state.run_id, goal: state.goal, status: state.status, stop_reason: state.stop_reason, event_seq: state.event_seq, tasks };
+  return { run_id: state.run_id, goal: state.goal, status: state.status, stop_reason: state.stop_reason, event_seq: state.event_seq, schema_version: state.schema_version, project_path: state.project_path ?? '.', snapshot_paths: state.snapshot_paths ?? null, execution_evidence: state.schema_version === 4 ? 'required-for-independent' : 'legacy-unverified', tasks };
 }
 function persist(root, files, state, type, detail) {
   state.updated_at = now();
@@ -189,7 +203,7 @@ function mutable(root, run, action) {
   return locked(root, `run-${validId(run)}`, () => {
     const loaded = load(root, run);
     assert(loaded.state.status === 'active', '运行已完成或已停止；不能继续修改状态');
-    assert([2, 3].includes(loaded.state.schema_version) || compareVersions(loaded.state.version, '4.4.0') < 0 &&
+    assert([2, 3, 4].includes(loaded.state.schema_version) || compareVersions(loaded.state.version, '4.4.0') < 0 &&
       !loaded.spec.tasks.some(task => ['owner', 'in_scope', 'out_of_scope', 'managed_execution'].some(field => Object.hasOwn(task, field))) &&
       !loaded.state.tasks.some(task => task.phase === 'developed' || Object.hasOwn(task, 'attempts')),
     'schema 1 运行须先迁移才能由当前核心写入');
@@ -267,15 +281,18 @@ function saveReport(root, files, state, report) {
 
 export function create(project, input, requestedId) {
   const root = rootPath(project);
-  const spec = validateSpec(input);
+  const spec = validateSpec({ ...input, ...(input?.tasks?.some(task => task.review === 'independent') ? { execution_evidence: 'required' } : {}) });
+  if (spec.project_path && spec.project_path !== '.') assert(fs.statSync(safePath(root, spec.project_path)).isDirectory(), '子项目目录不存在');
+  if (spec.project_path && spec.project_path !== '.' && !spec.snapshot_paths) spec.snapshot_paths = [spec.project_path];
   const run = validId(requestedId || `run-${crypto.randomUUID()}`);
   return locked(root, 'runs', () => {
     const files = paths(root, run);
     assert(!fs.existsSync(files.directory), '运行编号已存在，不能覆盖或重置');
-    const revision = snapshot(root, spec.ignore_paths);
+    const revision = snapshot(root, spec.ignore_paths, BUNDLE, spec.snapshot_paths);
     fs.mkdirSync(safePath(root, `.ai-loop/runs/${run}/reports`), { recursive: true });
     fs.mkdirSync(safePath(root, `.ai-loop/runs/${run}/mailbox`), { recursive: true });
-    const state = { schema_version: spec.role_policy ? 3 : 2, version: VERSION, run_id: run, goal: spec.goal, status: 'active', created_at: now(), updated_at: now(), event_seq: 0,
+    const state = { schema_version: spec.execution_evidence || spec.project_path !== undefined || spec.snapshot_paths ? 4 : spec.role_policy ? 3 : 2, version: VERSION, run_id: run, goal: spec.goal, status: 'active', created_at: now(), updated_at: now(), event_seq: 0,
+      ...(spec.project_path !== undefined ? { project_path: spec.project_path } : {}), ...(spec.snapshot_paths ? { snapshot_paths: spec.snapshot_paths } : {}),
       spec_hash: crypto.createHash('sha256').update(JSON.stringify(spec)).digest('hex'), max_fixes: spec.max_fixes, base_revision: revision,
       tasks: spec.tasks.map(task => ({ id: task.id, title: task.title, review: task.review, phase: 'pending', fixes: 0, verification: null, assessment: null, reason: null })) };
     writeJson(files.spec, spec);
@@ -299,19 +316,19 @@ export function begin(project, run, id, phase) {
       assert((definition.depends_on || []).every(dependency => taskOf(state, dependency).phase === 'done'), '依赖任务尚未通过');
       assert(state.tasks.every(item => item.id === id || !['verifying', 'reviewing'].includes(item.phase)), '已有任务正在验证或评审，开发须等待证据收敛');
       for (const other of state.tasks.filter(item => item.id !== id && item.phase === 'developing')) assert(canDevelopTogether(task, other, spec.tasks), '并行开发须声明互不重叠的 in_scope；未知范围默认串行');
-      if (definition.managed_execution) task.attempts ||= { tester: 0, reviewer: 0 };
+      if (definition.managed_execution || spec.execution_evidence) task.attempts ||= { tester: 0, reviewer: 0 };
       task.phase = 'developing';
     } else if (phase === 'verification') {
       assert(['developing', 'developed', 'tested', 'done'].includes(task.phase), '只能验证已完成开发、已测或已完成的任务；FAIL 后须先 fix');
       assert(state.tasks.every(item => item.id === id || !['developing', 'verifying', 'reviewing'].includes(item.phase)), '快照证据须保证环境稳定串行：其他任务正在执行');
       task.phase = 'verifying'; task.verification = null; task.assessment = null;
-      if (definition.managed_execution) { task.attempts ||= { tester: 0, reviewer: 0 }; task.attempts.tester++; }
+      if (definition.managed_execution || spec.execution_evidence) { task.attempts ||= { tester: 0, reviewer: 0 }; task.attempts.tester++; }
     } else {
       assert(task.phase === 'tested' && task.review !== 'none', '评审需要有效测试结果且任务声明需要评审');
       assert(state.tasks.every(item => item.id === id || !['developing', 'verifying', 'reviewing'].includes(item.phase)), '评审证据须保证环境稳定串行：其他任务正在执行');
-      assert(sameRevision(task.verification?.revision, snapshot(root, spec.ignore_paths)), '测试证据已过期，请先重新验证');
+      assert(sameRevision(task.verification?.revision, snapshot(root, spec.ignore_paths, BUNDLE, spec.snapshot_paths)), '测试证据已过期，请先重新验证');
       task.phase = 'reviewing';
-      if (definition.managed_execution) { task.attempts ||= { tester: 0, reviewer: 0 }; task.attempts.reviewer++; }
+      if (definition.managed_execution || spec.execution_evidence) { task.attempts ||= { tester: 0, reviewer: 0 }; task.attempts.reviewer++; }
     }
     task.reason = null;
     persist(root, files, state, 'begin', { task_id: id, phase });
@@ -322,7 +339,7 @@ export function begin(project, run, id, phase) {
 export function finish(project, run, id) {
   const root = rootPath(project);
   return mutable(root, run, ({ files, state, spec }) => {
-    assert([2, 3].includes(state.schema_version), 'schema 1 运行须先显式迁移，再使用 developed 阶段');
+    assert([2, 3, 4].includes(state.schema_version), 'schema 1 运行须先显式迁移，再使用 developed 阶段');
     const task = taskOf(state, id);
     assert(task.phase === 'developing', 'finish 仅适用于正在开发的任务');
     task.phase = 'developed';
@@ -338,17 +355,18 @@ export function record(project, run, report) {
     const task = taskOf(state, report.task_id);
     const definition = spec.tasks.find(item => item.id === task.id);
     assert(task.phase === (report.role === 'tester' ? 'verifying' : 'reviewing'), '报告与当前任务阶段不符');
-    if (definition.managed_execution) assert(Number.isInteger(report.attempt) && report.attempt === task.attempts?.[report.role], '托管任务报告缺少当前 attempt 或已过期');
+    if (definition.managed_execution || spec.execution_evidence) assert(Number.isInteger(report.attempt) && report.attempt === task.attempts?.[report.role], '托管任务报告缺少当前 attempt 或已过期');
     const statuses = report.role === 'tester' ? ['PASS', 'FAIL', 'BLOCKED'] : ['APPROVED', 'REJECTED', 'BLOCKED'];
     assert(statuses.includes(report.status), '报告判定无效');
     const blocked = report.status === 'BLOCKED';
-    const revision = blocked ? report.revision : snapshot(root, spec.ignore_paths);
+    const revision = blocked ? report.revision : snapshot(root, spec.ignore_paths, BUNDLE, spec.snapshot_paths);
     validateReport(report, blocked ? null : revision);
     if (report.status === 'PASS') checkEvidence(report, definition.checks, files.directory);
     if (report.status === 'APPROVED') {
       assert(sameRevision(task.verification?.revision, revision), '评审对应的测试已过期');
       checkReview(report, task.review);
     }
+    if (report.execution === 'independent' && ['PASS', 'APPROVED'].includes(report.status)) checkExecution(root, run, report, revision, task.id, task.attempts?.[report.role] ?? 0);
     if (['FAIL', 'REJECTED', 'BLOCKED'].includes(report.status)) assert(report.issues.length || report.findings?.length, '失败或阻塞结果须说明问题');
     const reportPath = saveReport(root, files, state, report);
     const result = { status: report.status, execution: report.execution, attempt: report.attempt, revision, revision_confirmed: !blocked, report: reportPath };
@@ -412,7 +430,7 @@ export function complete(project, run, input) {
   const root = rootPath(project);
   return mutable(root, run, ({ files, state, spec }) => {
     assert(state.tasks.every(task => task.phase === 'done'), '仍有未通过任务，不能交付');
-    const revision = snapshot(root, spec.ignore_paths);
+    const revision = snapshot(root, spec.ignore_paths, BUNDLE, spec.snapshot_paths);
     const report = input.verification;
     validateReport(report, revision);
     assert(report.role === 'tester' && report.status === 'PASS', '交付需要最终快照的完整验证报告');
@@ -423,7 +441,9 @@ export function complete(project, run, input) {
       validateReport(input.review, revision);
       assert(input.review.role === 'reviewer' && input.review.status === 'APPROVED', '交付需要最终快照的整体评审');
       checkReview(input.review, spec.tasks.some(task => task.review === 'independent') ? 'independent' : 'self');
+      if (input.review.execution === 'independent') checkExecution(root, run, input.review, revision, 'final', state.event_seq);
     }
+    if (report.execution === 'independent') checkExecution(root, run, report, revision, 'final', state.event_seq);
     const verification = saveReport(root, files, state, { ...report, task_id: undefined });
     const review = requiresReview ? saveReport(root, files, state, { ...input.review, task_id: undefined }) : null;
     state.status = 'complete'; state.delivery = { revision, verification, review };
@@ -515,8 +535,9 @@ export function events(project, run, after = 0, limit = 50) {
   const result = fs.readFileSync(files.events, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)).filter(item => item.seq > after).slice(0, limit);
   return { events: result, next_cursor: result.at(-1)?.seq ?? after };
 }
-export function listRuns(project) {
+export function listRuns(project, options = {}) {
   const root = rootPath(project);
+  if (options.project_path !== undefined) assert(options.project_path === '.' || validRelativeScope(options.project_path), '子项目筛选路径无效');
   const runsDir = safePath(root, '.ai-loop/runs');
   if (!fs.existsSync(runsDir)) return [];
   const entries = fs.readdirSync(runsDir).sort();
@@ -526,13 +547,15 @@ export function listRuns(project) {
     if (fs.existsSync(stateFile)) {
       try {
         const state = jsonFile(stateFile);
-        list.push({ run_id: entry, status: state.status, goal: state.goal, updated_at: state.updated_at });
+        list.push({ run_id: entry, status: state.status, goal: state.goal, updated_at: state.updated_at, project_path: state.project_path ?? '.', snapshot_paths: state.snapshot_paths ?? null });
       } catch {
         list.push({ run_id: entry, status: 'unknown' });
       }
     }
   }
-  return list;
+  if (options.project_path === undefined) return list;
+  const sameProjectPath = (left, right) => process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+  return list.filter(item => typeof item.project_path === 'string' && sameProjectPath(item.project_path, options.project_path));
 }
 
 export function status(project, run) {
@@ -568,7 +591,8 @@ export function cli(argv) {
   if (command === 'finish') return finish(options.project, options.run, options.task);
   if (command === 'snapshot') {
     const root = rootPath(options.project);
-    return snapshot(root, options.run ? load(root, options.run).spec.ignore_paths : []);
+    const spec = options.run ? load(root, options.run).spec : {};
+    return snapshot(root, spec.ignore_paths || [], BUNDLE, spec.snapshot_paths);
   }
   if (command === 'record') return record(options.project, options.run, input());
   if (command === 'fix') return fix(options.project, options.run, options.task);

@@ -4,22 +4,34 @@ import fs from 'node:fs';
 import { link } from './support.mjs';
 import os from 'node:os';
 import path from 'node:path';
-import { create, begin, finish, snapshot, record, fix, resume, stop, complete, event, events, status, validateSpec, mail, inbox, cli } from '../scripts/loop.mjs';
+import { create, begin, finish, snapshot, record, fix, resume, stop, complete, event, events, status, validateSpec, mail, inbox, cli, listRuns } from '../scripts/loop.mjs';
+import { recordActivity } from '../scripts/activity.mjs';
 
 function fixture(t, overrides = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-run-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, 'main.txt'), '代码版本1');
+  if (overrides.project_path && overrides.project_path !== '.') fs.mkdirSync(path.join(root, overrides.project_path), { recursive: true });
   const spec = { goal: '完成行为', tasks: [{ id: 'task1', title: '实现', acceptance: ['行为成立'], review: 'self', checks: [{ id: 'test', command: '真实验证命令' }] }], ...overrides };
   const run = create(root, spec, 'run1').run_id;
   fs.writeFileSync(path.join(root, `.ai-loop/runs/${run}/reports/test.log`), '实际工具输出');
   return { root, run, spec };
 }
+
+test('运行列表按平台路径大小写规则筛选并跳过未知条目', t => {
+  const { root } = fixture(t, { project_path: 'ONE' });
+  fs.mkdirSync(path.join(root, '.ai-loop/runs/unknown'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.ai-loop/runs/unknown/state.json'), '{');
+  const exact = listRuns(root, { project_path: 'ONE' });
+  const lower = listRuns(root, { project_path: 'one' });
+  assert.deepEqual(exact.map(item => item.run_id), ['run1']);
+  assert.deepEqual(lower.map(item => item.run_id), process.platform === 'win32' ? ['run1'] : []);
+});
 function verification(root, run, overrides = {}) {
-  return { role: 'tester', task_id: 'task1', status: 'PASS', execution: 'self', revision: snapshot(root), checks: [{ id: 'test', command: '真实验证命令', environment: '测试环境', exit_code: 0, log: 'reports/test.log' }], issues: [], ...overrides };
+  return { role: 'tester', task_id: 'task1', attempt: status(root, run).schema_version === 4 ? status(root, run).tasks[0].attempts?.tester : undefined, status: 'PASS', execution: 'self', revision: snapshot(root), checks: [{ id: 'test', command: '真实验证命令', environment: '测试环境', exit_code: 0, log: 'reports/test.log' }], issues: [], ...overrides };
 }
 function review(root, overrides = {}) {
-  return { role: 'reviewer', task_id: 'task1', status: 'APPROVED', execution: 'self', revision: snapshot(root), findings: [], issues: [], ...overrides };
+  return { role: 'reviewer', task_id: 'task1', attempt: status(root, 'run1').schema_version === 4 ? status(root, 'run1').tasks[0].attempts?.reviewer : undefined, status: 'APPROVED', execution: 'self', revision: snapshot(root), findings: [], issues: [], ...overrides };
 }
 function developAndTest(root, run) {
   begin(root, run, 'task1', 'development');
@@ -170,7 +182,12 @@ test('评审拒绝的修复须重新验证，自检不能替代独立评审', t 
   fix(root, run, 'task1');
   assert.throws(() => begin(root, run, 'task1', 'review'), /有效测试/);
   begin(root, run, 'task1', 'verification'); record(root, run, verification(root, run));
-  begin(root, run, 'task1', 'review'); record(root, run, review(root, { execution: 'independent' }));
+  begin(root, run, 'task1', 'review');
+  assert.throws(() => record(root, run, review(root, { execution: 'independent' })), /execution_id/);
+  fs.writeFileSync(path.join(root, `.ai-loop/runs/${run}/reports/native.json`), '{"native_id":"review-child"}');
+  recordActivity(root, run, { id: 'review-call', task: 'task1', role: 'reviewer', attempt: status(root, run).tasks[0].attempts.reviewer, harness: 'test-double', state: 'requested', native_id: 'review-child', context: { mode: 'independent', id: 'review-child', parent_id: 'main' }, revision: snapshot(root), summary: '夹具原生调用' });
+  recordActivity(root, run, { id: 'review-call', state: 'completed', evidence: { source: 'native-log', path: 'reports/native.json' }, summary: '夹具调用完成' });
+  record(root, run, review(root, { execution: 'independent', execution_id: 'review-call' }));
   assert.throws(() => complete(root, run, { verification: verification(root, run), review: review(root) }), /独立评审/);
 });
 

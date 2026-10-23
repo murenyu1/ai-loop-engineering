@@ -11,6 +11,7 @@ import { buildPlugin } from '../scripts/build-plugin.mjs';
 import { BUNDLE, safePath } from '../scripts/lib.mjs';
 import { registerWorkspace, setWorkspaceEnabled } from '../scripts/workspaces.mjs';
 import { startupContext } from '../scripts/session-start.mjs';
+import { installPlugin } from '../scripts/install-plugin.mjs';
 
 function unpack(file,root) {
   const bytes=fs.readFileSync(file),names=[];let pos=0;
@@ -37,7 +38,12 @@ test('独立发行包可复现、通用与 Codex ZIP 可在仓库外运行',t=>{
     const names=unpack(zip,target);
     assert.ok(names.includes('README.md'));
     assert.ok(!names.some(name=>/(?:^|\/)(?:tests|node_modules|\.ai-loop|\.release|workspaces.json|models.json)(?:\/|$)/.test(name)));
-    if(item.name.includes('workflow')) assert.ok(!names.some(name=>name.includes('plugin.json')||name.includes('profiles.mjs')||name.includes('console')));
+    if(item.name.includes('workflow')) {
+      assert.ok(!names.some(name=>name.includes('plugin.json')||name.includes('console')));
+      assert.ok(names.includes('scripts/install.mjs') && names.includes('scripts/doctor.mjs') && names.includes('scripts/execution.mjs'));
+      const help = spawnSync(process.execPath, [path.join(target, 'scripts/install.mjs'), '--help'], { encoding: 'utf8', windowsHide: true });
+      assert.equal(help.status, 0, help.stderr);
+    }
     else {
       assert.ok(names.includes('hooks/hooks.json'));assert.ok(names.includes('scripts/install-plugin.mjs'));
       assert.ok(names.includes('mcp.json'));assert.ok(names.includes('.mcp.json'));assert.ok(names.includes('scripts/settings-server.mjs'));
@@ -87,4 +93,25 @@ test('插件目录中未登记的本机文件不得混入发行包',()=>{
   fs.writeFileSync(target,'本机临时资料');
   try { assert.throws(()=>buildRelease(),/未登记文件/); }
   finally { fs.unlinkSync(target); }
+});
+
+test('本地市场升级仅允许已登记旧版本变化，其他人工修改仍拒绝', t => {
+  buildPlugin();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-market-upgrade-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, 'home'), project = path.join(root, 'project');
+  fs.mkdirSync(home); fs.mkdirSync(project);
+  const location = path.join(home, 'plugins/local/ai-loop-engineering/plugins/ai-loop-engineering');
+  fs.cpSync(path.join(BUNDLE, 'dist/codex'), location, { recursive: true });
+  const lockPath = path.join(location, 'bundle.json'), lock = JSON.parse(fs.readFileSync(lockPath));
+  lock.version = '4.5.2'; fs.writeFileSync(lockPath, JSON.stringify(lock));
+  const metadata = JSON.parse(fs.readFileSync(path.join(BUNDLE, 'codex/marketplace.json')));
+  metadata.plugins[0].version = '4.5.2'; metadata.plugins[0].source.path = './plugins/ai-loop-engineering';
+  const market = path.join(home, 'plugins/local/ai-loop-engineering/.agents/plugins/marketplace.json');
+  fs.mkdirSync(path.dirname(market), { recursive: true }); fs.writeFileSync(market, JSON.stringify(metadata, null, 2));
+  const before = fs.readFileSync(market, 'utf8');
+  const preview = installPlugin(project, { home });
+  assert.equal(preview.status, 'dry-run'); assert.ok(preview.changes.includes(market)); assert.equal(fs.readFileSync(market, 'utf8'), before);
+  metadata.plugins[0].source.path = './someone-else'; fs.writeFileSync(market, JSON.stringify(metadata));
+  assert.throws(() => installPlugin(project, { home }), /市场内容被修改/);
 });

@@ -24,6 +24,10 @@
 
 ## 跨平台任务契约
 
+4.6.0 新建独立评审运行自动启用 schema 4 原生执行证据门。按 scripts/README.md 先登记 requested、再原生派发、同步 running 和真实终态；独立报告必须带 execution_id 关联本批次完成观察、不同父子上下文、revision 和原生证据文件。整体评审另用 task=final、attempt=当前 event_seq，不能用任务报告代替。缺证据只能待复核，不得补造原生 ID。旧运行保留原契约并标记 legacy-unverified；不能改写历史宣称补验收。
+
+多项目工作区仍以工作区作为配置和记录单位；创建运行明确 project_path 和 snapshot_paths，默认子项目范围并显式纳入共享依赖。恢复用 bootstrap --project-path 筛选，不按 cwd 猜测任一活跃任务。
+
 - 所有平台使用同一份 spec/state/events；宿主代理 ID 与模型活动只作为观察信息，不构成第二套任务状态。面板从核心只读投影，不能根据代理返回或空闲就标任务 PASS。
 - 新任务可声明 `owner`、`in_scope`、`out_of_scope` 与 `managed_execution: true`。范围使用规范项目相对路径；目录以 `/` 结尾。任务包包含目标、依赖、范围、验收与检查命令，依赖未通过不能开发。范围声明用于调度冲突判断，不能冒充文件系统写入沙箱或实际变更审计。
 - 可管理执行任务每次进入 verification/review 获取该角色当前 `attempt`，报告必须带相同值。重测、恢复和修复后旧报告不可再次提交；不得替换旧报告的批次来冒充新证据。旧任务继续使用原有快照与阶段门禁，批次字段不强制追补到旧记录。

@@ -96,6 +96,22 @@ test('启动区分继续、新需求、多个候选、阻塞与已关闭任务�
   assert.equal(bootstrap(root, { intent: 'continue' }).selected.action, 'resolve-blocker');
 });
 
+test('子项目筛选按平台路径大小写规则发现并校验指定运行', t => {
+  const { root } = fixture(t);
+  fs.mkdirSync(path.join(root, 'ONE'));
+  create(root, { goal: '维护子项目', project_path: 'ONE', tasks: [{ id: 'task1', title: '实现接口', review: 'none', acceptance: ['接口行为正确'], checks: [{ id: 'check', command: '检查命令' }] }] }, 'run1');
+
+  const discovered = bootstrap(root, { intent: 'continue', project_path: 'one' });
+  if (process.platform === 'win32') {
+    assert.equal(discovered.active_count, 1);
+    assert.equal(discovered.selected.run_id, 'run1');
+    assert.equal(bootstrap(root, { run: 'run1', project_path: 'one' }).selected.run_id, 'run1');
+  } else {
+    assert.equal(discovered.active_count, 0);
+    assert.throws(() => bootstrap(root, { run: 'run1', project_path: 'one' }), /指定运行不属于筛选子项目/);
+  }
+});
+
 test('旧交接保留备份，记录游标检测落后，断开旧会话后按文件恢复', t => {
   const { root } = fixture(t); task(root); saveIndex(root);
   const legacy = fs.readFileSync(path.join(root, '.ai-loop/runs/run1/session.md'), 'utf8');

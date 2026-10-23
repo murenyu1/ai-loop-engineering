@@ -1,3 +1,5 @@
+4.6.0 本地候选尚未发布/安装。原生角色及技能保留 Codex 调度方式，新独立评审要求关联真实调用证据；看板显示子项目归属。下文 4.5.0 下载为历史版本。
+
 # AI Loop Codex 插件 4.5.0
 
 本插件包与通用工作流、DSH 插件统一收录在 [v4.5.0 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.5.0)：[下载 Codex 插件](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.5.0/ai-loop-codex-4.5.0.zip)；完整性校验使用该 Release 的 [SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.5.0/SHA256SUMS)。4.4.3 及更早下载仍作为历史版本保留。插件预检使用 `node PLUGIN/scripts/plugin.mjs doctor --project ROOT`；兼容 `doctor.mjs` 也会识别插件项目。配置检查、原生执行、实际模型和界面分别验收。

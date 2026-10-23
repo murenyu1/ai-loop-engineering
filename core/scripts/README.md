@@ -1,5 +1,19 @@
 # 状态与记忆工具
 
+## 4.6.0 原生执行证据与子项目
+
+新建 `review: independent` 运行自动要求原生证据并使用 schema 4。旧运行保留原契约与历史，`legacy-unverified` 不表示已补验收。参与同一新运行的各端须升级到 4.6.0。
+
+1. 派发前用原生工具写输入 JSON，`activity.mjs record` 登记 requested：`id/task/role/attempt/harness/revision/summary`。独立运行每次进入验证或评审都递增 attempt，即使未声明 managed_execution。
+2. 通过宿主原生工具实际启动，登记 native_id 与 `context:{mode:"independent",id:"真实子上下文",parent_id:"真实父上下文"}`，先更新 running。
+3. 原生工具观察完成后，把真实工具结果保存为本运行 reports/ 内非空文件，更新 completed 并传入 `evidence:{source:"native-log",path:"reports/native.json"}`，source 也可为 native-runtime/native-ui。核心计算文件摘要。
+4. 报告带回 execution_id 和当前 attempt/revision；只有关联同运行/任务/角色/批次且 completed 的独立上下文证据才能通过。未知终态、过期快照、被改写证据均不能独立通过。
+5. 所有任务 done 后，用 task=final 登记整体 tester/reviewer；其 attempt 为派发时 status.event_seq。最终独立评审关联 final 执行记录。若核心游标改变须重新取得本批证据，不能改旧编号。
+
+这些是带证据的宿主观察，无法认证由有写权限的调用者自行伪造的工具日志；不可描述成密码学身份认证。真实模型和 UI 不可见时保持 unverified。
+
+运行可声明 `project_path:"子目录"`，默认快照覆盖该子项目；共享依赖用 `snapshot_paths:["子目录","shared"]` 完整列出。所有路径相对工作区，不能越界或跟随链接。`project_path:"."` 为整个工作区。记录仍在工作区 `.ai-loop/runs/`；bootstrap 增加 --project-path 精确筛选，两个看板显示子项目归属。任务 in_scope 用于调度，不替代快照范围。
+
 ## 4.5.0 角色策略与代理观察
 
 无配置时五个角色全部关闭。通用工作流使用 `roles.mjs status --project ROOT` 查看；`roles.mjs set --project ROOT --role dev --enabled true --model ID --apply` 明确开启，`--enabled false --apply` 关闭并保留模型。没有 `--apply` 只预演。插件使用自己的原生配置与继承，不能混用另一平台设置。

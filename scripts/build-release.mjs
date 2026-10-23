@@ -5,6 +5,8 @@ import { deflateRawSync } from 'node:zlib';
 import { BUNDLE, VERSION, safePath, atomicWrite, assert, mainModule, printResult } from './lib.mjs';
 import { buildPlugin } from './build-plugin.mjs';
 import { packDsh } from './build-dsh.mjs';
+import { REQUIRED_FILES } from './install.mjs';
+import { runtimeContent } from './source.mjs';
 
 export function filesUnder(directory) {
   const result=[];
@@ -41,7 +43,9 @@ export function buildRelease() {
   const lock=JSON.parse(fs.readFileSync(path.join(plugin.output,'bundle.json')));
   const owned=new Set(['bundle.json',...lock.files.map(item=>item.path)]);
   assert(pluginFiles.every(item=>owned.has(item.path)), '插件输出含未登记文件，停止打包；请先核对并移出本机临时文件');
-  const packages=[['workflow',filesUnder(safePath(BUNDLE,'core'))],['codex',pluginFiles]];
+  const workflow = new Map(REQUIRED_FILES.map(file => [file, runtimeContent(BUNDLE, file)]));
+  for (const file of ['README.md', 'ROUTING.md']) workflow.set(file, fs.readFileSync(safePath(BUNDLE, 'core/' + file)));
+  const packages=[['workflow',[...workflow].map(([path,bytes]) => ({path,bytes}))],['codex',pluginFiles]];
   const results=[];
   for(const [kind,files] of packages) {
     const bytes=zip(files),name=`ai-loop-${kind}-${VERSION}.zip`;

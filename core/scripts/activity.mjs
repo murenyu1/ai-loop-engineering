@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { status } from './loop.mjs';
+import { executionEvidence } from './execution.mjs';
 import { ROLE_NAMES, roleEnabled, rolesStatus } from './roles.mjs';
 import { assert, rootPath, safePath, validId, jsonFile, writeJson, locked, args, allowArgs, mainModule, printResult } from './lib.mjs';
 
@@ -10,7 +11,7 @@ export function dispatchCheck(project, run, taskId, role, attempt) {
   const root = rootPath(project), current = status(root, validId(run));
   assert(current.status === 'active', '运行已关闭或停止，不能派发');
   assert(ROLE_NAMES.includes(role), '未知子代理角色');
-  const task = current.tasks.find(item => item.id === taskId);
+  const task = taskId === 'final' && ['tester', 'reviewer'].includes(role) && current.tasks.every(item => item.phase === 'done') ? { id: 'final', phase: role === 'reviewer' ? 'reviewing' : 'verifying', managed_execution: true, attempts: { tester: current.event_seq, reviewer: current.event_seq } } : current.tasks.find(item => item.id === taskId);
   assert(task, '任务不属于当前运行');
   const spec = jsonFile(safePath(root, `.ai-loop/runs/${run}/spec.json`));
   if (spec.role_policy) assert(roleEnabled(spec.role_policy[role]), `角色 ${role} 已关闭，禁止派发`);
@@ -18,8 +19,8 @@ export function dispatchCheck(project, run, taskId, role, attempt) {
   if (savedPolicy.source !== 'default-off') assert(roleEnabled(savedPolicy.roles[role]), `角色 ${role} 已关闭，禁止派发`);
   const phase = { dev: 'developing', tester: 'verifying', reviewer: 'reviewing' }[role];
   if (phase) assert(task.phase === phase, `角色 ${role} 不能在任务阶段 ${task.phase} 派发`);
-  if (task.managed_execution && ['tester', 'reviewer'].includes(role)) assert(Number.isInteger(attempt) && attempt === task.attempts?.[role], '派发 attempt 缺失或已过期');
-  return { run_id: run, task_id: taskId, role, attempt: attempt ?? null, task };
+  if ((task.managed_execution || spec.execution_evidence) && ['tester', 'reviewer'].includes(role)) assert(Number.isInteger(attempt) && attempt === task.attempts?.[role], '派发 attempt 缺失或已过期');
+  return { run_id: run, task_id: taskId, role, attempt: attempt ?? null, task, execution_evidence: current.execution_evidence };
 }
 function read(root, run) {
   const file = safePath(root, `.ai-loop/runs/${validId(run)}/activity.json`);
@@ -35,7 +36,7 @@ function legacyAgents(root, run) {
 }
 export function recordActivity(project, run, input) {
   const root = rootPath(project);
-  assert(input && Object.keys(input).every(key => ['id', 'task', 'role', 'attempt', 'harness', 'native_id', 'session_id', 'state', 'requested', 'observed_model', 'observed_effort', 'usage', 'source', 'summary'].includes(key)), '代理观察字段无效');
+  assert(input && Object.keys(input).every(key => ['id', 'task', 'role', 'attempt', 'harness', 'native_id', 'session_id', 'state', 'requested', 'observed_model', 'observed_effort', 'usage', 'source', 'summary', 'context', 'revision', 'evidence'].includes(key)), '代理观察字段无效');
   validId(input.id);
   assert(states.includes(input.state) && text(input.summary), '代理状态或摘要无效');
   return locked(root, `run-${validId(run)}`, () => {
@@ -56,6 +57,17 @@ export function recordActivity(project, run, input) {
       for (const key of ['task', 'role', 'attempt', 'harness']) assert(input[key] === undefined || input[key] === item[key], '不能改变执行者身份或批次');
     }
     if (input.native_id !== undefined) { assert(text(input.native_id) && (!item.native_id || item.native_id === input.native_id), '真实代理 ID 不能缺失或变化'); item.native_id = input.native_id; }
+    if (input.context !== undefined) {
+      const value = input.context;
+      assert(value && ['independent', 'inherited', 'self'].includes(value.mode) && text(value.id) && text(value.parent_id), '上下文须有 mode、id、parent_id');
+      assert(value.mode !== 'independent' || value.id !== value.parent_id, '独立父子上下文不能相同');
+      assert(!item.context || JSON.stringify(item.context) === JSON.stringify(value), '执行上下文不能变化'); item.context = value;
+    }
+    if (input.revision !== undefined) {
+      assert(input.revision?.algorithm === 'sha256' && /^[a-f0-9]{64}$/.test(input.revision.digest) && Number.isInteger(input.revision.files) && input.revision.files >= 0, '执行快照无效');
+      assert(!item.revision || JSON.stringify(item.revision) === JSON.stringify(input.revision), '执行快照不能变化'); item.revision = input.revision;
+    }
+    if (input.evidence !== undefined) item.evidence = executionEvidence(root, run, input.evidence);
     assert(!['running', 'waiting', 'completed', 'stop_requested'].includes(input.state) || text(item.native_id), '运行观察须有真实原生代理 ID');
     assert(input.source === undefined || ['scheduler', 'native-runtime', 'native-log', 'native-ui'].includes(input.source), '观察来源无效');
     if (input.usage !== undefined && input.usage !== null) {

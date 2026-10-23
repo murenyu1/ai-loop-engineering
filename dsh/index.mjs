@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import z from '@deepseek-ai/schemastery';
@@ -37,7 +38,9 @@ export function apply(ctx, config) {
       if (!agent) return '';
       const root = agent.session.header.cwd;
       if (!projectSettings(config, root).enabled) return '';
-      return `此项目已启用 AI Loop 工业化闭环工作流。当涉及代码开发、功能修改、Bug修复、重构或代码审查等工程任务时，必须遵循 AI Loop 规范：首先加载 ai-loop 技能（skill({ name: 'ai-loop' })），按规范管理运行（Run）与阶段任务；严禁主代理自行直接修改业务代码或单代理越权完成开发；必须通过 ai_loop_delegate 派发对应的专业子代理角色（planner 规划、dev 编码、tester 测试验证、reviewer 独立评审、scribe 知识沉淀）协同推进，以驱动顶部看板和闭环监控。项目根目录：${root}。共享核心：${corePath}。项目规则、deny、原生审批与沙箱优先；不要通过宿主 fs/exec 绕过。`;
+      if (delegationDepthOf(agent) > 0) return `这是 AI Loop 叶角色任务：只执行已分配的工作与验证，不得继续派发；需要审批或额外能力时返回主代理。目标工作区：${root}。`;
+      const enabled = ROLES.filter(role => roleOptions(projectSettings(config, root), role));
+      return `此项目已启用 AI Loop。工程任务先加载 ai-loop 技能并读取运行状态。standard/full 已授权任务使用 ai_loop_delegate 派发已开启角色（${enabled.join('、') || '当前全部关闭'}）；lite 或用户要求单代理时由主代理执行。关闭角色不调用；必须独立评审却缺少执行者时保留待复核，不能伪称完成。派发前登记 requested，返回后通过原生工具保存 ai_loop_observe 给出的真实观察及证据。工作区：${root}；共享核心：${corePath}。项目规则、deny、原生审批与沙箱优先。`;
     }
   });
 
@@ -107,6 +110,7 @@ export function apply(ctx, config) {
 
   const active = new Map();
   const activations = new Map();
+  const prepared = new Map();
   ctx.tools.register(defineTool({
     name: 'ai_loop_delegate',
     description: '将已授权的 AI Loop 阶段交给真实独立上下文的 DSH spawn 子代理。只能在精确启用的项目使用；模型由插件设置决定；返回子代理 id，结果由 DSH 原生回传。子代理不能再次调用此工具。',
@@ -115,6 +119,7 @@ export function apply(ctx, config) {
       run: { type: 'string', required: true, description: '当前 AI Loop run_id。' },
       task: { type: 'string', required: true, description: '当前任务 id。' },
       attempt: { type: 'integer', required: true, description: '当前 tester/reviewer 批次；其他角色填 0。' },
+      execution: { type: 'string', description: '已由原生工具登记的 requested 观察 id；新证据运行必须提供。' },
       description: { type: 'string', required: true, description: '简短任务名称。' },
       prompt: { type: 'string', required: true, description: '完整独立任务，包含范围、验收要求和已有授权。' }
     },
@@ -137,7 +142,13 @@ export function apply(ctx, config) {
       const authorization = workflow.dispatchCheck(root, args.run, args.task, args.role, args.attempt);
       if (authorization.run_id !== args.run || authorization.task_id !== args.task || authorization.role !== args.role || authorization.attempt !== args.attempt) throw new Error('工作流只读派发校验未返回匹配的 run/task/role/attempt。');
       const priorAgents = workflow.activityStatus(root, args.run).agents ?? [];
-      if (priorAgents.some(item => item.task === args.task && item.role === args.role && !['completed', 'failed', 'stopped'].includes(item.state))) throw new Error('该 run/task/role 在核心代理台账中仍为非终态；先由主代理核对原生执行者状态，不能因观察过期而重派。');
+      if (authorization.execution_evidence === 'required-for-independent') {
+        if (!args.execution || !priorAgents.some(item => item.id === args.execution && item.task === args.task && item.role === args.role && item.attempt === args.attempt && item.state === 'requested' && !item.native_id)) throw new Error('须先通过原生工具登记本批次 requested，并提供 execution；避免重载后重复派发。');
+        const ticket = prepared.get(args.execution);
+        const saved = priorAgents.find(item => item.id === args.execution);
+        if (!ticket || ticket.parent_id !== parent.id || ticket.root !== projectKey(root) || ticket.run !== args.run || ticket.task !== args.task || ticket.role !== args.role || ticket.attempt !== args.attempt || saved.requested?.dispatch_token !== ticket.dispatch_token) throw new Error('派发凭据缺失、过期或来自重载前；先核对原生执行者，不复用 requested 重派。');
+      }
+      if (priorAgents.some(item => item.task === args.task && item.role === args.role && !['completed', 'failed', 'stopped'].includes(item.state) && !(item.id === args.execution && item.state === 'requested' && !item.native_id && item.attempt === args.attempt))) throw new Error('该 run/task/role 在核心代理台账中仍为非终态；先由主代理核对原生执行者状态，不能因观察过期而重派。');
       const provider = ctx.subagents.getProvider('spawn');
       if (!provider || provider.inheritsParentContext !== false || !provider.capabilities?.agentOptions || !provider.capabilities?.depthLimit || !provider.prepareContinuable) throw new Error('需要支持独立上下文、模型覆盖和深度限制的 DSH 原生 spawn 后端。');
       const options = roleOptions(settings, args.role);
@@ -153,10 +164,12 @@ export function apply(ctx, config) {
       if (ctx.subagents.getProvider('spawn') !== provider) throw new Error('DSH spawn 后端在模型预检期间发生变化，请重新派发。');
       const latestSettings = projectSettings(config, root);
       if (!latestSettings.enabled || !roleOptions(latestSettings, args.role)) throw new Error(`AI Loop ${ROLE_LABELS[args.role]}角色已关闭或工作区已停用；已阻止新的子代理启动。`);
+      if (JSON.stringify(roleOptions(latestSettings, args.role)) !== JSON.stringify(options)) throw new Error('模型预检期间角色配置变化，请重新预检。');
       const finalAuthorization = workflow.dispatchCheck(root, args.run, args.task, args.role, args.attempt);
       if (finalAuthorization.run_id !== args.run || finalAuthorization.task_id !== args.task || finalAuthorization.role !== args.role || finalAuthorization.attempt !== args.attempt) throw new Error('启动前工作流只读校验未返回匹配的 run/task/role/attempt。');
       const finalAgents = workflow.activityStatus(root, args.run).agents ?? [];
-      if (finalAgents.some(item => item.task === args.task && item.role === args.role && !['completed', 'failed', 'stopped'].includes(item.state))) throw new Error('模型预检期间核心代理台账出现非终态执行者；已阻止启动。');
+      if (authorization.execution_evidence === 'required-for-independent' && !finalAgents.some(item => item.id === args.execution && item.state === 'requested' && !item.native_id && item.requested?.dispatch_token === prepared.get(args.execution)?.dispatch_token)) throw new Error('启动前派发登记已变化，停止派发。');
+      if (finalAgents.some(item => item.task === args.task && item.role === args.role && !['completed', 'failed', 'stopped'].includes(item.state) && !(item.id === args.execution && item.state === 'requested' && !item.native_id && item.attempt === args.attempt))) throw new Error('模型预检期间核心代理台账出现非终态执行者；已阻止启动。');
       const pool = projectKey(root);
       const key = `${args.run}\0${args.task}\0${args.role}\0${args.attempt}`;
       const agents = activations.get(pool) ?? new Map();
@@ -172,6 +185,7 @@ export function apply(ctx, config) {
         if (count > 0) active.set(pool, count); else active.delete(pool);
       };
       try {
+        prepared.delete(args.execution);
         const activation = await ctx.subagents.startActivation({
           provider: 'spawn', label: `AI Loop ${ROLE_LABELS[args.role]}：${args.description}`, delivery: 'parent', signal: exec.signal,
           request: {
@@ -182,13 +196,50 @@ export function apply(ctx, config) {
           }
         });
         agents.delete(startingKey);
-        const observation = { run_id: args.run, task: args.task, role: args.role, attempt: args.attempt, native_id: activation.childId, state: 'running', live: true, stale: false, key };
+        const observation = { execution_id: args.execution ?? null, parent_id: parent.id, context: { mode: 'independent', id: activation.childId, parent_id: parent.id }, run_id: args.run, task: args.task, role: args.role, attempt: args.attempt, native_id: activation.childId, state: 'running', live: true, stale: false, key };
         agents.set(activation.childId, observation);
         // Rejections are observed; the native runtime owns cancellation, teardown
         // and completion delivery. Do not dispose a successful background child.
         activation.result.then(result => { observation.state = result?.stopReason === 'completed' ? 'completed' : result?.stopReason === 'cancelled' ? 'stopped' : result?.stopReason === 'error' ? 'failed' : 'ended_unknown'; observation.live = false; observation.stale = false; release(); }, () => { observation.state = 'failed'; observation.live = false; observation.stale = false; release(); });
-        return `已启动 AI Loop ${ROLE_LABELS[args.role]}子代理 ${activation.childId}（spawn 独立上下文）。`;
+        return `已启动 AI Loop ${ROLE_LABELS[args.role]}子代理 ${activation.childId}（spawn 独立上下文）。执行记录 ${args.execution || '未登记'}；请立即用 ai_loop_observe 读取并经原生工具持久化，不能将启动当作任务通过。`;
       } catch (error) { agents.delete(startingKey); release(); throw error; }
+    }
+  }));
+
+  ctx.tools.register(defineTool({
+    name: 'ai_loop_prepare',
+    description: '只读生成当前主会话的一次性派发凭据。将返回的 requested 输入经原生工具写入 activity，再调用 delegate；插件重载后不能复用旧凭据。',
+    parameters: { run: { type: 'string', required: true, description: '运行编号' }, task: { type: 'string', required: true, description: '任务编号' }, role: { type: 'string', enum: ROLES, required: true, description: '角色' }, attempt: { type: 'integer', required: true, description: '当前批次' } },
+    output: { schema: { type: 'string' }, render: (_args, result) => [{ type: 'text', text: result }] },
+    isConcurrencySafe: () => true,
+    async execute(args, exec) {
+      const parent = exec.agent;
+      if (!parent || delegationDepthOf(parent) > 0) throw new Error('仅主代理可准备派发');
+      const root = parent.session.header.cwd, settings = projectSettings(config, root);
+      if (!settings.enabled || !roleOptions(settings, args.role)) throw new Error('工作区或角色未启用');
+      const workflow = await import(pathToFileURL(path.join(coreRoot, 'scripts', 'activity.mjs')).href);
+      workflow.dispatchCheck(root, args.run, args.task, args.role, args.attempt);
+      if (workflow.activityStatus(root, args.run).agents.some(item => item.task === args.task && item.role === args.role && !['completed', 'failed', 'stopped'].includes(item.state))) throw new Error('已有未确认终态的执行登记；核对原生执行者后处理');
+      const id = `exec-${crypto.randomUUID()}`, dispatch_token = crypto.randomUUID();
+      prepared.set(id, { root: projectKey(root), parent_id: parent.id, ...args, dispatch_token });
+      return JSON.stringify({ id, task: args.task, role: args.role, attempt: args.attempt, harness: 'dsh', state: 'requested', requested: { dispatch_token, parent_id: parent.id }, summary: '原生派发前登记；须补充本次 revision，经原生工具保存' });
+    }
+  }));
+
+  ctx.tools.register(defineTool({
+    name: 'ai_loop_observe',
+    description: '只读取得本插件观察到的真实原生子代理信息；由主代理经原生写入工具保存证据并同步 activity。插件重载后无观察时须向原生运行时核验，不能猜测终态。',
+    parameters: { run: { type: 'string', required: true, description: '运行编号' }, native_id: { type: 'string', required: true, description: 'spawn 返回的真实 childId' } },
+    output: { schema: { type: 'string' }, render: (_args, result) => [{ type: 'text', text: result }] },
+    isConcurrencySafe: () => true,
+    async execute(args, exec) {
+      const parent = exec.agent;
+      if (!parent || delegationDepthOf(parent) > 0) throw new Error('仅主代理可同步原生观察');
+      const root = parent.session.header.cwd;
+      if (!projectSettings(config, root).enabled) throw new Error('工作区未启用');
+      const row = activations.get(projectKey(root))?.get(args.native_id);
+      if (!row || row.run_id !== args.run || row.parent_id !== parent.id) throw new Error('没有此会话的原生观察；须核对运行时，不可重派');
+      return JSON.stringify({ ...row, source: 'native-runtime', persistence: 'pending-native-write', evidence: { run_id: row.run_id, task: row.task, role: row.role, attempt: row.attempt, native_id: row.native_id, context: row.context, state: row.state }, note: '保存此返回为 reports/ 内证据，经 activity record 更新。ended_unknown 不能视为 completed；requested 须先更新 running 再同步终态。' });
     }
   }));
 

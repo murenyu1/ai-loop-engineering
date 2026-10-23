@@ -50,10 +50,10 @@ test('Codex schema1 摘要保留，schema2 关闭策略旧校验器会拒绝', (
   migrated.roles.dev.enabled = false;
   assert.equal(validateProfile(migrated, 'codex').roles.dev.model, legacy.roles.dev.model);
 });
-test('带角色策略的新运行使用 schema3，开发和finish可写，关闭策略不能篡改为旧格式', t => {
+test('独立证据与角色策略运行使用 schema4，开发和finish可写，不能篡改为旧格式', t => {
   const root = fixture(t, { dev: { enabled: true, model: 'm' }, reviewer: { enabled: false } });
   const file = path.join(root, '.ai-loop/runs/r1/state.json');
-  assert.equal(JSON.parse(fs.readFileSync(file)).schema_version, 3);
+  assert.equal(JSON.parse(fs.readFileSync(file)).schema_version, 4);
   begin(root, 'r1', 't1', 'development');
   assert.equal(dispatchCheck(root, 'r1', 't1', 'dev').task.phase, 'developing');
   assert.throws(() => dispatchCheck(root, 'r1', 't1', 'reviewer'), /已关闭/);

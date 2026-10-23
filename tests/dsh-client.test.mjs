@@ -37,6 +37,41 @@ const runtime = name => {
   throw new Error(`Unexpected host dependency: ${name}`);
 };
 const plugin = createPlugin(runtime);
+function settingsView(initial) {
+  const slots = []; let cursor = 0;
+  const React = {
+    createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+    useMemo: fn => fn(), useRef: value => ({ current: value }), useEffect: () => {},
+    useSyncExternalStore: (_subscribe, read) => read(),
+    useState(value) { const index = cursor++; if (!(index in slots)) slots[index] = typeof value === 'function' ? value() : value; return [slots[index], next => { slots[index] = typeof next === 'function' ? next(slots[index]) : next; }]; },
+  };
+  const view = createPlugin(name => name === 'react' ? React : { SettingsForm: 'form' });
+  const state = { writable: true, saving: false, enabled: true, roles: {}, projects: [], maxConcurrent: 3, ...initial };
+  const edits = [];
+  const controller = { store: { subscribe: () => {}, getSnapshot: () => state }, actions: { save: () => {}, discard: () => {} }, edit: (...args) => edits.push(args) };
+  const flatten = node => Array.isArray(node) ? node.flatMap(flatten) : node && typeof node === 'object' ? [node, ...flatten(node.props?.children || [])] : [];
+  return { state, edits, render(props) { cursor = 0; return flatten(view.Card({ ctx: {}, controller, ...props })); } };
+}
+
+test('工作区完整空列表不复活已删除项；加载中保存保留其他配置，成功快照才对账', () => {
+  const f = settingsView({ projects: [{ path: '/gone', enabled: true }, { path: '/live', enabled: true }] });
+  let tree = f.render({ useWorkspaces: () => ({ items: [{ path: '/live' }], phase: 'loading', state: 'loading' }) });
+  tree.find(node => node.type === 'form').props.onSave(); assert.equal(f.edits.length, 0);
+  tree = f.render({ useWorkspaces: () => ({ items: [], phase: 'ready', state: 'idle' }) });
+  assert.ok(!tree.some(node => node.type === 'option' && node.props.value === '/gone'));
+  tree.find(node => node.type === 'form').props.onSave(); assert.deepEqual(f.edits.at(-1), ['projects', []]);
+});
+test('总开关关闭时工作区红点；会话异步到达及未知新会话不能保留旧配置目标', () => {
+  const f = settingsView({ enabled: false, projects: [{ path: '/one', enabled: true }] });
+  let byId = {}; const ctx = { sessions: { list: { getSnapshot: () => ({ byId }) } } };
+  const props = { ctx, sessionId: 's1', useWorkspaces: () => ({ items: [{ path: '/one' }], phase: 'ready', state: 'idle' }) };
+  let tree = f.render(props); assert.equal(tree.find(node => node.type === 'select').props.value, '');
+  byId = { s1: { cwd: '/one' } }; tree = f.render(props);
+  assert.equal(tree.find(node => node.type === 'select').props.value, '/one');
+  assert.match(tree.find(node => node.type === 'option' && node.props.value === '/one').props.children.join(''), /🔴/);
+  tree = f.render({ ...props, sessionId: 'unknown', initialWorkspacePath: '/one' });
+  assert.equal(tree.find(node => node.type === 'select').props.value, '');
+});
 function controller(value = {}) {
   const scope = { value: { enabled: false, maxConcurrent: 3, roles: {}, projects: [], ...value }, writes: [], mutate(changes) { this.writes.push(changes); return true; } };
   return { scope, card: new plugin.Controller(scope) };
@@ -48,7 +83,7 @@ test('DSH client release uses the real lazy factory contract without eager depen
   assert.equal(loaded.id, 'dsh-plugin-ai-loop-engineering');
   const client = loaded.factory(runtime);
   assert.equal(typeof client.apply, 'function');
-  assert.deepEqual(Array.from(client.inject), ['slots', 'configForms', 'remote', 'remote.session']);
+  assert.deepEqual(Array.from(client.inject), ['slots', 'configForms', 'remote', 'remote.session', 'workspaces', 'sessions']);
 });
 
 test('DSH native configuration attaches only to its own installed package page', () => {

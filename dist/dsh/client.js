@@ -411,7 +411,7 @@ window.__ModuleLoader__.load({
       ),
       h('div', { style: { display: 'grid', gap: 10 } },
         projects.length ? h('label', { style: S.label }, '工作区', h('select', { value: path, style: S.input, onChange: event => onProjectChange?.(event.target.value) }, h('option', { value: '' }, '请选择工作区'), projects.map(row => h('option', { key: row.path, value: row.path }, row.path)))) : null,
-        runInfo.runs.length ? h('label', { style: S.label }, '选择运行', h('select', { value: run, style: S.input, onChange: event => setSelection({ key: selectionKey, run: event.target.value }) }, h('option', { value: '' }, '请选择运行'), runInfo.runs.map(row => h('option', { key: row.run_id, value: row.run_id }, `${row.run_id} · ${row.status || '未知'} · ${row.goal || ''}`)))) : null,
+        runInfo.runs.length ? h('label', { style: S.label }, '选择运行', h('select', { value: run, style: S.input, onChange: event => setSelection({ key: selectionKey, run: event.target.value }) }, h('option', { value: '' }, '请选择运行'), runInfo.runs.map(row => h('option', { key: row.run_id, value: row.run_id }, `${row.project_path || "."} / ${row.run_id} · ${row.status || '未知'} · ${row.goal || ''}`)))) : null,
       ),
       !path ? h('div', { style: { color: 'var(--dsw-alias-label-secondary, #888)', fontSize: 13, padding: '12px 0' } }, '请选择一个已启用的工作区。') : runInfo.error || !data ? h('div', { style: { color: 'var(--dsw-alias-label-secondary, #888)', fontSize: 13, padding: '12px 0' } },
         runInfo.loading ? '正在加载当前运行状态…' : (runInfo.error || '当前工作区暂无运行记录。'),
@@ -478,6 +478,8 @@ window.__ModuleLoader__.load({
           sessionWorkspace.set(key, entry.cwd);
           return entry.cwd;
         }
+        sessionWorkspace.delete(key);
+        return '';
       }
     } catch {}
     return sessionWorkspace.get(key) || '';
@@ -674,7 +676,7 @@ window.__ModuleLoader__.load({
             onChange: e => setSelection({ key: selectionKey, run: e.target.value }),
           },
             h('option', { value: '' }, '当前活跃运行'),
-            statusInfo.runs.map(r => h('option', { key: r.run_id, value: r.run_id }, `${r.run_id} · ${r.status || 'status'}`)),
+            statusInfo.runs.map(r => h('option', { key: r.run_id, value: r.run_id }, `${r.project_path || "."} / ${r.run_id} · ${r.status || 'status'}`)),
           ) : null,
           h('button', {
             type: 'button',
@@ -896,62 +898,32 @@ window.__ModuleLoader__.load({
     const { controller, ctx, useWorkspaces, sessionId, initialWorkspacePath, inSidebar } = props;
     const state = React.useSyncExternalStore(controller.store.subscribe, controller.store.getSnapshot, controller.store.getSnapshot);
 
-    const activeSessionCwd = React.useMemo(() => {
-      if (typeof initialWorkspacePath === 'string' && initialWorkspacePath.trim()) {
-        return initialWorkspacePath.trim();
-      }
-      if (typeof sessionId === 'string' && sessionId.trim()) {
-        const cwd = sessionCwdOf(ctx, sessionId.trim());
-        if (cwd) return cwd;
-      }
-      return '';
-    }, [initialWorkspacePath, sessionId, ctx]);
+    const sessions = (() => { try { return ctx?.get?.('sessions') || ctx?.sessions; } catch { return ctx?.sessions; } })();
+    const sessionKey = typeof sessionId === 'string' ? sessionId.trim() : '';
+    const subscribedCwd = React.useSyncExternalStore(
+      listener => sessions?.list?.subscribe?.(listener) || (() => {}),
+      () => sessionKey ? sessionCwdOf(ctx, sessionKey) : '',
+      () => '',
+    );
+    const activeSessionCwd = sessionKey ? subscribedCwd : initialWorkspacePath || '';
+    const selectionKey = JSON.stringify([sessionKey, activeSessionCwd]);
+    const [selection, setSelection] = React.useState(() => ({ key: selectionKey, path: activeSessionCwd }));
+    const path = selection.key === selectionKey ? selection.path : activeSessionCwd;
+    const setPath = value => setSelection({ key: selectionKey, path: value });
 
-    const [path, setPath] = React.useState(activeSessionCwd || '');
-    const lastActiveSessionRef = React.useRef(sessionId);
-    const lastActiveCwdRef = React.useRef(activeSessionCwd);
-
-    React.useEffect(() => {
-      if (sessionId !== lastActiveSessionRef.current || activeSessionCwd !== lastActiveCwdRef.current) {
-        lastActiveSessionRef.current = sessionId;
-        lastActiveCwdRef.current = activeSessionCwd;
-        if (activeSessionCwd) {
-          setPath(activeSessionCwd);
-        }
-      }
-    }, [sessionId, activeSessionCwd]);
-
-    const workspacesFromHook = typeof useWorkspaces === 'function' ? useWorkspaces(s => s?.items || s) : null;
-    const [contextWorkspaces, setContextWorkspaces] = React.useState(() => {
-      try {
-        const ws = ctx?.get?.('workspaces') || ctx?.workspaces;
-        const snap = ws?.list?.getSnapshot?.();
-        if (Array.isArray(snap?.items)) return snap.items;
-      } catch {}
-      return [];
-    });
+    const workspacesFromHook = typeof useWorkspaces === 'function' ? useWorkspaces(s => s) : null;
+    const workspaceStore = (() => { try { return (ctx?.get?.('workspaces') || ctx?.workspaces)?.list; } catch { return ctx?.workspaces?.list; } })();
+    const contextSnapshot = React.useSyncExternalStore(
+      listener => workspaceStore?.subscribe?.(listener) || (() => {}),
+      () => workspaceStore?.getSnapshot?.() ?? null,
+      () => null,
+    );
+    const workspaceSnapshot = workspacesFromHook ?? contextSnapshot;
+    const workspaceReady = Boolean(workspaceSnapshot && workspaceSnapshot.phase === 'ready' && workspaceSnapshot.state === 'idle' && !workspaceSnapshot.error && Array.isArray(workspaceSnapshot.items) && workspaceSnapshot.items.every(item => item && typeof item.path === 'string' && /^(?:[a-z]:[\\/]|\/)/i.test(item.path)));
+    const effectiveWorkspaces = Array.isArray(workspaceSnapshot?.items) ? workspaceSnapshot.items : Array.isArray(workspaceSnapshot) ? workspaceSnapshot : [];
 
     React.useEffect(() => {
-      try {
-        const ws = ctx?.get?.('workspaces') || ctx?.workspaces;
-        if (typeof ws?.list?.subscribe === 'function') {
-          return ws.list.subscribe(() => {
-            const snap = ws.list.getSnapshot?.();
-            if (Array.isArray(snap?.items)) setContextWorkspaces(snap.items);
-          });
-        }
-      } catch {}
-    }, [ctx]);
-
-    const effectiveWorkspaces = React.useMemo(() => {
-      if (Array.isArray(workspacesFromHook) && workspacesFromHook.length > 0) return workspacesFromHook;
-      if (workspacesFromHook && Array.isArray(workspacesFromHook.items) && workspacesFromHook.items.length > 0) return workspacesFromHook.items;
-      if (Array.isArray(contextWorkspaces) && contextWorkspaces.length > 0) return contextWorkspaces;
-      return [];
-    }, [workspacesFromHook, contextWorkspaces]);
-
-    React.useEffect(() => {
-      const off = ctx.on?.('connection/reset', () => { controller.actions.discard(); setPath(''); });
+      const off = ctx.on?.('connection/reset', () => { controller.actions.discard(); setSelection({ key: selectionKey, path: '' }); });
       return () => { if (typeof off === 'function') off(); };
     }, [ctx, controller]);
 
@@ -969,22 +941,10 @@ window.__ModuleLoader__.load({
           if (seen.has(wsPath.toLowerCase())) continue;
           seen.add(wsPath.toLowerCase());
           const proj = state.projects.find(row => samePath(row.path, wsPath));
-          const isEn = Boolean(proj?.enabled);
+          const isEn = Boolean(state.enabled && proj?.enabled);
           const dot = isEn ? '🟢' : '🔴';
           const name = ws.title || ws.name || wsPath;
-          list.push({ path: wsPath, label: `${dot} ${name} (${wsPath})`, enabled: isEn });
-        }
-      } else {
-        for (const p of state.projects) {
-          if (!p || typeof p.path !== 'string') continue;
-          if (seen.has(p.path.toLowerCase())) continue;
-          seen.add(p.path.toLowerCase());
-          const dot = p.enabled ? '🟢' : '🔴';
-          list.push({ path: p.path, label: `${dot} ${p.path} (${p.path})`, enabled: p.enabled });
-        }
-        if (path && !seen.has(path.toLowerCase())) {
-          const dot = project?.enabled ? '🟢' : '🔴';
-          list.push({ path, label: `${dot} ${path} (${path})`, enabled: Boolean(project?.enabled) });
+          list.push({ path: wsPath, label: `${dot} ${name} (${wsPath})${state.dirty ? " · 未保存" : ""}`, enabled: isEn });
         }
       }
       return list;
@@ -1000,7 +960,7 @@ window.__ModuleLoader__.load({
         saving: '保存中…',
       },
       onSave: () => {
-        if (effectiveWorkspaces.length > 0) {
+        if (workspaceReady) {
           const pruned = state.projects.filter(p => effectiveWorkspaces.some(w => samePath(w.path, p.path)));
           if (pruned.length !== state.projects.length) {
             controller.edit('projects', pruned);
@@ -1041,7 +1001,7 @@ window.__ModuleLoader__.load({
           h('h3', { style: S.title }, '🏢 工作区配置与独立管理'),
           h('p', { style: S.subtitle }, '以 DSH 工作区为基本单位，独立管理每个工作区的工作流激活状态、角色模型与并发设置。'),
         ),
-        path ? h('span', { style: S.badge(project?.enabled) }, project?.enabled ? '工作区已激活' : '工作区未激活') : null,
+        path ? h('span', { style: S.badge(state.enabled && project?.enabled) }, state.enabled && project?.enabled ? '工作区已激活' : '工作区未激活') : null,
       ),
       h('div', { style: S.row },
         h('label', { style: { ...S.label, flex: '1 1 100%' } },
@@ -1238,6 +1198,6 @@ window.__ModuleLoader__.load({
       };
     }, 'ai-loop: conversation view');
   }
-  return { inject: ['slots', 'configForms', 'remote', 'remote.session'], apply, Controller, samePath, rolesValid, projectsValid, requestStatus, createStatusPollStore, RunDashboard, SidebarDashboard, SidebarTitle, activeActivityCount, useCatalog, RoleCard, Card, ConversationDashboard, sessionCwdOf };
+  return { inject: ['slots', 'configForms', 'remote', 'remote.session', 'workspaces', 'sessions'], apply, Controller, samePath, rolesValid, projectsValid, requestStatus, createStatusPollStore, RunDashboard, SidebarDashboard, SidebarTitle, activeActivityCount, useCatalog, RoleCard, Card, ConversationDashboard, sessionCwdOf };
 }
 });

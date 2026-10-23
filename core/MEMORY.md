@@ -1,3 +1,5 @@
+4.6.0 多项目工作区以工作区保存 .ai-loop/runs；run 的 project_path 表示子项目归属，snapshot_paths 表示含共享依赖的证据范围。bootstrap --project-path 精确筛选；不自动移动历史记录。旧运行 legacy-unverified 不能视为已补原生验收。
+
 # 项目知识与会话恢复
 
 本协议用于跨会话、跨 harness 的项目记忆。所有工具共享项目 `.ai-loop/memory/` 和 `.ai-loop/runs/`；使用当前平台部署或已启用插件中的脚本，不复制知识库，不改根规范。插件模式不要求每项目安装核心。

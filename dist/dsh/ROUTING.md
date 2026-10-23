@@ -1,3 +1,7 @@
+原生派发登记流程：先 ai_loop_prepare 取得当前主会话一次性凭据，将返回输入补充 revision，经原生工具用 activity record 保存；再将返回 id 作为 ai_loop_delegate.execution。凭据在启动前消费，插件重载后失效，旧 requested 不能重派。启动失败/中断须先核对原生执行者，不能自动删除登记。
+
+4.6.0：新证据运行派发前先由主代理经原生工具登记 requested，ai_loop_delegate.execution 指向该观察 id；工具在启动前校验登记。ai_loop_observe 返回真实内存观察，主代理将返回保存到 reports/ 并用 activity 更新 running/context 与终态/evidence。未知退出不能记 completed；重载丢失观察时核验原生运行时。插件宿主不直接写项目。final 整体评审 attempt=当前 event_seq。
+
 # DSH 工作流路由
 
 原生技能：`ai-loop` 负责工作流与项目记忆，`ai-loop-models` 负责 DSH 插件设置。核心协议与脚本由发行包 `core/` 复用；项目仅保留 `.ai-loop/` 数据。

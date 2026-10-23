@@ -1,5 +1,7 @@
 # 插件原生代理调度
 
+4.6.0 独立证据运行统一用 activity.mjs 保存原生调用观察（旧 agents.mjs 仅兼容旧台账）。派发前登记 requested 与当前 attempt/revision；当前会话原生工具启动后同步 running、native_id 与不同父子上下文；真实返回保存到 reports/ 后同步 completed/evidence，报告带 execution_id。整体评审另登记 task=final、attempt=status.event_seq。原生工具不可用、角色未发现或 doctor 阻断时明确待复核，不启动另一个 CLI 冒充。此协议核对带证据的观察，不证明调用者无法伪造日志，也不自动认证实际模型。
+
 插件模式仅从已安装插件读取核心、技能与角色。项目内保存 .ai-loop 资料，不要求旧版 install.json、项目 .codex 工作流副本或 .agents 技能。
 
 ## 派发前检查

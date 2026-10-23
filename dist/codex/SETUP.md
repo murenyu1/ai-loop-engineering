@@ -1,3 +1,5 @@
+4.6.0 本地候选尚未发布或安装。通用 ZIP 现在包含项目安装适配器及全部依赖，按下文识别 harness 并预演。原生独立运行使用 schema 4 执行证据门，实际调用须在当前会话验收；历史下载链接仅供历史版本。
+
 4.5.0 已作为统一版本发布：[GitHub Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.5.0)。新配置的五个子代理默认关闭，用户选择模型后启用；现有显式配置保留。Codex 使用统一保存和包内会话看板资源，DSH 使用原生会话插槽。设置页显示、真实模型调用和停止能力须分别在宿主客户端验收；安装不修改 settings.json。4.4.3 及更早下载入口保留为历史版本。
 
 # 配置 AI Loop Engineering

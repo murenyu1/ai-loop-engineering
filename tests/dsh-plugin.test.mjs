@@ -147,6 +147,8 @@ test('DSH 技能与动态上下文仅提供必要恢复入口，不写入项目'
   assert.deepEqual(f.skills.map(s => s.name), ['ai-loop', 'ai-loop-models']);
   assert.ok(f.skills.every(s => !s.content.includes('{{CORE}}')));
   assert.match(f.contexts[0].text({ agent: f.parent }), /此项目已启用/);
+  const leaf = f.contexts[0].text({ agent: { ...f.parent, depth: 1 } });
+  assert.match(leaf, /叶角色/); assert.doesNotMatch(leaf, /必须通过 ai_loop_delegate|严禁主代理/);
   f.parent.session.header.cwd = 'D:/unknown';
   assert.equal(f.contexts[0].text({ agent: f.parent }), '');
   const file = fs.readFileSync(new URL('../dsh/index.mjs', import.meta.url), 'utf8');
@@ -347,4 +349,38 @@ test('DSH 项目并发包括尚未发布的子代理启动操作', async () => {
   await assert.rejects(f.run('reviewer', {}, 1, 'task2'), /并发上限/);
   start({ childId: 'starting-child', result: Promise.resolve({ stopReason: 'completed' }) });
   assert.match(await first, /starting-child/);
+});
+
+test('DSH 新运行启动前须持久登记；原生观察可通过获准工具同步完整评审证据', async t => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-dsh-evidence-'));
+  t.after(() => fs.rmSync(project, { recursive: true, force: true }));
+  loop.create(project, { goal: '真实调用记录契约', tasks: [{ id: 'task1', title: '任务', managed_execution: true, acceptance: ['证据完整'], review: 'independent', checks: [{ id: 'c', command: 'fixture' }] }] }, 'dispatch-run');
+  const reports = path.join(project, '.ai-loop/runs/dispatch-run/reports');
+  fs.writeFileSync(path.join(reports, 'test.log'), 'fixture');
+  loop.begin(project, 'dispatch-run', 'task1', 'development'); loop.begin(project, 'dispatch-run', 'task1', 'verification');
+  loop.record(project, 'dispatch-run', { role: 'tester', task_id: 'task1', status: 'PASS', execution: 'self', attempt: 1, revision: loop.snapshot(project), checks: [{ id: 'c', command: 'fixture', exit_code: 0, environment: 'fixture', log: 'reports/test.log' }], issues: [] });
+  loop.begin(project, 'dispatch-run', 'task1', 'review');
+  const f = fixture(config({ projects: [{ path: project, enabled: true }] }));
+  const args = { role: 'reviewer', run: 'dispatch-run', task: 'task1', attempt: 1, execution: 'exec1', description: '审查', prompt: '独立审查' };
+  const exec = { agent: f.parent, signal: signal() };
+  await assert.rejects(f.tools[0].execute(args, exec), /先通过原生工具登记/); assert.equal(f.calls.length, 0);
+  const prepare = f.tools.find(tool => tool.name === 'ai_loop_prepare');
+  const ticket = JSON.parse(await prepare.execute({ run: 'dispatch-run', task: 'task1', role: 'reviewer', attempt: 1 }, exec));
+  args.execution = ticket.id;
+  recordActivity(project, 'dispatch-run', { ...ticket, revision: loop.snapshot(project) });
+  await f.tools[0].execute(args, exec);
+  const reloaded = fixture(config({ projects: [{ path: project, enabled: true }] }));
+  await assert.rejects(reloaded.tools[0].execute(args, { agent: reloaded.parent, signal: signal() }), /凭据缺失、过期/);
+  assert.equal(reloaded.calls.length, 0);
+  const observe = f.tools.find(tool => tool.name === 'ai_loop_observe');
+  let observation = JSON.parse(await observe.execute({ run: 'dispatch-run', native_id: 'child-1' }, exec));
+  assert.equal(observation.state, 'running'); assert.equal(observation.context.parent_id, 'parent');
+  recordActivity(project, 'dispatch-run', { id: ticket.id, native_id: observation.native_id, context: observation.context, state: 'running', summary: '原生运行观察' });
+  f.pending[0].resolve({ stopReason: 'completed' }); await new Promise(resolve => setImmediate(resolve));
+  observation = JSON.parse(await observe.execute({ run: 'dispatch-run', native_id: 'child-1' }, exec));
+  fs.writeFileSync(path.join(reports, 'native.json'), JSON.stringify(observation));
+  recordActivity(project, 'dispatch-run', { id: ticket.id, state: 'completed', evidence: { source: 'native-runtime', path: 'reports/native.json' }, summary: '原生终态持久化' });
+  loop.record(project, 'dispatch-run', { role: 'reviewer', task_id: 'task1', attempt: 1, status: 'APPROVED', execution: 'independent', execution_id: ticket.id, revision: loop.snapshot(project), findings: [], issues: [] });
+  assert.equal(loop.status(project, 'dispatch-run').tasks[0].phase, 'done');
+  await assert.rejects(observe.execute({ run: 'dispatch-run', native_id: 'child-1' }, { ...exec, agent: { ...f.parent, id: 'other' } }), /没有此会话/);
 });

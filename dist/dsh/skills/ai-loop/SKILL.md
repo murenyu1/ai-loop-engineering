@@ -5,6 +5,12 @@ description: 在已启用项目中使用 AI Loop 工作流开发、测试、独�
 
 # DSH AI Loop 工作流
 
+原生派发登记流程：先 ai_loop_prepare 取得当前主会话一次性凭据，将返回输入补充 revision，经原生工具用 activity record 保存；再将返回 id 作为 ai_loop_delegate.execution。凭据在启动前消费，插件重载后失效，旧 requested 不能重派。启动失败/中断须先核对原生执行者，不能自动删除登记。
+
+4.6.0：主/叶角色分开，叶角色只执行已分配任务，不再派发。lite 或用户要求单代理时主代理执行；standard/full 只派发已开启角色，缺少独立 reviewer 时待复核。新证据运行在派发前经原生工具 activity record 登记 requested（含当前 attempt、revision），将其 id 作为 ai_loop_delegate.execution。返回 childId 后调用 ai_loop_observe，保存真实返回到 reports/ 内，通过原生写入/脚本同步 running、context、completed 和 evidence，报告携带 execution_id。插件宿主不直接写项目；未登记/未知终态不能视为完成，冷恢复先核对原生运行时，不删除旧记录重派。整体评审用 task=final、attempt=当前核心 event_seq。
+
+项目根仍取会话工作区；子项目归属用 spec.project_path，快照默认覆盖该子目录，必要共享依赖用 snapshot_paths。恢复可用 --project-path 筛选，记录保持集中于工作区 .ai-loop/runs/，不额外开启子目录工作区。
+
 共享核心目录：`{{CORE}}`。它是插件资源，不是目标项目。项目根目录取 DSH 会话原始工作区，只在 `.ai-loop/` 保存项目运行数据。安装插件不会自动启用任意项目；总开关与精确路径项目开关均须启用。
 
 1. 项目规则、权限和用户要求优先。命中 deny 立即停止，不切换工具、代理、权限或平台绕过；修改 settings.json 前取得具体许可。已有方案确认不重复询问。

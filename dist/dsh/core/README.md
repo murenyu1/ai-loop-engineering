@@ -1,22 +1,30 @@
-# AI Loop 通用工作流 4.5.0 本地候选
+# AI Loop 通用工作流 4.6.0 候选
 
-4.5.0 新增默认关闭的角色策略和代理观察，保留任务范围、执行批次与跨平台交接。当前是本地候选，尚未发布；配置检查、原生执行、实际模型和界面分别验收。
+本候选提供共享流程、状态/记忆工具及独立包中的项目安装适配器，尚未发布或安装。原生角色配置、实际调用、有效模型和 UI 必须分别验收。
 
-这份包提供 AI 开发的计划、实现、验证、评审与交接协议，以及可选的本地状态和分页记忆工具。它不包含 Codex 插件或特定客户端的自动入口。
+## 安装与 harness 识别
 
-通用工作流与 Codex 插件在 [GitHub Releases](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.4.3) 分别下载。
+独立 ZIP 解压后包含 SETUP.md、scripts/install.mjs、scripts/doctor.mjs 及所需依赖，先让当前 AI 读取 SETUP。明确用户指定的 harness 优先，否则按真实会话工具识别，不能看目录名猜测。
 
-## 使用
+按项目部署时，将解压包放在目标项目内的独立源目录，例如 PROJECT/ai-loop-engineering/，目标必须是外层 PROJECT。先预演：
 
-1. 将通用工作流包解压到固定目录，不必复制到每个项目。让 AI 读取该目录的 `WORKFLOW.md`、目标项目已有规则，以及当前阶段需要的 `agents/loop-*.md`。
-2. 有 Node.js 18+ 时，运行 `node 工作流目录/scripts/memory.mjs bootstrap --project 项目绝对路径`。没有运行记录时返回空状态，不表示失败。
-3. 新任务先确认方案和验收，再按流程建立运行；继续任务先读摘要、交接、未关闭工作单元和必要改动文件。命令接口见 `scripts/README.md`。
-4. 项目状态保存在项目自己的 `.ai-loop/`，工作流目录保持只读。重要决定和工作单元及时落盘，中断后新会话才有据可恢复。
+```text
+node ai-loop-engineering/scripts/install.mjs --project PROJECT --harness codex
+```
 
-`WORKFLOW.md` 是执行流程，`MEMORY.md` 是读写与分页协议，`agents/` 是角色约定。独立评审需要客户端真正提供独立执行上下文；本包不会伪造子代理、有效模型或验证通过。
+用户选定角色模型后，使用 SETUP 的模型分工步骤预演/应用，按项目规则确认。基础安装不自动选模型或启用角色。检查配置后，在当前客户端新会话通过真实原生工具执行只读小任务，保存原生 ID、返回及证据；文件存在和 doctor 通过不能替代实际调用。
 
-## Codex 插件
+| 环境 | 项目安装与原生调度 |
+|---|---|
+| Codex | 生成原生 TOML 角色与技能；受信任项目中新会话发现 loop-*，使用当前会话原生委派工具 |
+| Claude Code | 生成原生 agents 与技能；用当前版本 Agent/Task 等真实工具调用 |
+| DeepSeek Harness | 完整调度使用 DSH 插件；通用项目入口本身不提供 spawn 后端 |
+| Cursor / Pi / generic | 已有工作流入口适配，原生多代理尚未实现；不能承诺完整多代理验收 |
 
-Codex 用户可选用独立插件包，本地候选为 `downloads/ai-loop-codex-4.5.0.zip`，构建后生成。插件包含所需核心与 Codex 原生设置接入，用户无需另装通用包。原生设置可见性和保存仍需在实际 Codex 客户端验收。本轮不据历史记录推断远端当前版本。
+没有 Node.js 18+ 时只能维护同等字段的指令模式记录，不声称已执行脚本证据门，也不能因此绕过权限。只使用协议时可从固定目录读取 WORKFLOW/MEMORY，但这不等于安装了原生子代理。
 
-其他客户端可使用通用包，其原生入口由对应适配器负责。源码、目录说明和下载选择见仓库[项目首页](../README.md)。
+## 运行与证据
+
+项目资料写入目标 .ai-loop/。新独立评审运行自动使用 schema 4；报告必须关联本批次 completed 原生观察、不同父子上下文、代码快照和原生证据。整体评审另有 final 执行记录。详见 scripts/README.md。
+
+多项目工作区创建运行声明 project_path 和必要 snapshot_paths，记录仍集中于工作区 .ai-loop/runs/。用 memory.mjs bootstrap --project ROOT --project-path 子目录 --intent continue 筛选。共享依赖须显式纳入快照，旧记录不自动移动。

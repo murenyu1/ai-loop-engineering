@@ -5,6 +5,10 @@ description: 用户要求使用 AI Loop 工作流开发、验证、评审、记�
 
 # AI Loop 项目工作流
 
+4.6.0：先读 ROUTING.md 并执行插件 doctor；dispatch=blocked 停止派发，不能换角色/CLI 绕过。新独立运行先用 activity.mjs 登记 requested，使用当前会话原生工具选择已开启且已发现的 loop-*；记录真实 native_id、父子上下文和当前 attempt/revision，保存实际工具返回至本运行 reports/，同步 running/completed 与 evidence。报告 execution_id 必须关联该记录，最终整体评审另用 final。缺少工具、发现、执行结果或证据必须明确待复核，不能把角色文件或口头扮演视为调用。用主代理原生工具保存记录，不让独立 reviewer 自行修改项目。
+
+工作区含子项目时，在 spec 中声明 project_path、必要 snapshot_paths，以工作区集中记录并按子项目筛选恢复；不要把配置目标切到未启用子目录。
+
 插件根目录是本 SKILL.md 上两级目录。脚本、角色、协议都从插件根读取，不复制进目标项目。目标项目必须依据当前工作区和用户请求确认，不能把插件根或源包当成目标。项目内只保存 `.ai-loop/` 运行资料。
 
 1. 遵守项目与上级规则、现有权限。deny 立即停止，不换工具、代理、权限模式或平台绕过。修改 settings.json 前必须取得具体许可；安装和模型设置默认不改它。三个及以上文件改动先取得方案确认；已有确认不重复询问。

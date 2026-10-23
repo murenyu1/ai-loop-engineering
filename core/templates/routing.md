@@ -1,3 +1,5 @@
+4.6.0 独立证据运行用 activity.mjs 登记 requested/running/completed、真实 native_id/context、当前 revision/attempt 和 reports/ 内原生证据。报告 execution_id 绑定本次完成记录；整体评审另用 final 和当前 event_seq。缺少原生工具或角色时待复核，不能只靠角色文件或 execution 字段通过。
+
 ## 调度与上下文
 
 本工作流明确要求：已批准的 standard/full 任务只使用用户已开启的原生 loop-* 子代理；新配置默认关闭，关闭角色由主代理完成必要工作，独立评审不可执行时保留待复核。主代理负责需求、计划、调度、难点定位、证据与最终验收；简单 lite 任务可直接处理，不为每个机械步骤启动代理。子代理不得继续派发。最多同时运行配置中的并发数；同一工作区开发、测试与评审按依赖串行，只读研究可安全并行。

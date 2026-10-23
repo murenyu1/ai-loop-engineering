@@ -65,7 +65,7 @@ export function nativeSkill(harness) {
     '本技能明确要求：先读取有效角色开关；新配置默认全部关闭。standard/full 的已批准任务只向已开启的原生 loop-* 子代理派发；关闭角色由主代理承担必要工作，不启动替代代理。独立评审要求不能静默降低。lite 任务可直接执行，不强制无意义并发。',
     `先读取项目规则与 ${home}/WORKFLOW.md、${home}/ROUTING.md，内容已在上下文且未变化时复用。使用本部署 memory.mjs bootstrap 恢复共享记忆。命中 deny 立即停止；遵守用户审批范围，不修改 settings.json。`,
     `首次调度先用 ${home}/scripts/doctor.mjs 检查配置，并从当前客户端实际提供的原生工具确认角色发现；Agent/Task 等工具名以客户端为准。只选择已发现的 loop-*，等待原生结果，不用 shell 启动 CLI 冒充当前会话子代理。`,
-    '派发完整的精简任务包，记录真实原生代理 ID；必要规则与验收不能省略。原生能力不足时报告，独立评审不能降格为 self。实际模型、思考强度、UI 分别验收，无法观察就保留 unverified。',
+    '派发前用 activity.mjs 登记 requested；派发后保存真实 native_id、独立父子上下文、当前 attempt/revision、原生证据及终态，报告携带 execution_id，整体评审另用 final；派发完整的精简任务包，记录真实原生代理 ID；必要规则与验收不能省略。原生能力不足时报告，独立评审不能降格为 self。实际模型、思考强度、UI 分别验收，无法观察就保留 unverified。',
     '用户要求切换角色模型时，用 models.mjs 预演/应用；说明重载和下一次派发生效边界。当前执行者安全停止并 checkpoint 后，以新代理接续同一任务，不清零修复次数。agents.mjs 台账记录最后观察，不冒充实时面板。', ''].join('\n');
 }
 export function nativeAgent(profile, role, deployment) {

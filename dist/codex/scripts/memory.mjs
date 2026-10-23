@@ -12,6 +12,7 @@ const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const now = () => new Date().toISOString();
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
 const cut = (value, size) => typeof value === 'string' ? value.slice(0, size) : null;
+const sameProjectPath = (left, right) => process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
 const docPath = name => `.ai-loop/memory/${name}.md`;
 function text(value, name, size = 2000) {
   assert(nonempty(value) && value.length <= size, `${name} 须为非空文本，且不超过 ${size} 个字符`);
@@ -343,7 +344,7 @@ function compactRun(root, run) {
   const open = [...units.values()].filter(unit => unit.stage === 'planned');
   const last = [...units.values()].at(-1);
   return {
-    run_id: run, goal: cut(state.goal, 240), status: state.status,
+    run_id: run, goal: cut(state.goal, 240), status: state.status, project_path: state.project_path ?? '.', snapshot_paths: state.snapshot_paths ?? null,
     continuation: state.status !== 'active' ? 'closed' : blocked ? 'resolve-blocker' : 'candidate',
     task_counts: state.tasks.reduce((counts, task) => { counts[task.phase] = (counts[task.phase] || 0) + 1; return counts; }, {}),
     focus: state.tasks.filter(task => task.phase !== 'done' && task.phase !== 'pending').slice(0, 3).map(task => ({ id: task.id, title: cut(task.title, 160), phase: task.phase, fixes: task.fixes, reason: cut(task.reason, 240) })),
@@ -354,6 +355,7 @@ function compactRun(root, run) {
 export function bootstrap(project, options = {}) {
   const root = rootPath(project);
   const intent = options.intent || 'inspect';
+  if (options.project_path !== undefined) assert(options.project_path === '.' || typeof options.project_path === 'string' && !options.project_path.endsWith('/') && safePath(root, options.project_path), '子项目筛选路径无效');
   assert(['continue', 'new', 'inspect'].includes(intent), '启动 intent 须为 continue / new / inspect');
   assert(intent !== 'new' || !options.run, '新需求不能指定旧运行作为恢复目标');
   const limit = options.limit ?? 10;
@@ -369,11 +371,12 @@ export function bootstrap(project, options = {}) {
     assert(fs.statSync(safePath(root, '.ai-loop/runs/' + id)).isDirectory(), '运行条目不是目录：' + id);
     const state = status(root, id);
     assert(['active', 'complete', 'stopped'].includes(state.status), '运行状态字段无效');
-    if (state.status === 'active') runs.push(compactRun(root, id));
+    if (state.status === 'active' && (options.project_path === undefined || sameProjectPath(state.project_path ?? '.', options.project_path))) runs.push(compactRun(root, id));
   }
   let selected = null;
   if (options.run) {
     const candidate = compactRun(root, options.run);
+    assert(options.project_path === undefined || sameProjectPath(candidate.project_path, options.project_path), '指定运行不属于筛选子项目');
     selected = { run_id: candidate.run_id, action: candidate.continuation === 'closed' ? 'do-not-resume' : candidate.continuation === 'resolve-blocker' ? 'resolve-blocker' : candidate.checkpoint.status === 'ready' ? 'check-project-before-continuing' : 'refresh-handoff-before-continuing', run: candidate };
   } else if (intent === 'continue' && runs.length === 1) {
     const candidate = runs[0];
@@ -460,13 +463,13 @@ export function readMemory(project, options = {}) {
 }
 export function cli(argv) {
   const options = args(argv);
-  allowArgs(options, ['project', 'run', 'input', 'intent', 'limit', 'after', 'query', 'document', 'entry', 'page', 'offset', 'help']);
+  allowArgs(options, ['project', 'project-path', 'run', 'input', 'intent', 'limit', 'after', 'query', 'document', 'entry', 'page', 'offset', 'help']);
   const [command] = options._;
   assert(options._.length <= 1, '记忆工具只能指定一个命令');
   if (options.help || !command) return { commands: 'bootstrap / inspect / save / checkpoint / search / read', usage: 'node HOME/scripts/memory.mjs COMMAND --project ROOT [--intent continue|new|inspect] [--run ID] [--input FILE] [--document NAME --entry ID | --page N --offset N]' };
   if (command === 'read') return options.run ? readHandoff(options.project, options.run, options) : readMemory(options.project, options);
   const input = () => { assert(typeof options.input === 'string', '该命令需要 --input JSON 文件'); return jsonFile(path.resolve(options.input)); };
-  if (command === 'bootstrap') return bootstrap(options.project, { intent: options.intent, run: options.run, after: options.after, ...(options.limit !== undefined ? { limit: Number(options.limit) } : {}) });
+  if (command === 'bootstrap') return bootstrap(options.project, { intent: options.intent, run: options.run, after: options.after, project_path: options['project-path'], ...(options.limit !== undefined ? { limit: Number(options.limit) } : {}) });
   if (command === 'inspect') return inspect(options.project);
   if (command === 'save') return save(options.project, input());
   if (command === 'checkpoint') return checkpoint(options.project, options.run, input());

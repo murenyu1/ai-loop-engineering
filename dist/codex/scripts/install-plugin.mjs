@@ -38,7 +38,9 @@ export function installPlugin(project, options = {}) {
   const existing = safePath(home, marketplaceFile);
   if(fs.existsSync(existing)) {
     const before = jsonFile(existing);
-    assert(JSON.stringify(before) === JSON.stringify(metadata), '本地市场内容被修改，先合并，不覆盖');
+    const expected = structuredClone(metadata);
+    if (previous && before.plugins?.length === 1 && before.plugins[0].version === previous.version) expected.plugins[0].version = previous.version;
+    assert(JSON.stringify(before) === JSON.stringify(expected), '本地市场内容被修改，先合并，不覆盖');
   }
   stage(marketplaceFile, marketplaceContent);
   if (!options.apply) return { status: 'dry-run', changes: changes.map(item => item.path), removed, native_commands: ['codex plugin marketplace add LOCAL_MARKETPLACE --json', 'codex plugin add ai-loop-engineering@ai-loop-engineering --json'], scope: 'global-user', settings_json: 'unchanged' };
