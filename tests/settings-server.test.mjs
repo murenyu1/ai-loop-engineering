@@ -8,7 +8,7 @@ import { registerWorkspace } from '../scripts/workspaces.mjs';
 import { create, event, begin } from '../scripts/loop.mjs';
 import { recordActivity } from '../scripts/activity.mjs';
 import { PassThrough } from 'node:stream';
-import { createSettingsProtocol, DASHBOARD_TOOL, DASHBOARD_URI, PROTOCOL_VERSION, READ_TOOL, UPDATE_TOOL, runSettingsServer } from '../codex/scripts/settings-server.mjs';
+import { createSettingsProtocol, dashboardHtml, DASHBOARD_TOOL, DASHBOARD_URI, PROTOCOL_VERSION, READ_TOOL, UPDATE_TOOL, runSettingsServer } from '../codex/scripts/settings-server.mjs';
 
 test('双页面板按实例隔离草稿，动作错误保持可见且不影响其他面板', async () => {
   const saved = [], factory = () => {
@@ -56,7 +56,7 @@ test('面板回收干净实例且保护其他范围草稿，失效实例不能�
 });
 
 test('双页交互保持草稿与手选工作区，聊天切换刷新历史，删除项立即退出候选', async () => {
-  const html = fs.readFileSync(new URL('../codex/ui/agent-dashboard.html', import.meta.url), 'utf8');
+  const html = dashboardHtml();
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   const elements = new Map(), handlers = new Map(), calls = [];
   const elem = id => {
@@ -294,7 +294,7 @@ test('看板聊天历史、运行列表及单次运行都隔离同工作区其�
 });
 
 test('代理树展示多运行历史、转义内容并仅允许真实 Codex 聊天地址', async () => {
-  const html = fs.readFileSync(new URL('../codex/ui/agent-dashboard.html', import.meta.url), 'utf8');
+  const html = dashboardHtml();
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   const elements = new Map(), handlers = [], calls = [];
   const elem = id => { if (!elements.has(id)) elements.set(id, { value: '', innerHTML: '', textContent: '', hidden: true, listeners: {}, addEventListener(n, fn) { this.listeners[n] = fn; } }); return elements.get(id); };
@@ -313,7 +313,7 @@ test('代理树展示多运行历史、转义内容并仅允许真实 Codex 聊�
   await new Promise(resolve => setTimeout(resolve, 30));
   const view = elem('view');
   assert.match(view.innerHTML, /first/); assert.match(view.innerHTML, /second/);
-  assert.match(view.innerHTML, /class="tree"/); assert.match(view.innerHTML, /&lt;script&gt;/);
+  assert.match(view.innerHTML, /class="graph-port"/); assert.match(view.innerHTML, /&lt;script&gt;/);
   assert.doesNotMatch(view.innerHTML, /data-session="\/root/);
   assert.match(view.innerHTML, /data-session="01234567-89ab-cdef-0123-456789abcdef"/);
   await view.listeners.click({ target: { closest: () => ({ dataset: { session: '01234567-89ab-cdef-0123-456789abcdef' } }) } });
@@ -414,4 +414,50 @@ test('stdio transport 限制超长输入并在下一行恢复解析', async () =
   assert.equal(responses[0].error.code, -32700);
   assert.equal(responses[1].id, 41);
   assert.equal(responses[1].result.protocolVersion, '2025-11-25');
+});
+
+
+function graphHarness(data) {
+  const elements = new Map();
+  const element = id => {
+    if (!elements.has(id)) elements.set(id, { value:'', innerHTML:'', textContent:'', dataset:{}, listeners:{}, addEventListener(name, fn) { this.listeners[name]=fn; }, setAttribute(){} });
+    return elements.get(id);
+  };
+  const key=JSON.stringify([data.root??'',data.run.run_id]);
+  const port={scrollLeft:0,scrollTop:0,clientWidth:320,clientHeight:400};
+  const section={dataset:{graphKey:key},innerHTML:'',querySelector:selector=>selector==='.graph-port'?port:null};
+  const context=vm.createContext({window:{parent:{postMessage(){}},addEventListener(){}},document:{getElementById:element,querySelectorAll:selector=>selector==='[data-graph-key]'?[section]:[],addEventListener(){}},setTimeout,clearTimeout,queueMicrotask});
+  const script=dashboardHtml().match(/<script>([\s\S]*?)<\/script>/)[1].replace(/init\(\);\s*$/, '');
+  vm.runInContext(script,context);
+  context.data=data;
+  vm.runInContext('tree(data)',context);
+  return { context,port,section,element,key,
+    render:()=>vm.runInContext('tree(data)',context),
+    click(dataset){const button={dataset};context.event={target:{closest:selector=>selector==='button'?button:selector==='[data-graph-key]'?section:null}};vm.runInContext('handleGraphClick(event)',context);},
+    state:()=>JSON.parse(vm.runInContext('JSON.stringify(graphState(graphKey(data)))',context)),
+  };
+}
+
+test('共享工作流图保持缩放、折叠和详情，画布输入不能触发配置保存',()=>{
+  const data={root:'/root',run:{run_id:'graph-ui',status:'active',tasks:[{id:'a',title:'任务 A',phase:'developing',review:'independent'},{id:'b',title:'任务 B',phase:'pending',dependencies:['a']}]},activity:{agents:[{id:'dev-a',task:'a',role:'dev',harness:'codex',state:'completed',summary:'<img src=x onerror=bad()>',native_id:'01234567-89ab-cdef-0123-456789abcdef',attempt:1}]}};
+  const f=graphHarness(data),html=f.render();
+  assert.match(html,/class="graph-port"/);assert.match(html,/stroke-dasharray="6 4"/);
+  assert.match(html,/尚无调用/);assert.match(html,/已结束/);assert.doesNotMatch(html,/<img src=x/);assert.match(html,/&lt;img src=x/);
+  assert.match(html,/全部展开/);assert.match(html,/统一记录/);
+  f.click({graphAction:'in'});assert.equal(f.state().zoom,1.1);
+  for(let i=0;i<20;i++)f.click({graphAction:'in'});assert.equal(f.state().zoom,1.5);
+  for(let i=0;i<30;i++)f.click({graphAction:'out'});assert.equal(f.state().zoom,.35);
+  f.click({collapse:'a'});assert.deepEqual(f.state().collapsed,['a']);
+  f.render();assert.deepEqual(f.state().collapsed,['a']);assert.equal(f.state().zoom,.35);
+  f.click({graphAction:'expand'});assert.deepEqual(f.state().collapsed,[]);
+  f.port.scrollLeft=70;f.port.scrollTop=90;f.click({graphAction:'reset'});assert.equal(f.state().zoom,1);assert.equal(f.port.scrollLeft,0);assert.equal(f.port.scrollTop,0);
+});
+
+test('资源注入共享纯函数且显式分支汇合不靠调用时间推断',()=>{
+  const html=dashboardHtml();assert.doesNotMatch(html,/\/\* LOOP_GRAPH \*\//);assert.match(html,/const createWorkflowGraph = function/);
+  const data={run:{run_id:'fanout',tasks:[{id:'a',phase:'pending'},{id:'b',phase:'pending'}],workflow:{nodes:[{id:'plan',task:'run',role:'planner'},{id:'dev-a',task:'a',role:'dev'},{id:'dev-b',task:'b',role:'dev'},{id:'scribe',task:'run',role:'scribe'}],edges:[{from:'plan',to:'dev-a'},{from:'plan',to:'dev-b'},{from:'dev-a',to:'scribe'},{from:'dev-b',to:'scribe'}]}},activity:{agents:[]}};
+  const f=graphHarness(data);const graph=JSON.parse(vm.runInContext('JSON.stringify(createWorkflowGraph(data))',f.context));
+  const dev=graph.nodes.filter(node=>node.role==='dev');assert.equal(dev.length,2);assert.equal(dev[0].y,dev[1].y);assert.notEqual(dev[0].x,dev[1].x);
+  assert.equal(graph.edges.filter(edge=>edge.kind==='call').length,0);
+  assert.ok(graph.edges.filter(edge=>edge.target==='workflow:scribe').length>=2);
 });

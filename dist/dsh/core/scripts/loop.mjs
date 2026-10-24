@@ -57,6 +57,35 @@ export function validateSpec(input) {
     pending.delete(id); visited.add(id);
   };
   for (const id of identifiers) visit(id);
+  let workflow;
+  if (input.workflow !== undefined) {
+    const value = input.workflow;
+    assert(value && typeof value === 'object' && !Array.isArray(value) && Array.isArray(value.nodes) && value.nodes.length > 0 && value.nodes.length <= 500 && Array.isArray(value.edges) && value.edges.length <= 1000, 'workflow 须含有限的 nodes 与 edges');
+    assert(Object.keys(value).every(key => ['nodes', 'edges'].includes(key)), 'workflow 仅支持 nodes 与 edges');
+    assert(!identifiers.has('run') && !identifiers.has('final'), '含 workflow 的运行保留 run 与 final，不能作为正式 task id');
+    const nodeIds = new Set(), bindings = new Set(), taskIds = new Set(identifiers);
+    for (const node of value.nodes) {
+      assert(node && typeof node === 'object' && !Array.isArray(node), 'workflow node 格式无效');
+      validId(node.id); assert(!nodeIds.has(node.id), 'workflow node id 重复'); nodeIds.add(node.id);
+      assert(typeof node.task === 'string' && (taskIds.has(node.task) || ['run', 'final'].includes(node.task)), 'workflow node task 不存在');
+      assert(['planner', 'dev', 'tester', 'reviewer', 'scribe'].includes(node.role), 'workflow node role 无效');
+      if (node.task === 'run') assert(['planner', 'scribe'].includes(node.role), 'run 级节点只允许 planner 或 scribe');
+      else if (node.task === 'final') assert(['tester', 'reviewer'].includes(node.role), 'final 节点只允许 tester 或 reviewer');
+      else assert(node.role !== 'scribe', 'scribe 使用 run 级节点共享记录');
+      const binding = `${node.task}:${node.role}`; assert(!bindings.has(binding), 'workflow 的 task+role 绑定重复'); bindings.add(binding);
+      if (node.label !== undefined) assert(nonempty(node.label) && node.label.length <= 120, 'workflow node label 无效');
+    }
+    const adjacency = new Map([...nodeIds].map(id => [id, []])), edgePairs = new Set();
+    for (const link of value.edges) {
+      assert(link && typeof link === 'object' && !Array.isArray(link) && Object.keys(link).every(key => ['from', 'to'].includes(key)), 'workflow edge 字段无效');
+      assert(typeof link.from === 'string' && typeof link.to === 'string' && nodeIds.has(link.from) && nodeIds.has(link.to) && link.from !== link.to, 'workflow edge 引用无效');
+      const pair = `${link.from}\0${link.to}`; assert(!edgePairs.has(pair), 'workflow edge 重复'); edgePairs.add(pair); adjacency.get(link.from).push(link.to);
+    }
+    const seen = new Set(), stack = new Set();
+    const checkGraph = id => { assert(!stack.has(id), 'workflow 拓扑包含循环'); if (seen.has(id)) return; stack.add(id); for (const to of adjacency.get(id)) checkGraph(to); stack.delete(id); seen.add(id); };
+    for (const id of nodeIds) checkGraph(id);
+    workflow = { nodes: value.nodes.map(({ id, task, role, label }) => ({ id, task, role, ...(label === undefined ? {} : { label }) })), edges: value.edges.map(({ from, to }) => ({ from, to })) };
+  }
   const maxFixes = input.max_fixes ?? 3;
   assert(Number.isInteger(maxFixes) && maxFixes >= 0 && maxFixes <= 3, 'max_fixes 须为 0–3，不允许静默放宽上限');
   const ignore = input.ignore_paths || [];
@@ -69,7 +98,7 @@ export function validateSpec(input) {
   const projectScope = value => validRelativeScope(value) && !['.git', '.ai-loop'].includes(value.split('/')[0].toLowerCase());
   if (input.project_path !== undefined) assert(input.project_path === '.' || projectScope(input.project_path) && !input.project_path.endsWith('/'), 'project_path 须为工作区内相对目录，不能是元数据');
   if (input.snapshot_paths !== undefined) assert(Array.isArray(input.snapshot_paths) && input.snapshot_paths.length > 0 && input.snapshot_paths.every(projectScope), 'snapshot_paths 须为非空工作区相对路径数组，不能是元数据');
-  return { goal: input.goal, tasks: input.tasks, max_fixes: maxFixes, ignore_paths: ignore, ...(input.role_policy !== undefined ? { role_policy: validateRoles(input.role_policy) } : {}), ...Object.fromEntries(['execution_evidence', 'project_path', 'snapshot_paths'].filter(key => input[key] !== undefined).map(key => [key, input[key]])) };
+  return { goal: input.goal, tasks: input.tasks, max_fixes: maxFixes, ignore_paths: ignore, ...(workflow ? { workflow } : {}), ...(input.role_policy !== undefined ? { role_policy: validateRoles(input.role_policy) } : {}), ...Object.fromEntries(['execution_evidence', 'project_path', 'snapshot_paths'].filter(key => input[key] !== undefined).map(key => [key, input[key]])) };
 }
 
 export function snapshot(project, ignore = [], bundle = BUNDLE, scopes) {
@@ -177,7 +206,7 @@ function canDevelopTogether(a, b, definitions) {
   const left = definitions.find(item => item.id === a.id), right = definitions.find(item => item.id === b.id);
   return Array.isArray(left?.in_scope) && left.in_scope.length > 0 && Array.isArray(right?.in_scope) && right.in_scope.length > 0 && !overlaps(left.in_scope, right.in_scope);
 }
-function summary(state, definitions = []) {
+function summary(state, definitions = [], workflow = null) {
   const tasks = state.tasks.map(task => {
     const definition = definitions.find(item => item.id === task.id) || {};
     const dependencies = definition.depends_on || [];
@@ -189,7 +218,7 @@ function summary(state, definitions = []) {
     const closedReason = task.phase === 'pending' && state.status !== 'active' ? `运行状态为 ${state.status}` : blockedReason;
     return { id: task.id, title: task.title, owner: definition.owner, in_scope: definition.in_scope, out_of_scope: definition.out_of_scope, managed_execution: definition.managed_execution === true, attempts: task.attempts || null, dependencies, ready, blocked_reason: closedReason, phase: task.phase, fixes: task.fixes, review: task.review, verification: task.verification, assessment: task.assessment, reason: task.reason };
   });
-  return { run_id: state.run_id, goal: state.goal, status: state.status, stop_reason: state.stop_reason, event_seq: state.event_seq, schema_version: state.schema_version, project_path: state.project_path ?? '.', snapshot_paths: state.snapshot_paths ?? null, execution_evidence: state.schema_version === 4 ? 'required-for-independent' : 'legacy-unverified', tasks };
+  return { run_id: state.run_id, goal: state.goal, status: state.status, stop_reason: state.stop_reason, event_seq: state.event_seq, schema_version: state.schema_version, project_path: state.project_path ?? '.', snapshot_paths: state.snapshot_paths ?? null, workflow, execution_evidence: state.schema_version === 4 ? 'required-for-independent' : 'legacy-unverified', tasks };
 }
 function persist(root, files, state, type, detail) {
   state.updated_at = now();
@@ -235,7 +264,7 @@ export function migrate(project, run, confirmNoActiveExecutors = false) {
       catch (rollbackError) { throw new Error(`迁移失败且事件回滚也失败；原状态备份保留在 ${backup}。原错误：${error.message}；回滚错误：${rollbackError.message}`); }
       throw error;
     }
-    return summary(migrated, spec.tasks);
+    return summary(migrated, spec.tasks, spec.workflow ?? null);
   });
 }
 function taskOf(state, id) {
@@ -301,7 +330,7 @@ export function create(project, input, requestedId) {
     atomicWrite(safePath(root, `.ai-loop/runs/${run}/plan.md`), `# ${spec.goal}\n\n本文件记录方案；执行状态以 state.json 为准。创建运行前由 AI 核对用户批准范围。\n\n${spec.tasks.map(task => `## ${task.id}：${task.title}\n\n- 验收：${task.acceptance.join('；')}\n- 依赖：${(task.depends_on || []).join(', ') || '无'}\n- 评审：${task.review}\n- 检查：${task.checks.map(check => check.id).join(', ')}\n`).join('\n')}`);
     atomicWrite(safePath(root, `.ai-loop/runs/${run}/session.md`), '# 会话交接\n\n- 用户意图：见 spec.json 的 goal\n- 当前进度：运行 status 命令获取，不在此复制计数\n- 已确认决策：由 AI 按需补充\n- 未决问题：无\n- 下一步：开始首个无依赖任务\n');
     persist(root, files, state, 'created', { revision });
-    return summary(state, spec.tasks);
+    return summary(state, spec.tasks, spec.workflow ?? null);
   });
 }
 
@@ -332,7 +361,7 @@ export function begin(project, run, id, phase) {
     }
     task.reason = null;
     persist(root, files, state, 'begin', { task_id: id, phase });
-    return summary(state, spec.tasks);
+    return summary(state, spec.tasks, spec.workflow ?? null);
   });
 }
 
@@ -344,7 +373,7 @@ export function finish(project, run, id) {
     assert(task.phase === 'developing', 'finish 仅适用于正在开发的任务');
     task.phase = 'developed';
     persist(root, files, state, 'finish', { task_id: id });
-    return summary(state, spec.tasks);
+    return summary(state, spec.tasks, spec.workflow ?? null);
   });
 }
 
@@ -382,7 +411,7 @@ export function record(project, run, report) {
       state.stop_reason = report.issues.join('; ') || task.reason;
     }
     persist(root, files, state, 'report', { task_id: task.id, role: report.role, status: report.status, report: reportPath });
-    return summary(state, spec.tasks);
+    return summary(state, spec.tasks, spec.workflow ?? null);
   });
 }
 
@@ -395,7 +424,7 @@ export function fix(project, run, id) {
     assert(state.tasks.every(item => item.id === id || !['developing', 'verifying', 'reviewing'].includes(item.phase) || item.phase === 'developing' && canDevelopTogether(task, item, spec.tasks)), '默认串行：其他任务正在执行或范围未知');
     task.fixes++; task.phase = 'developing'; task.verification = null; task.assessment = null;
     persist(root, files, state, 'fix', { task_id: id, fixes: task.fixes });
-    return summary(state, spec.tasks);
+    return summary(state, spec.tasks, spec.workflow ?? null);
   });
 }
 
@@ -407,7 +436,7 @@ export function resume(project, run, id, reason) {
     assert(state.tasks.every(item => item.id === id || !['developing', 'verifying', 'reviewing'].includes(item.phase) || item.phase === 'developing' && canDevelopTogether(task, item, spec.tasks)), '默认串行：其他任务正在执行或范围未知');
     task.phase = 'developing'; task.verification = null; task.assessment = null; task.reason = null;
     persist(root, files, state, 'resumed', { task_id: id, reason });
-    return summary(state, spec.tasks);
+    return summary(state, spec.tasks, spec.workflow ?? null);
   });
 }
 
@@ -422,7 +451,7 @@ export function stop(project, run, reason) {
       }
     }
     persist(root, files, state, 'stopped', { reason });
-    return summary(state, spec.tasks);
+    return summary(state, spec.tasks, spec.workflow ?? null);
   });
 }
 
@@ -448,7 +477,7 @@ export function complete(project, run, input) {
     const review = requiresReview ? saveReport(root, files, state, { ...input.review, task_id: undefined }) : null;
     state.status = 'complete'; state.delivery = { revision, verification, review };
     persist(root, files, state, 'complete', { revision, verification, review });
-    return summary(state, spec.tasks);
+    return summary(state, spec.tasks, spec.workflow ?? null);
   });
 }
 
@@ -573,7 +602,7 @@ export function status(project, run) {
     }
   }
   const loaded = load(root, run);
-  return summary(loaded.state, loaded.spec.tasks);
+  return summary(loaded.state, loaded.spec.tasks, loaded.spec.workflow ?? null);
 }
 export function cli(argv) {
   const options = args(argv);

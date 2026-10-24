@@ -97,17 +97,14 @@ test('DSH native configuration attaches only to its own installed package page',
     slots: { inject: (slot, run) => { injected.push(slot); return run(); }, register: (options, render) => { registrations.push({ ...options, render }); return () => {}; } },
   };
   plugin.apply(ctx);
-  assert.deepEqual(registrations.map(row => row.name), ['plugins.bundle.config', 'sidebar.right.pane.tab', 'sidebar.right.pane.tab.title', 'conversation.view']);
-  assert.deepEqual(injected, ['plugins.bundle.config', 'sidebar.right.pane.tab', 'sidebar.right.pane.tab.title', 'conversation.view']);
+  assert.deepEqual(registrations.map(row => row.name), ['plugins.bundle.config', 'sidebar.right.pane.tab', 'sidebar.right.pane.tab.title']);
+  assert.deepEqual(injected, ['plugins.bundle.config', 'sidebar.right.pane.tab', 'sidebar.right.pane.tab.title']);
   const panel = registrations[1].render({ sessionId: 'session-1', injectedValue: 'preserved' });
   assert.equal(panel.props.sessionId, 'session-1');
   assert.equal(panel.props.injectedValue, 'preserved');
   const title = registrations[2].render({ sessionId: 'session-1' });
   assert.equal(title.type.name, 'SidebarTitle');
   assert.equal(title.props.sessionId, 'session-1');
-  const convView = registrations[3].render({ sessionId: 'session-1' });
-  assert.equal(convView.type.name, 'ConversationDashboard');
-  assert.equal(convView.props.sessionId, 'session-1');
   cleanup.forEach(stop => stop());
   assert.equal(scope.disposed, true);
 });
@@ -427,7 +424,7 @@ test('聊天范围随工作区选择隔离，切换无工作区会话不残留�
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test('聊天树展开观察对象可读，并使用真实子代理 ID 导航', async t => {
+test('聊天图展开观察对象可读，并使用真实子代理 ID 导航', async t => {
   const observation = { state: 'failed', summary: '子代理调用失败', native_id: 'child-real' };
   const payload = {
     run_id: 'round-1', goal: '树形看板', status: 'active',
@@ -487,16 +484,35 @@ test('聊天树展开观察对象可读，并使用真实子代理 ID 导航', a
     assert.ok(!nodes.includes(observation));
     assert.ok(nodes.includes('Token 用量不可获取'));
     assert.ok(nodes.includes('Tokens: 12 In / 不可获取 Out（部分数据）'));
-    assert.ok(nodes.some(node => node?.props?.children?.includes('任务分支 1')));
-    assert.ok(!nodes.some(node => node?.props?.children?.includes('Round 1')));
+    assert.ok(nodes.some(node => node?.props?.children?.includes('开发')));
+    assert.ok(nodes.some(node => node?.props?.children?.includes('点线：真实调用')));
+    assert.ok(nodes.some(node => node?.props?.role === 'region' && node.props['aria-label']?.includes('关系图')));
+    assert.ok(nodes.some(node => node?.type === 'button' && node.props['aria-label'] === '缩小画布'));
+    assert.ok(nodes.some(node => node?.type === 'button' && node.props['aria-label'] === '放大画布'));
+    assert.ok(nodes.includes('全部展开') && nodes.includes('全部收起'));
+    const testerNode = nodes.find(node => node?.props?.['data-node-id'] === 'stage:task1:tester');
+    assert.ok(testerNode);
+    const canvas=nodes.find(node=>node?.props?.role==='region'&&node.props['aria-label']?.includes('关系图'));
+    assert.match(canvas.props.style.background,/var\(--dsw-alias-bg-canvas, Canvas\)/);
+    assert.match(testerNode.props.style.background,/var\(--dsw-alias-bg-layer-1, Canvas\)/);
+    assert.equal(testerNode.props.style.color,'var(--dsw-alias-text-primary, CanvasText)');
+    const title=testerNode.props.children[0].props.children.find(node=>node?.type==='strong');
+    assert.equal(title.props.style.color,'var(--dsw-alias-text-primary, CanvasText)');
+
+    assert.equal(testerNode.props.tabIndex, 0);
+    assert.equal(typeof testerNode.props.onKeyDown, 'function');
+    testerNode.props.onClick();
+    render();
     expandedAgentId = 'child-partial';
     assert.ok(flatten(render()).includes('观察数据不可获取。'));
+    const devNode = flatten(render()).find(node => node?.props?.['data-node-id'] === 'stage:task1:dev');
+    assert.ok(devNode);
+    devNode.props.onClick();
     expandedAgentId = 'child-real';
-    render();
-    const agentNode = nodes.find(node => node?.props?.['aria-level'] === 3);
-    assert.equal(agentNode?.props?.role, 'treeitem');
-    assert.equal(typeof agentNode?.props?.onKeyDown, 'function');
-    await agentNode.props.onClick();
+    const detailsNodes = flatten(render());
+    const openButton = detailsNodes.find(node => node?.type === 'button' && node.props.children?.includes('进入子代理聊天'));
+    assert.ok(openButton);
+    await openButton.props.onClick();
     assert.deepEqual(opened, [{ parentSessionId: 'parent-session', childSessionId: 'child-real', mode: 'continuable' }]);
     const olderButton = nodes.find(node => node?.type === 'button' && node.props.children?.includes('加载更早运行'));
     assert.ok(olderButton);
@@ -506,7 +522,7 @@ test('聊天树展开观察对象可读，并使用真实子代理 ID 导航', a
     child.props.workspacePath = '/other-workspace';
     render(); await new Promise(resolve => setImmediate(resolve)); render();
     assert.equal(requestedHistoryUrl.searchParams.has('session'), false);
-    const workspaceAgent = flatten(render()).find(node => node?.props?.['aria-level'] === 3);
+    const workspaceAgent = flatten(render()).find(node => node?.type === 'button' && node.props.children?.includes('进入子代理聊天'));
     await workspaceAgent.props.onClick();
     assert.equal(opened.at(-1).parentSessionId, 'parent-session', '工作区范围仍从真实记录取得父聊天');
   } finally {

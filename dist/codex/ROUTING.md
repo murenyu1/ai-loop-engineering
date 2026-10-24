@@ -13,7 +13,9 @@
 
 ## 分工与运行
 
-主代理负责需求、计划、调度、难点与最终验收。standard/full 的已批准任务只使用已开启的原生 loop-*；派发前读取 plugin-models status 逐角色检查 enabled，关闭角色不调用也不换其他子代理，必要工作由主代理完成；lite 可由主代理处理。子代理不继续派发。开发仅在核心范围检查通过时并行，未声明范围则串行；测试与评审等待写入收敛，遵守配置并发上限。
+主代理负责需求、正式任务拆分、调度、难点与最终验收。复杂任务可先调用一个 run 级 planner 提出任务建议，由主代理检查并决定后再建立正式 task；简单任务由主代理直接计划。standard/full 的已批准任务只使用已开启的原生 loop-*；派发前读取 plugin-models status 逐角色检查 enabled，关闭角色不调用也不换其他子代理，必要工作由主代理完成；lite 可由主代理处理。子代理不递归派发。每个方向使用独立正式 task 和互斥范围；多个 task 可并行开发，全部写入收敛后，测试和评审按快照门禁串行。需要多个测试或评审方向时拆成独立可验收 task，主代理汇总其结果；同一 task+role 仍不可同时启动多个未终态执行者。
+
+新运行可在批准 spec 中声明 `workflow.nodes` 与 `workflow.edges`，描述计划、开发、测试、评审的分支和汇合，供共享纵向图布局展示。它不替代 `depends_on`、核心 phase 或报告证据；验证/评审仍以核心正式任务状态和当前 revision 为准。`run` 级仅可派发 planner/scribe，`final` 仅可派发整体 tester/reviewer；scribe 默认每个 run 共用一次，阶段结束再批量记录。流程边表示交接，只有真实原生上下文证据吻合时才展示调用边。
 
 任务包包含项目绝对路径、插件角色路径、run/task 编号、目标、owner、in_scope/out_of_scope、依赖、批准范围、必要项目规则、输入与验收。新工作流可使用 managed_execution；tester/reviewer 接收核心当前角色 attempt 和 revision，报告原样返回，旧批次拒收。派发后记录真实原生标识并等待结果；客户端没有关闭接口时不把关闭作为验收条件，不用 interrupt 冒充关闭。原生工具状态为实时依据，agents.mjs 台账只记录最后观察。
 

@@ -12,10 +12,15 @@ export function dispatchCheck(project, run, taskId, role, attempt) {
   const root = rootPath(project), current = status(root, validId(run));
   assert(current.status === 'active', '运行已关闭或停止，不能派发');
   assert(ROLE_NAMES.includes(role), '未知子代理角色');
+  if (taskId === 'run' && !current.tasks.some(item => item.id === taskId)) assert(['planner', 'scribe'].includes(role), '运行级只允许 planner 或 scribe');
   assert(typeof taskId === 'string' && !taskId.includes('#'), '任务必须使用正式 task id；方向标签不能替代或拆分任务');
-  const task = taskId === 'final' && ['tester', 'reviewer'].includes(role) && current.tasks.every(item => item.phase === 'done') ? { id: 'final', phase: role === 'reviewer' ? 'reviewing' : 'verifying', managed_execution: true, attempts: { tester: current.event_seq, reviewer: current.event_seq } } : current.tasks.find(item => item.id === taskId);
+  const formalTask = current.tasks.find(item => item.id === taskId);
+  const task = formalTask ?? (taskId === 'run' && ['planner', 'scribe'].includes(role) ? { id: 'run', phase: 'developing', managed_execution: false }
+    : taskId === 'final' && ['tester', 'reviewer'].includes(role) && current.tasks.every(item => item.phase === 'done') ? { id: 'final', phase: role === 'reviewer' ? 'reviewing' : 'verifying', managed_execution: true, attempts: { tester: current.event_seq, reviewer: current.event_seq } }
+      : null);
   assert(task, '任务不属于当前运行');
   const spec = jsonFile(safePath(root, `.ai-loop/runs/${run}/spec.json`));
+  if (spec.workflow) assert(spec.workflow.nodes.some(node => node.task === taskId && node.role === role), '任务图未声明此 task+role 派发节点');
   if (spec.role_policy) assert(roleEnabled(spec.role_policy[role]), `角色 ${role} 已关闭，禁止派发`);
   const savedPolicy = rolesStatus(root);
   if (savedPolicy.source !== 'default-off') assert(roleEnabled(savedPolicy.roles[role]), `角色 ${role} 已关闭，禁止派发`);

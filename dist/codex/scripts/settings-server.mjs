@@ -6,6 +6,7 @@ import { events, listRuns, status } from './loop.mjs';
 import { mainModule, VERSION, validId } from './lib.mjs';
 import { readCodexWorkspaces, resolveChatWorkspace } from './codex-workspaces.mjs';
 import { themeCss } from './ui-theme.mjs';
+import { createWorkflowGraph } from './workflow-graph.mjs';
 import { chatHistory } from './dashboard.mjs';
 import { userHome, resolveProfile } from './profiles.mjs';
 import { disabledProfile, roleEnabled } from './routing.mjs';
@@ -19,6 +20,9 @@ export const UPDATE_TOOL = 'ai_loop.settings.update';
 export const DASHBOARD_TOOL = 'ai_loop.dashboard';
 export const DASHBOARD_URI = 'ui://ai-loop-engineering/agent-dashboard';
 const dashboardPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../ui/agent-dashboard.html');
+export const dashboardHtml = () => fs.readFileSync(dashboardPath, 'utf8')
+  .replace('/* LOOP_THEME */', themeCss() + ';')
+  .replace('/* LOOP_GRAPH */', 'const createWorkflowGraph = ' + createWorkflowGraph.toString() + ';');
 const MAX_LINE_BYTES = 1024 * 1024;
 
 const readOutputSchema = {
@@ -124,7 +128,7 @@ export function createSettingsProtocol(manager = createSettingsManager(), option
       if (message.method === 'resources/list') return { jsonrpc: '2.0', id, result: { resources: [{ uri: DASHBOARD_URI, name: 'AI Loop 工作流', title: 'AI Loop 工作流', description: '统一工作区配置与纵向代理看板。', mimeType: 'text/html;profile=mcp-app' }] } };
       if (message.method === 'resources/read') {
         if (params.uri !== DASHBOARD_URI) throw new Error('未知看板资源');
-        return { jsonrpc: '2.0', id, result: { contents: [{ uri: DASHBOARD_URI, mimeType: 'text/html;profile=mcp-app', text: fs.readFileSync(dashboardPath, 'utf8').replace('/* LOOP_THEME */', themeCss() + ';'), _meta: { 'openai/ui': { availableDisplayModes: ['inline', 'fullscreen'], preferredDisplayMode: 'fullscreen' } } }] } };
+        return { jsonrpc: '2.0', id, result: { contents: [{ uri: DASHBOARD_URI, mimeType: 'text/html;profile=mcp-app', text: dashboardHtml(), _meta: { 'openai/ui': { availableDisplayModes: ['inline', 'fullscreen'], preferredDisplayMode: 'fullscreen' } } }] } };
       }
       if (message.method === 'tools/call') {
         const name = params.name;

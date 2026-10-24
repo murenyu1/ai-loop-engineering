@@ -24,6 +24,8 @@ description: 用户要求使用 AI Loop 工作流开发、验证、评审、记�
 
 任务调度使用共享核心的 owner、in_scope/out_of_scope、dependencies 与 ready/blocked_reason；范围未知不并行写入。新任务选择 managed_execution 时，tester/reviewer 报告必须带核心当前角色 attempt 和代码 revision。先确认旧执行者停止再接管，不能只重派。磁盘 mail/inbox 保存语义交接，不替代原生消息、任务状态或真实独立评审。
 
+复杂任务可让一个 `run` 级 planner 提出拆分建议，主代理审核后建立正式任务并统一派发；简单任务由主代理直接计划。run 级 `task` 仅用于 planner/scribe；`final` 仅用于整体 tester/reviewer。可选 `spec.workflow.nodes/edges` 描述有向无环的流程分支/汇合；它只展示交接结构，不改变任务依赖、phase 或证据门禁。多方向用独立正式 task 和互斥范围。同一 task+role 不可并发重复派发，写入收敛后验证与评审按当前 revision 串行。scribe 默认每个 run 共用，按阶段批量记录。看板仅依据匹配的原生父子上下文显示真实调用连线。
+
 插件设置直接读取 Codex 本机工作区列表，用户选择只读，点击统一保存后才保存启用状态，新工作区默认停用；不要求手填路径或单独登记。受信任的 SessionStart 钩子仅为用户启用的精确根目录提供恢复入口，不负责候选发现。必须尊重新命令意图，先恢复必要资料再行动。首次使用恢复入口需在 Codex 原生 `/hooks` 审核并信任钩子，不修改信任缓存或绕过审核。插件设置的实际显示与点击保存仍需在客户端页面验收，不能以自动测试代替。
 
 SessionStart 的 `AI_LOOP_CHAT_CONTEXT` 为当前聊天提供真实 root/session。有该上下文时，子代理观察的 context.parent_id 使用 session，用户请求打开看板时调用 `ai_loop.dashboard` 并传入相同 root/session，自动进入本聊天历次运行。禁止把原生代理别名（如 /root）、插件 cwd、首个工作区或其他聊天缓存当作当前聊天标识。宿主空参数线程入口本身不携带聊天 ID；缺少上下文时只提供工作区运行选择，不能声称已自动定位。子代理聊天入口只使用宿主实际返回的可导航会话 ID，缺少地址保持不可打开。

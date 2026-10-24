@@ -1,6 +1,6 @@
 window.__ModuleLoader__.load({
   id: "dsh-plugin-ai-loop-engineering",
-  factory: function(require) { return (function createPlugin(require, theme = UI_THEME) {
+  factory: function(require) { return (function createPlugin(require, theme = UI_THEME, graphBuilder = createWorkflowGraph) {
   const React = require('react');
   const { SettingsForm, SettingsFormModel } = require('@deepseek-ai/dsh-client-ui-primitives');
   const h = React.createElement;
@@ -669,12 +669,16 @@ window.__ModuleLoader__.load({
     const [expandedAgentId, setExpandedAgentId] = React.useState(null);
     const [filterMode, setFilterMode] = React.useState('all'); // 'all' | 'active'
     const [navigationError, setNavigationError] = React.useState('');
+    const [collapsedTasks, setCollapsedTasks] = React.useState([]);
+    const [zoom, setZoom] = React.useState(1);
+    const [drag, setDrag] = React.useState(null);
+    const [selectedNodeId, setSelectedNodeId] = React.useState('');
+    const canvasRef = React.useRef(null);
 
     const agents = data?.activity?.agents || [];
     const activeAgentsCount = activeActivityCount(agents);
     const tasks = data?.tasks || [];
     const completedTasksCount = tasks.filter(t => t.phase === 'done').length;
-    const progressPercent = tasks.length > 0 ? Math.round((completedTasksCount / tasks.length) * 100) : 0;
     const totalTokens = agents.reduce((acc, a) => {
       acc.in += (a.usage?.input_tokens || 0);
       acc.out += (a.usage?.output_tokens || 0);
@@ -1033,227 +1037,128 @@ window.__ModuleLoader__.load({
         }, '重试') : null,
       ) : null,
 
-      // 统计卡片网格
-      h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: theme.space } },
-        h('div', { style: S.dashCard },
-          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
-            h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '活动子代理 (Live Agents)'),
-            h('span', { style: { fontSize: 16 } }, '🚀'),
-          ),
-          h('div', { style: { fontSize: 22, fontWeight: 700, color: activeAgentsCount > 0 ? '#22c55e' : 'inherit' } }, `${activeAgentsCount} 运行中`),
-          h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, `当前会话累计派发 ${agents.length} 个子代理实例`),
-        ),
-        h('div', { style: S.dashCard },
-          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
-            h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '任务闭环推进 (Pipeline)'),
-            h('span', { style: { fontSize: 16 } }, '🎯'),
-          ),
-          h('div', { style: { fontSize: 22, fontWeight: 700 } }, `${completedTasksCount} / ${tasks.length} 完成`),
-          h('div', { style: { width: '100%', height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2, overflow: 'hidden', marginTop: 4 } },
-            h('div', { style: { width: `${progressPercent}%`, height: '100%', background: '#22c55e', transition: 'width 0.3s ease' } }),
-          ),
-        ),
-        h('div', { style: S.dashCard },
-          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
-            h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, 'Token 消耗统计'),
-            h('span', { style: { fontSize: 16 } }, '🪙'),
-          ),
-          h('div', { style: { fontSize: 14, fontWeight: 600 } }, totalUsageLabel),
-          h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '仅统计已记录用量；未知数据不计作零。'),
-        ),
-        h('div', { style: S.dashCard },
-          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
-            h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '并发配额与分解模式'),
-            h('span', { style: { fontSize: 16 } }, '⚡'),
-          ),
-          h('div', { style: { fontSize: 22, fontWeight: 700, color: 'var(--dsw-alias-brand-primary, #60a5fa)' } }, `${activeAgentsCount} / ${projectRow?.maxConcurrent || formState?.maxConcurrent || 6}`),
-          h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '支持多方向动态任务分解'),
-        ),
+      // 与 Codex 一致，以单行概览让任务图成为主要内容。
+      h('p', { style: { margin: 0, color: 'var(--dsw-alias-text-secondary, #94a3b8)', fontSize: 12 } },
+        `任务完成 ${completedTasksCount}/${tasks.length} · 正在运行 ${activeAgentsCount} · 代理调用 ${agents.length} · ${totalUsageLabel}`,
       ),
 
-      // 思维导图式树形布局区（从上到下垂直延伸）
-      dashboardMessage ? null : h('div', {
-        role: 'tree',
-        'aria-label': `当前聊天运行关系树，第 ${roundIndex + 1} 轮`,
-        style: {
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: 0,
-          position: 'relative',
-          padding: '10px 0 40px 0',
-        },
-      },
-        // 1. 顶部主 Agent 节点 (Root Node)
-        h('div', {
-          role: 'treeitem',
-          'aria-level': 1,
-          'aria-label': '主代理',
-          style: {
-            background: 'var(--dsw-alias-bg-layer-1, #1e222d)',
-            border: '2px solid var(--dsw-alias-brand-primary, #3b82f6)',
-            borderRadius: 12,
-            padding: '14px 24px',
-            minWidth: 0,
-            width: '100%',
-            maxWidth: '100%',
-            textAlign: 'center',
-            boxShadow: '0 4px 20px rgba(59, 130, 246, 0.25)',
-            zIndex: 2,
-            display: 'grid',
-            gap: 6,
-          },
-        },
-          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 } },
-            h('span', { style: { fontSize: 20 } }, '👑'),
-            h('span', { style: { fontSize: 15, fontWeight: 700, color: '#60a5fa' } }, '主代理 (Main Orchestrator)'),
-            h('span', { style: { fontSize: 11, background: 'rgba(59, 130, 246, 0.2)', color: '#93c5fd', padding: '2px 8px', borderRadius: 10 } }, '任务中枢'),
+      // Shared core projection; DSH adds only host-compatible canvas interactions.
+      !dashboardMessage ? (() => {
+        const graphTasks = filterMode === 'active' ? taskGroups.filter(group => group.agents.some(agent => agent.live === true) || !['done', 'pending'].includes(group.task.phase)).flatMap(group => tasks.some(task => task.id === group.task.id) ? [group.task] : []) : tasks;
+        const graph = graphBuilder({ run: { ...(data ?? {}), tasks: graphTasks }, spec: data?.spec ?? { workflow: data?.workflow }, activity: data?.activity ?? { agents } }, { collapsedTasks });
+        const selectedNode = graph.nodes.find(node => node.id === selectedNodeId) ?? graph.nodes.find(node => node.kind === 'stage' && node.agents?.length) ?? null;
+        const roleColor = { main: graph.theme?.accent ?? theme.accent ?? '#3b82f6', task: graph.theme?.accent ?? theme.accent ?? '#3b82f6', ...graph.theme?.roleColors };
+        const toggleTask = taskId => setCollapsedTasks(current => current.includes(taskId) ? current.filter(id => id !== taskId) : [...current, taskId]);
+        const setScale = next => setZoom(Math.max(0.35, Math.min(1.5, Math.round(next * 100) / 100)));
+        const nodeById = new Map(graph.nodes.map(node => [node.id, node]));
+        const canvasWidth = graph.width * zoom, canvasHeight = graph.height * zoom;
+        const edgePath = edge => {
+          const from = nodeById.get(edge.source), to = nodeById.get(edge.target);
+          if (!from || !to) return null;
+          const x1 = from.x + from.width / 2, y1 = from.y + from.height;
+          const x2 = to.x + to.width / 2, y2 = to.y;
+          const bend = Math.max(18, (y2 - y1) / 2);
+          return `M ${x1} ${y1} C ${x1} ${y1 + bend}, ${x2} ${y2 - bend}, ${x2} ${y2}`;
+        };
+        const onPointerDown = event => {
+          if (event.target !== event.currentTarget && event.target?.dataset?.canvasBackground !== 'true') return;
+          setDrag({ x: event.clientX, y: event.clientY, left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop });
+          try { event.currentTarget.setPointerCapture(event.pointerId); } catch {}
+        };
+        const onPointerMove = event => {
+          if (!drag) return;
+          event.currentTarget.scrollLeft = drag.left - (event.clientX - drag.x);
+          event.currentTarget.scrollTop = drag.top - (event.clientY - drag.y);
+        };
+        const onPointerUp = () => setDrag(null);
+        const fitCanvas = () => {
+          const rect = canvasRef.current?.getBoundingClientRect?.();
+          const fit = rect ? Math.min(1, rect.width / graph.width) : 1;
+          setScale(fit);
+          if (canvasRef.current) {
+            canvasRef.current.scrollLeft = Math.max(0, (graph.width * fit - rect.width) / 2);
+            canvasRef.current.scrollTop = 0;
+          }
+        };
+        const detailAgents = selectedNode?.agents ?? [];
+        return h('section', { style: { display: 'grid', gap: theme.space ?? 12, minWidth: 0, color: 'var(--dsw-alias-text-primary, CanvasText)' } },
+          h('p', { style: { margin: 0, color: 'var(--dsw-alias-text-secondary, #94a3b8)', fontSize: 12 } }, '从上到下展示阶段交接与任务依赖；点线仅表示已记录的真实代理调用。代理结束不等于任务通过。'),
+          h('div', { role: 'toolbar', 'aria-label': '工作流画布控制', style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 } },
+            h('button', { type: 'button', style: S.btn(false), 'aria-label': '缩小画布', onClick: () => setScale(zoom - 0.1) }, '缩小'),
+            h('span', { 'aria-live': 'polite', style: { minWidth: 48, textAlign: 'center', fontSize: 12 } }, `${Math.round(zoom * 100)}%`),
+            h('button', { type: 'button', style: S.btn(false), 'aria-label': '放大画布', onClick: () => setScale(zoom + 0.1) }, '放大'),
+            h('button', { type: 'button', style: S.btn(false), onClick: fitCanvas }, '适应画布'),
+            h('button', { type: 'button', style: S.btn(false), onClick: () => { setScale(1); if (canvasRef.current) { canvasRef.current.scrollLeft = 0; canvasRef.current.scrollTop = 0; } } }, '重置'),
+            h('button', { type: 'button', style: S.btn(false), onClick: () => setCollapsedTasks([]) }, '全部展开'),
+            h('button', { type: 'button', style: S.btn(false), onClick: () => setCollapsedTasks(tasks.map(task => task.id)) }, '全部收起'),
           ),
-          h('div', { style: { fontSize: 13, fontWeight: 500, color: 'var(--dsw-alias-text-primary, #e2e8f0)' } },
-            data?.goal ? `总目标: ${data.goal}` : '已就绪，等待工程任务编排与派发',
-          ),
-          h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } },
-            `运行编号: ${data?.run_id || '暂无运行'} · 状态: ${data?.status || 'idle'}`,
-          ),
-        ),
-
-        // 2. 从主 Agent 延伸向下的主干连接线
-        h('div', {
-          'aria-hidden': true,
-          style: {
-            width: 3,
-            height: 36,
-            background: 'linear-gradient(to bottom, #3b82f6, rgba(59, 130, 246, 0.3))',
-            margin: '0 auto',
+          graph.warnings?.length ? h('div', { role: 'status', style: { color: '#fbbf24', fontSize: 12 } }, graph.warnings.join(' ')) : null,
+          h('div', {
+            role: 'region', 'aria-label': `当前聊天运行关系图，第 ${roundIndex + 1} 轮`, tabIndex: 0,
+            onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp,
+            ref: canvasRef,
+            onKeyDown: event => { if (event.target !== event.currentTarget) return; if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','+','=','-'].includes(event.key)) event.preventDefault(); const step = 48; if (event.key === 'ArrowLeft') event.currentTarget.scrollLeft -= step; else if (event.key === 'ArrowRight') event.currentTarget.scrollLeft += step; else if (event.key === 'ArrowUp') event.currentTarget.scrollTop -= step; else if (event.key === 'ArrowDown') event.currentTarget.scrollTop += step; else if (event.key === '+' || event.key === '=') setScale(zoom + 0.1); else if (event.key === '-') setScale(zoom - 0.1); },
+            style: { minWidth: 0, maxWidth: '100%', height: 'min(60vh, 640px)', minHeight: 300, overflow: 'auto', border: '1px solid color-mix(in srgb, var(--dsw-alias-text-primary, CanvasText) 18%, transparent)', borderRadius: theme.radius ?? 10, background: 'radial-gradient(color-mix(in srgb, var(--dsw-alias-text-primary, CanvasText) 16%, transparent) 1px, transparent 1px), var(--dsw-alias-bg-canvas, Canvas)', backgroundSize: '20px 20px', cursor: drag ? 'grabbing' : 'grab', touchAction: 'none' },
           },
-        }),
-
-        // 3. 一轮轮任务的思维导图节点（从上到下排列）
-        displayedGroups.length === 0 ? h('div', {
-          style: {
-            background: 'var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.15))',
-            border: '1px dashed var(--dsw-alias-border-l1, rgba(255, 255, 255, 0.1))',
-            borderRadius: 8,
-            padding: '28px 24px',
-            textAlign: 'center',
-            maxWidth: 480,
-            margin: '0 auto',
-            display: 'grid',
-            gap: 8,
-          },
-        },
-          h('div', { style: { fontSize: 24 } }, '🌱'),
-          h('div', { style: { fontSize: 14, fontWeight: 600 } }, filterMode === 'active' ? '当前没有活动任务' : data?.run_id ? '当前运行暂无正式任务' : '当前聊天暂无关联运行'),
-          h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, data?.run_id ? '任务完成或被筛选隐藏后，状态会显示在对应工作流轮次中。' : '只有绑定到当前聊天的运行历史会显示在此处。'),
-        ) : displayedGroups.map((group, gIdx) => {
-          const isLastGroup = gIdx === displayedGroups.length - 1;
-          const taskPhase = group.task.phase || 'pending';
-
-          return h('div', {
-            key: `group-${group.task.id}-${gIdx}`,
-            role: 'treeitem',
-            'aria-level': 2,
-            'aria-expanded': true,
-            style: {
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              width: '100%',
-              position: 'relative',
-            },
-          },
-            // 任务节点卡片 (Round & Task Card)
-            h('div', {
-              style: {
-                background: 'var(--dsw-alias-bg-layer-1, #1a1e29)',
-                border: `1.5px solid ${taskPhase === 'done' ? '#22c55e' : taskPhase === 'developing' ? '#3b82f6' : 'rgba(255,255,255,0.12)'}`,
-                borderRadius: 10,
-                padding: '12px 20px',
-                minWidth: 0,
-                maxWidth: '100%',
-                width: '100%',
-                boxSizing: 'border-box',
-                boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
-                display: 'grid',
-                gap: 8,
-                zIndex: 2,
-              },
-            },
-              h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 } },
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-                  h('span', {
-                    style: {
-                      fontSize: 11,
-                      fontWeight: 700,
-                      background: 'rgba(59, 130, 246, 0.2)',
-                      color: '#60a5fa',
-                      padding: '2px 8px',
-                      borderRadius: 12,
-                    },
-                  }, `任务分支 ${group.round}`),
-                  h('span', { style: { fontWeight: 700, fontSize: 14 } },
-                    group.isGlobal ? group.task.title : `任务 #${group.task.id}: ${group.task.title || '开发任务'}`,
-                  ),
+            h('div', { 'data-canvas-background': 'true', style: { position: 'relative', width: canvasWidth, height: canvasHeight, minWidth: canvasWidth, minHeight: canvasHeight, margin: '0 auto' } },
+              h('div', { style: { position: 'absolute', inset: 0, width: graph.width, height: graph.height, transform: `scale(${zoom})`, transformOrigin: 'top left' } },
+                h('svg', { 'aria-hidden': true, width: graph.width, height: graph.height, viewBox: `0 0 ${graph.width} ${graph.height}`, style: { position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none' } },
+                  graph.edges.map(edge => h('path', { key: edge.id, d: edgePath(edge), fill: 'none', stroke: 'currentColor', strokeOpacity: 0.4, strokeWidth: 1.5, strokeDasharray: edge.kind === 'call' ? '2 4' : edge.kind === 'dependency' ? '6 4' : undefined })),
                 ),
-                h('span', { style: S.phaseBadge(taskPhase) }, phaseLabel(taskPhase)),
-              ),
-
-              h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)', display: 'flex', flexWrap: 'wrap', gap: 12 } },
-                h('span', null, `子代理实例: ${group.agents.length} 个`),
-                group.task.review ? h('span', null, `评审模式: ${group.task.review}`) : null,
-                group.task.fixes ? h('span', null, `修复轮次: ${group.task.fixes}`) : null,
-                group.task.attempts ? h('span', null, `测试/评审尝试: ${group.task.attempts.tester || 0}/${group.task.attempts.reviewer || 0}`) : null,
-                group.task.blocked_reason ? h('span', { style: { color: '#ef4444' } }, `阻塞: ${group.task.blocked_reason}`) : null,
+                graph.nodes.map(node => {
+                  const color = roleColor[node.role] ?? (node.kind === 'main' || node.kind === 'task' ? roleColor.main : '#94a3b8');
+                  const isCollapsed = node.kind === 'task' && collapsedTasks.includes(node.taskId);
+                  const canCollapse = node.kind === 'task' && node.taskId;
+                  return h('article', {
+                    key: node.id, 'data-node-id': node.id, role: 'button', tabIndex: 0, 'aria-label': `${node.label} · ${node.status}`,
+                    onClick: () => setSelectedNodeId(node.id),
+                    onKeyDown: event => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); setSelectedNodeId(node.id); } },
+                    style: { position: 'absolute', left: node.x, top: node.y, width: node.width, height: node.height, padding: 10, boxSizing: 'border-box', overflow: 'hidden', border: `1px solid ${selectedNodeId === node.id ? color : 'color-mix(in srgb, var(--dsw-alias-text-primary, CanvasText) 22%, transparent)'}`, borderTop: `3px solid ${color}`, borderRadius: theme.radius ?? 10, background: 'var(--dsw-alias-bg-layer-1, Canvas)', color: 'var(--dsw-alias-text-primary, CanvasText)', display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 4, boxShadow: selectedNodeId === node.id ? `0 0 0 1px ${color}` : undefined },
+                  },
+                    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4, minWidth: 0 } },
+                      h('strong', { style: { color: 'var(--dsw-alias-text-primary, CanvasText)', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: node.label }, node.label),
+                      canCollapse ? h('button', { type: 'button', 'aria-label': isCollapsed ? '展开任务阶段' : '折叠任务阶段', style: { ...S.btn(false), padding: '1px 6px', flex: '0 0 auto' }, onClick: event => { event.stopPropagation(); toggleTask(node.taskId); } }, isCollapsed ? '＋' : '−') : null,
+                    ),
+                    h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-primary, CanvasText)', overflow: 'hidden', textOverflow: 'ellipsis', overflowWrap: 'anywhere' }, title: node.status }, node.status),
+                    h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, node.agents?.length ? `${node.agents.length} 次真实调用 · 选择查看` : node.kind === 'stage' ? '尚无调用' : node.taskId ? `任务 ${node.taskId}` : data?.run_id ?? ''),
+                  );
+                }),
               ),
             ),
-
-            // 从任务节点向下延伸的分支导轨
-            group.agents.length > 0 ? h('div', {
-              'aria-hidden': true,
-              style: {
-                width: 2,
-                height: 24,
-                background: 'rgba(255, 255, 255, 0.2)',
-              },
-            }) : null,
-
-            // 该任务下的子 Agent 节点群（挂载在任务下方，呈思维导图分支）
-            group.agents.length > 0 ? h('div', {
-              role: 'group',
-              style: {
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'center',
-                gap: theme.space,
-                width: '100%',
-                maxWidth: '100%',
-                position: 'relative',
-                padding: '0 10px',
-                boxSizing: 'border-box',
-              },
-            },
-              group.agents.map((agent, aIdx) => renderAgentNode(agent, aIdx)),
-            ) : h('div', {
-              style: {
-                fontSize: 11,
-                color: 'var(--dsw-alias-text-secondary, #64748b)',
-                padding: '6px 0',
-              },
-            }, '该任务分支暂无派发的独立子代理'),
-
-            // 轮次之间的垂直延伸主线
-            !isLastGroup ? h('div', {
-              'aria-hidden': true,
-              style: {
-                width: 3,
-                height: 36,
-                background: 'linear-gradient(to bottom, rgba(59, 130, 246, 0.3), rgba(59, 130, 246, 0.5))',
-                margin: '12px auto',
-              },
-            }) : null,
-          );
-        }),
-      ),
+          ),
+          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '实线：阶段交接', '虚线：任务依赖', '点线：真实调用'),
+          selectedNode ? h('section', { className: 'workflow-node-details', 'aria-label': `${selectedNode.label}调用详情`, style: S.dashCard },
+            h('strong', { style: { color: roleColor[selectedNode.role] ?? roleColor.main } }, `${selectedNode.label} · ${detailAgents.length} 次真实调用`),
+            detailAgents.length ? detailAgents.map((agent, index) => {
+              const id = agent.native_id || agent.id || `agent-${index}`;
+              const childId = agent.native_id || agent.session_id || agent.context?.id;
+              const expanded = expandedAgentId === id;
+              return h('article', { key: id, style: { padding: `${theme.space ?? 12}px 0`, borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.1))' } },
+                h('div', { style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
+                  h('strong', null, `${ROLES[agent.role]?.name ?? agent.role ?? '代理'} · ${agentStateLabel(agent.state)}`),
+                  childId ? h('button', { type: 'button', style: S.btn(false), onClick: () => openAgentSession(ctx, sessionKey, agent).then(opened => setNavigationError(opened ? '' : '未能打开子代理聊天，请确认 DSH 会话仍可用。')) }, '进入子代理聊天') : h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '未记录可导航的聊天标识'),
+                ),
+                h('p', { style: { margin: '4px 0', fontSize: 12 } }, agent.summary ?? agent.observation?.summary ?? '暂无摘要'),
+                h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, tokenUsageLabel(agent.usage)),
+                h('button', { type: 'button', style: { ...S.btn(false), display: 'block', marginTop: 6 }, onClick: () => setExpandedAgentId(expanded ? null : id) }, expanded ? '收起观察详情' : '查看观察详情'),
+                expanded ? h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 180, overflow: 'auto', margin: '6px 0', fontSize: 11 } }, typeof agent.note === 'string' ? agent.note : agent.note ? JSON.stringify(agent.note, null, 2) : agent.observation ? JSON.stringify(agent.observation, null, 2) : '观察数据不可获取。') : null,
+              );
+            }) : h('p', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, selectedNode.kind === 'stage' ? '此阶段尚无派发记录。' : '此节点暂无代理调用。'),
+          ) : null,
+          h('details', { className: 'workflow-all-agents', style: { ...S.dashCard, padding: theme.space ?? 12 } },
+            h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, `全部代理调用 (${agents.length})`),
+            agents.map((agent, index) => {
+              const id = agent.native_id || agent.id || `agent-${index}`;
+              const childId = agent.native_id || agent.session_id || agent.context?.id;
+              return h('article', { key: id, style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.1))' } },
+                h('span', { style: { fontSize: 12 } }, `${ROLES[agent.role]?.name ?? agent.role ?? '代理'} · ${agent.task ?? '运行级'} · ${agentStateLabel(agent.state)} · ${agent.summary ?? '暂无摘要'}`),
+                h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, tokenUsageLabel(agent.usage)),
+                childId ? h('button', { type: 'button', style: S.btn(false), onClick: () => openAgentSession(ctx, sessionKey, agent).then(opened => setNavigationError(opened ? '' : '未能打开子代理聊天，请确认 DSH 会话仍可用。')) }, '进入聊天') : null,
+              );
+            }),
+          ),
+        );
+      })() : null,
     );
   }
 
@@ -1281,7 +1186,7 @@ window.__ModuleLoader__.load({
     const state = React.useSyncExternalStore(controller.store.subscribe, controller.store.getSnapshot, controller.store.getSnapshot);
     const saved = controller.savedSnapshot?.() ?? state;
     const [page, setPage] = React.useState('settings');
-    return h('section', { style: { fontSize: theme.font, minWidth: 0, height: '100%', overflowY: 'auto', padding: theme.space } },
+    return h('section', { style: { fontSize: theme.font, minWidth: 0, height: '100%', overflowY: 'auto', overflowX: 'auto', padding: theme.space } },
       h('h2', { style: S.title }, 'AI Loop 工作流'),
       h('label', { style: S.label }, '工作区选择', h('select', { value: path, disabled: state.saving || !ready, style: S.input, onChange: event => changePath(event.target.value) },
         h('option', { value: '' }, '全局默认 · 请选择工作区'),
@@ -1660,23 +1565,192 @@ window.__ModuleLoader__.load({
       hostNatively();
     }
 
-    ctx.effect(() => {
-      let offView = null;
-      try {
-        offView = ctx.slots.inject('conversation.view', () => ctx.slots.register({
-          name: 'conversation.view',
-          id: 'ai-loop-engineering:view',
-          order: 32,
-          label: () => '工作流',
-        }, viewProps => h(ConversationDashboard, { ...viewProps, ctx, controller })));
-      } catch (err) {
-        console.warn('[ai-loop-engineering] conversation view registration failed:', err);
-      }
-      return () => {
-        try { offView?.(); } catch {}
-      };
-    }, 'ai-loop: conversation view');
   }
   return { inject: ['slots', 'configForms', 'remote', 'remote.session', 'workspaces', 'sessions'], apply, Controller, samePath, rolesValid, projectsValid, requestStatus, tokenUsageLabel, statusMessage, createStatusPollStore, RunDashboard, SidebarDashboard, SidebarTitle, activeActivityCount, useCatalog, RoleCard, Card, ConversationDashboard, sessionCwdOf };
-})(require, {"accent":"#3b82f6","success":"#22c55e","danger":"#ef4444","warning":"#eab308","radius":10,"space":12,"font":13,"indent":14}); }
+})(require, {"accent":"#3b82f6","success":"#22c55e","danger":"#ef4444","warning":"#eab308","radius":10,"space":12,"font":13,"indent":14,"graphNodeWidth":220,"graphNodeHeight":104,"graphGapX":32,"graphGapY":36,"graphRoles":{"planner":"#818cf8","dev":"#34d399","tester":"#fbbf24","reviewer":"#c084fc","scribe":"#60a5fa"}}, function createWorkflowGraph(data, { collapsedTasks = [] } = {}) {
+  const run = data?.run ?? {}, tasks = Array.isArray(run.tasks) ? run.tasks : [];
+  const agents = Array.isArray(data?.activity?.agents) ? data.activity.agents : [];
+  const workflow = run.workflow ?? data?.spec?.workflow;
+  const collapsed = new Set(collapsedTasks), nodes = [], edges = [], warnings = [];
+  const labels = { planner: '计划', dev: '开发', tester: '测试', reviewer: '评审', scribe: '记录' };
+  const states = { active: '进行中', complete: '已完成', pending: '待开始', developing: '开发中', developed: '待验证', verifying: '验证中', tested: '待评审', reviewing: '评审中', done: '已通过', needs_fix: '待修复', blocked: '阻塞', PASS: '验证通过', FAIL: '验证失败', APPROVED: '已批准', REJECTED: '已拒绝', requested: '已请求', running: '运行中', waiting: '等待中', completed: '已结束', failed: '失败', stopped: '已停止', unknown: '未知' };
+  const stageStatus = (task, role) => {
+    if (role === 'planner') return '计划';
+    if (role === 'dev') return task.phase === 'developing' ? '开发中' : ['developed', 'verifying', 'tested', 'reviewing', 'done'].includes(task.phase) ? '已交付' : states[task.phase] ?? task.phase ?? '待开始';
+    if (role === 'tester') return states[task.verification?.status] ?? task.verification?.status ?? (task.phase === 'verifying' ? '验证中' : ['tested', 'reviewing', 'done'].includes(task.phase) ? '已通过' : '待开始');
+    if (role === 'reviewer') return states[task.assessment?.status] ?? task.assessment?.status ?? (task.review === 'none' ? '无需评审' : task.phase === 'reviewing' ? '评审中' : task.phase === 'done' ? '已通过' : '待开始');
+    return states[task.phase] ?? task.phase ?? '待开始';
+  };
+  const width = 220, height = 104, gapX = 32, gapY = 36, margin = 24;
+  const add = node => { nodes.push({ width, height, ...node }); return node.id; };
+  const edge = (source, target, kind) => { if (source && target && !edges.some(row => row.source === source && row.target === target && row.kind === kind)) edges.push({ id: `${kind}:${source}:${target}`, source, target, kind }); };
+  const runId = 'run';
+  add({ id: runId, kind: 'main', label: '主 agent', status: states[run.status] ?? run.status ?? '未知', x: margin, y: margin, agents: [] });
+  const workflowNodes = workflow?.nodes, workflowEdges = workflow?.edges;
+  const visibleStageIds = new Map(), systemStageIds = new Map(), taskCards = new Map();
+  if (Array.isArray(workflowNodes) && Array.isArray(workflowEdges) && workflowNodes.length) {
+    const ids = new Set(workflowNodes.map(item => item.id));
+    const outgoing = new Map([...ids].map(id => [id, []]));
+    const indegree = new Map([...ids].map(id => [id, 0]));
+    const validEdges = [];
+    for (const link of workflowEdges) {
+      if (!ids.has(link.from) || !ids.has(link.to) || link.from === link.to) { warnings.push(`流程边 ${link.from} → ${link.to} 引用无效。`); continue; }
+      if (outgoing.get(link.from).includes(link.to)) { warnings.push(`流程边 ${link.from} → ${link.to} 重复。`); continue; }
+      outgoing.get(link.from).push(link.to); indegree.set(link.to, indegree.get(link.to) + 1); validEdges.push(link);
+    }
+    const queue = [...indegree].filter(([, degree]) => degree === 0).map(([id]) => id), levels = new Map(queue.map(id => [id, 1]));
+    for (let cursor = 0; cursor < queue.length; cursor++) {
+      const id = queue[cursor];
+      for (const child of outgoing.get(id)) {
+        levels.set(child, Math.max(levels.get(child) ?? 1, levels.get(id) + 1));
+        indegree.set(child, indegree.get(child) - 1);
+        if (indegree.get(child) === 0) queue.push(child);
+      }
+    }
+    if (queue.length !== ids.size) warnings.push('流程图包含循环；循环部分已省略。');
+    const valid = new Set(queue), byNode = new Map(workflowNodes.map(item => [item.id, item]));
+    const foldableTasks = new Set();
+    for (const taskId of collapsed) {
+      if (!workflowNodes.some(item => item.task === taskId && valid.has(item.id))) continue;
+      const hasCrossTaskEdge = validEdges.some(link => valid.has(link.from) && valid.has(link.to) && byNode.get(link.from).task !== byNode.get(link.to).task && (byNode.get(link.from).task === taskId || byNode.get(link.to).task === taskId));
+      if (hasCrossTaskEdge) warnings.push(`任务 ${taskId} 与其他任务交错连接，已保留必要阶段，无法整体折叠。`);
+      else foldableTasks.add(taskId);
+    }
+    const layoutIds = new Set(queue.filter(id => !foldableTasks.has(byNode.get(id).task)));
+    const layoutEdges = [];
+    const layoutEdge = (from, to) => { if (from && to && from !== to && !layoutEdges.some(link => link.from === from && link.to === to)) layoutEdges.push({ from, to }); };
+    for (const task of tasks) if (workflowNodes.some(item => item.task === task.id && valid.has(item.id))) layoutIds.add(`$task:${task.id}`);
+    for (const link of validEdges) {
+      if (!valid.has(link.from) || !valid.has(link.to)) continue;
+      const from = byNode.get(link.from), to = byNode.get(link.to);
+      const source = foldableTasks.has(from.task) ? `$task:${from.task}` : from.id;
+      const target = foldableTasks.has(to.task) ? `$task:${to.task}` : to.id;
+      layoutEdge(source, target);
+    }
+    for (const task of tasks) {
+      const taskId = `$task:${task.id}`;
+      if (!layoutIds.has(taskId)) continue;
+      if (foldableTasks.has(task.id)) continue;
+      const ownNodes = workflowNodes.filter(item => item.task === task.id && valid.has(item.id));
+      const ownIds = new Set(ownNodes.map(item => item.id));
+      const entries = ownNodes.filter(item => !validEdges.some(link => link.to === item.id && ownIds.has(link.from)));
+      for (const item of entries) layoutEdge(taskId, item.id);
+    }
+    const layoutOut = new Map([...layoutIds].map(id => [id, []])), layoutDegree = new Map([...layoutIds].map(id => [id, 0]));
+    for (const link of layoutEdges) { if (!layoutOut.has(link.from) || !layoutOut.has(link.to)) continue; layoutOut.get(link.from).push(link.to); layoutDegree.set(link.to, layoutDegree.get(link.to) + 1); }
+    const layoutQueue = [...layoutDegree].filter(([, degree]) => degree === 0).map(([id]) => id), layoutRank = new Map(layoutQueue.map(id => [id, 1]));
+    for (let cursor = 0; cursor < layoutQueue.length; cursor++) { const id = layoutQueue[cursor]; for (const child of layoutOut.get(id)) { layoutRank.set(child, Math.max(layoutRank.get(child) ?? 1, layoutRank.get(id) + 1)); layoutDegree.set(child, layoutDegree.get(child) - 1); if (!layoutDegree.get(child)) layoutQueue.push(child); } }
+    if (layoutQueue.length !== layoutIds.size) warnings.push('含任务节点的流程出现循环；无法定位的节点已省略。');
+    const layoutValid = new Set(layoutQueue), layoutRows = new Map();
+    for (const id of layoutQueue) { const row = layoutRank.get(id) ?? 1; if (!layoutRows.has(row)) layoutRows.set(row, []); layoutRows.get(row).push(id); }
+    const maxColumns = Math.max(1, ...[...layoutRows.values()].map(row => row.length));
+    const contentWidth = maxColumns * width + (maxColumns - 1) * gapX;
+    for (const [row, idsAtRow] of layoutRows) {
+      const rowWidth = idsAtRow.length * width + (idsAtRow.length - 1) * gapX;
+      const rowStart = margin + (contentWidth - rowWidth) / 2;
+      idsAtRow.forEach((id, col) => {
+      const task = tasks.find(value => id === `$task:${value.id}`);
+      if (task) {
+        const cardId = `task:${task.id}`;
+        add({ id: cardId, kind: 'task', taskId: task.id, label: task.title ?? task.id, status: states[task.phase] ?? task.phase ?? '待开始', x: rowStart + col * (width + gapX), y: margin + row * (height + gapY), agents: foldableTasks.has(task.id) ? agents.filter(agent => agent.task === task.id) : [] });
+        taskCards.set(task.id, cardId);
+      } else {
+        const item = byNode.get(id), task = tasks.find(value => value.id === item.task), taskId = item.task;
+        if (foldableTasks.has(taskId)) return;
+        const cardId = `workflow:${item.id}`, matching = agents.filter(agent => agent.task === taskId && agent.role === item.role), latest = matching.slice().sort((a, b) => String(a.updated_at ?? '').localeCompare(String(b.updated_at ?? ''))).at(-1);
+        const status = !task ? taskId === 'final' ? states[latest?.state] ?? (latest ? '待观察' : '等待全部任务') : states[latest?.state] ?? (item.role === 'planner' ? '按需规划' : '阶段结束时记录') : stageStatus(task, item.role);
+        add({ id: cardId, kind: 'stage', taskId, role: item.role, label: item.label ?? labels[item.role] ?? item.role, taskLabel: task?.title ?? task?.id ?? taskId, status, x: rowStart + col * (width + gapX), y: margin + row * (height + gapY), agents: matching });
+        visibleStageIds.set(item.id, cardId); visibleStageIds.set(`${taskId}:${item.role}`, cardId);
+      }
+      });
+    }
+    const display = id => id.startsWith('$task:') ? taskCards.get(id.slice(6)) : visibleStageIds.get(id);
+    for (const link of layoutEdges) { const source = display(link.from), target = display(link.to); if (source && target) edge(source, target, 'workflow'); }
+    for (const id of layoutIds) if (layoutValid.has(id) && !layoutEdges.some(link => link.to === id)) { const target = display(id); if (target) edge(runId, target, 'workflow'); }
+    const maxX = Math.max(margin + width, ...nodes.map(node => node.x + width));
+    nodes[0].x = (maxX + margin) / 2 - width / 2;
+  } else {
+    const count = Math.max(1, tasks.length), xOf = index => margin + index * (width + gapX);
+    const centerX = margin + (count - 1) * (width + gapX) / 2;
+    const hasRunTask = tasks.some(task => task.id === 'run'), hasFinalTask = tasks.some(task => task.id === 'final');
+    const planId = 'system:planner', finalTest = 'system:final-tester', finalReview = 'system:final-reviewer', scribe = 'system:scribe';
+    const planAgents = hasRunTask ? [] : agents.filter(agent => agent.task === 'run' && agent.role === 'planner');
+    add({ id: planId, kind: 'stage', taskId: 'run', role: 'planner', label: '总体计划', status: states[planAgents.at(-1)?.state] ?? '按需规划', x: centerX, y: margin + height + gapY, agents: planAgents });
+    systemStageIds.set('run:planner', planId);
+    nodes[0].x = centerX;
+    edge(runId, planId, 'workflow');
+    const byId = new Map(tasks.map(task => [task.id, task])), dependencies = new Map();
+    for (const task of tasks) {
+      const refs = task.dependencies ?? task.depends_on ?? [], validRefs = [];
+      for (const ref of refs) {
+        if (!byId.has(ref) || ref === task.id) { warnings.push(`任务 ${task.id} 依赖 ${ref} 不存在或无效。`); continue; }
+        if (!validRefs.includes(ref)) validRefs.push(ref); else warnings.push(`任务 ${task.id} 的依赖 ${ref} 重复。`);
+      }
+      dependencies.set(task.id, validRefs);
+    }
+    const pending = new Map(tasks.map(task => [task.id, dependencies.get(task.id).length]));
+    const ready = [...pending].filter(([, degree]) => degree === 0).map(([id]) => id), ranks = new Map(ready.map(id => [id, 0]));
+    for (let cursor = 0; cursor < ready.length; cursor++) {
+      const parent = ready[cursor];
+      for (const task of tasks) if (dependencies.get(task.id).includes(parent)) {
+        ranks.set(task.id, Math.max(ranks.get(task.id) ?? 0, (ranks.get(parent) ?? 0) + 1));
+        pending.set(task.id, pending.get(task.id) - 1);
+        if (pending.get(task.id) === 0) ready.push(task.id);
+      }
+    }
+    if (ready.length !== tasks.length) warnings.push('任务依赖包含循环；循环部分按首层展示。');
+    for (const task of tasks) if (!ranks.has(task.id)) ranks.set(task.id, 0);
+    const step = height + gapY, taskStartY = task => margin + (2 + (ranks.get(task.id) ?? 0) * 6) * step;
+    tasks.forEach((task, index) => {
+      const taskNode = `task:${task.id}`, x = xOf(index), y = taskStartY(task);
+      const taskAgents = agents.filter(agent => agent.task === task.id);
+      const details = collapsed.has(task.id) ? taskAgents : taskAgents.filter(agent => !['planner', 'dev', 'tester', 'reviewer'].includes(agent.role));
+      add({ id: taskNode, kind: 'task', taskId: task.id, label: task.title ?? task.id, status: states[task.phase] ?? task.phase ?? '待开始', x, y, agents: details });
+      const parents = dependencies.get(task.id);
+      const activeParents = parents.filter(parent => (ranks.get(parent) ?? 0) < (ranks.get(task.id) ?? 0));
+      if (!activeParents.length) edge(planId, taskNode, 'workflow');
+      for (const parent of parents) {
+        if (!activeParents.includes(parent)) { warnings.push(`循环依赖边 ${parent} → ${task.id} 已省略。`); continue; }
+        edge(collapsed.has(parent) ? `task:${parent}` : `stage:${parent}:reviewer`, taskNode, 'dependency');
+      }
+      if (collapsed.has(task.id)) return;
+      let previous = taskNode;
+      for (let index = 0; index < ['planner', 'dev', 'tester', 'reviewer'].length; index++) {
+        const role = ['planner', 'dev', 'tester', 'reviewer'][index];
+        const id = `stage:${task.id}:${role}`;
+        const evidence = agents.filter(agent => agent.task === task.id && agent.role === role).sort((a, b) => (a.attempt ?? -1) - (b.attempt ?? -1) || String(a.started_at ?? '').localeCompare(String(b.started_at ?? '')));
+        add({ id, kind: 'stage', taskId: task.id, role, label: labels[role], status: stageStatus(task, role), x, y: y + (index + 1) * step, agents: evidence });
+        visibleStageIds.set(`${task.id}:${role}`, id);
+        edge(previous, id, 'workflow'); previous = id;
+      }
+    });
+    const leaves = tasks.filter(task => !tasks.some(child => dependencies.get(child.id).includes(task.id) && (ranks.get(child.id) ?? 0) > (ranks.get(task.id) ?? 0)));
+    const finalY = Math.max(margin + step * 3, ...tasks.map(task => taskStartY(task) + 5 * step));
+    const finalTestAgents = hasFinalTask ? [] : agents.filter(agent => agent.task === 'final' && agent.role === 'tester'), finalReviewAgents = hasFinalTask ? [] : agents.filter(agent => agent.task === 'final' && agent.role === 'reviewer'), scribeAgents = hasRunTask ? [] : agents.filter(agent => agent.task === 'run' && agent.role === 'scribe');
+    add({ id: finalTest, kind: 'stage', taskId: 'final', role: 'tester', label: '整体验证', status: states[finalTestAgents.at(-1)?.state] ?? '等待全部任务', x: centerX, y: finalY, agents: finalTestAgents });
+    add({ id: finalReview, kind: 'stage', taskId: 'final', role: 'reviewer', label: '整体评审', status: states[finalReviewAgents.at(-1)?.state] ?? '等待整体验证', x: centerX, y: finalY + height + gapY, agents: finalReviewAgents });
+    add({ id: scribe, kind: 'stage', taskId: 'run', role: 'scribe', label: '统一记录', status: states[scribeAgents.at(-1)?.state] ?? '阶段结束时记录', x: centerX, y: finalY + 2 * (height + gapY), agents: scribeAgents });
+    systemStageIds.set('final:tester', finalTest); systemStageIds.set('final:reviewer', finalReview); systemStageIds.set('run:scribe', scribe);
+    for (const task of leaves) edge(collapsed.has(task.id) ? `task:${task.id}` : `stage:${task.id}:reviewer`, finalTest, 'workflow');
+    edge(finalTest, finalReview, 'workflow'); edge(finalReview, scribe, 'workflow');
+  }
+  // A call edge is shown only when both observations exist and the child's
+  // parent_id exactly matches an observed native/context/session identifier.
+  const observedStage = agent => {
+    if (Array.isArray(workflowNodes) && workflowNodes.length) return visibleStageIds.get(`${agent.task}:${agent.role}`) ?? visibleStageIds.get(`workflow:${agent.task}:${agent.role}`);
+    if (tasks.some(task => task.id === agent.task)) return visibleStageIds.get(`${agent.task}:${agent.role}`);
+    return systemStageIds.get(`${agent.task}:${agent.role}`);
+  };
+  for (const child of agents) {
+    const parentId = child.context?.parent_id;
+    if (!parentId) continue;
+    const parent = agents.find(agent => agent !== child && [agent.native_id, agent.context?.id, agent.session_id].includes(parentId));
+    if (!parent) continue;
+    const parentStage = observedStage(parent), childStage = observedStage(child);
+    if (parentStage && childStage) edge(parentStage, childStage, 'call');
+  }
+  const maxX = Math.max(margin + width, ...nodes.map(node => node.x + width));
+  const maxY = Math.max(margin + height, ...nodes.map(node => node.y + height));
+  return { nodes, edges, width: maxX + margin, height: maxY + margin, warnings: [...new Set(warnings)], theme: { accent: '#3b82f6', radius: 10, space: 12, font: 13, indent: 14, roleColors: { planner: '#818cf8', dev: '#34d399', tester: '#fbbf24', reviewer: '#c084fc', scribe: '#60a5fa' } }, legend: [{ kind: 'workflow', label: '阶段交接' }, { kind: 'dependency', label: '任务依赖' }, { kind: 'call', label: '真实代理调用' }] };
+}); }
 });
