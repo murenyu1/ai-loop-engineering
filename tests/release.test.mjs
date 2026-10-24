@@ -78,6 +78,8 @@ test('启动钩子仅匹配已启用的精确工作区，错误事件和关闭�
   const input={hook_event_name:'SessionStart',cwd:root},options={home,bundle:BUNDLE};
   assert.equal(startupContext(input,options),null);
   registerWorkspace(home,root);
+  assert.equal(startupContext(input,options),null,'旧插件登记不能代替当前宿主工作区');
+  fs.writeFileSync(path.join(home,'.codex-global-state.json'),JSON.stringify({'local-projects':{workspace:{name:'钩子测试工作区',rootPaths:[root]}}}));
   const context=startupContext(input,options).hookSpecificOutput;
   assert.equal(context.hookEventName,'SessionStart');assert.ok(context.additionalContext.includes('不全量扫描'));
   assert.ok(context.additionalContext.length<4500);

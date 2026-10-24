@@ -4,7 +4,7 @@ import { REQUIRED_FILES } from './install.mjs';
 import { BUNDLE, VERSION, runtimeContent, assert, safePath, jsonFile, atomicWrite, args, allowArgs, mainModule, printResult } from './lib.mjs';
 import { digest } from './memory-store.mjs';
 
-export const PLUGIN_FILES = [...new Set([...REQUIRED_FILES, ...['profiles','plugin-models','plugin','codex-workspaces','native-settings','settings-server','native-models','workspaces','session-start','install-plugin'].map(name => 'scripts/'+name+'.mjs'), 'ui/agent-dashboard.html'])];
+export const PLUGIN_FILES = [...new Set([...REQUIRED_FILES, ...['profiles','plugin-models','plugin','codex-workspaces','native-settings','settings-server','native-models','workspaces','session-start','install-plugin','ui-theme'].map(name => 'scripts/'+name+'.mjs'), 'ui/agent-dashboard.html'])];
 export function buildPlugin(output, options = {}) {
   const relative = output || 'dist/codex';
   const target = safePath(BUNDLE, relative);

@@ -1,5 +1,6 @@
+import { UI_THEME } from '../../core/scripts/ui-theme.mjs';
 /** Browser-only factory. The release wraps it in DSH's lazy CommonJS loader. */
-export function createPlugin(require) {
+export function createPlugin(require, theme = UI_THEME) {
   const React = require('react');
   const { SettingsForm, SettingsFormModel } = require('@deepseek-ai/dsh-client-ui-primitives');
   const h = React.createElement;
@@ -67,6 +68,12 @@ export function createPlugin(require) {
         roles: safeParseJson(this.form.field('roles').text, {}),
         projects: safeParseJson(this.form.field('projects').text, []),
       }));
+      this.saved = clone(this.store.getSnapshot());
+    }
+    savedSnapshot() {
+      const current = this.store.getSnapshot();
+      if (!current.dirty) this.saved = clone(current);
+      return this.saved;
     }
     edit(field, value) { this.actions.edit(field, JSON.stringify(value)); }
     setRole(role, value, path) {
@@ -141,10 +148,10 @@ export function createPlugin(require) {
     card: {
       background: 'var(--dsw-alias-bg-layer-1, #1e1e24)',
       border: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.08))',
-      borderRadius: 10,
+      borderRadius: theme.radius,
       padding: '16px 20px',
       display: 'grid',
-      gap: 16,
+      gap: theme.space,
       marginBottom: 16,
     },
     cardHeader: {
@@ -213,7 +220,7 @@ export function createPlugin(require) {
     }),
     roleGrid: {
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+      gridTemplateColumns: 'minmax(0, 1fr)',
       gap: 14,
     },
     roleCard: {
@@ -246,7 +253,7 @@ export function createPlugin(require) {
     },
     taskGrid: {
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+      gridTemplateColumns: 'minmax(0, 1fr)',
       gap: 12,
     },
     taskCard: phase => {
@@ -516,6 +523,7 @@ export function createPlugin(require) {
   async function openAgentSession(ctx, parentSessionId, agent) {
     const childId = agent?.native_id || agent?.session_id || agent?.context?.id;
     if (!childId) return false;
+    parentSessionId ||= agent?.context?.parent_id || agent?.parent_id;
     const sessions = ctx?.get?.('sessions') || ctx?.sessions;
     const workspaces = ctx?.get?.('workspaces') || ctx?.workspaces;
     const layout = ctx?.get?.('layout') || ctx?.layout;
@@ -584,19 +592,21 @@ export function createPlugin(require) {
     }
   }
 
-  function ConversationDashboardView({ ctx, sessionId, controller }) {
-    const sessionKey = typeof sessionId === 'string' ? sessionId.trim() : '';
-    const [cwdState, setCwdState] = React.useState(() => ({ sessionKey, cwd: sessionCwdOf(ctx, sessionKey) }));
-    const cwd = cwdState.sessionKey === sessionKey ? cwdState.cwd : sessionCwdOf(ctx, sessionKey);
+  function ConversationDashboardView({ ctx, sessionId, controller, workspacePath }) {
+    const sourceSessionKey = typeof sessionId === 'string' ? sessionId.trim() : '';
+    const [cwdState, setCwdState] = React.useState(() => ({ sessionKey: sourceSessionKey, cwd: sessionCwdOf(ctx, sourceSessionKey) }));
+    const sessionCwd = cwdState.sessionKey === sourceSessionKey ? cwdState.cwd : sessionCwdOf(ctx, sourceSessionKey);
+    const cwd = workspacePath === undefined ? sessionCwd : workspacePath;
+    const sessionKey = sourceSessionKey && (workspacePath === undefined || samePath(cwd, sessionCwd)) ? sourceSessionKey : '';
 
     React.useEffect(() => {
       let alive = true;
       const sync = () => {
-        if (alive && sessionKey) {
-          const next = sessionCwdOf(ctx, sessionKey);
-          setCwdState({ sessionKey, cwd: next });
+        if (alive && sourceSessionKey) {
+          const next = sessionCwdOf(ctx, sourceSessionKey);
+          setCwdState({ sessionKey: sourceSessionKey, cwd: next });
         } else if (alive) {
-          setCwdState({ sessionKey, cwd: '' });
+          setCwdState({ sessionKey: sourceSessionKey, cwd: '' });
         }
       };
       sync();
@@ -607,7 +617,7 @@ export function createPlugin(require) {
         if (typeof list?.subscribe === 'function') unsubscribe = list.subscribe(sync);
       } catch {}
       return () => { alive = false; try { unsubscribe?.(); } catch {} };
-    }, [ctx, sessionKey]);
+    }, [ctx, sourceSessionKey]);
 
     const selectionKey = JSON.stringify([sessionKey, cwd]);
     const [selection, setSelection] = React.useState({ key: selectionKey, run: '' });
@@ -618,11 +628,11 @@ export function createPlugin(require) {
 
     const statusInfo = useStatus(cwd, run, sessionKey);
     const data = statusInfo.data;
-    const dashboardMessage = !cwd ? '当前聊天尚未关联工作区，无法读取运行历史。'
-      : statusInfo.loading ? '正在加载当前聊天的运行历史…'
+    const dashboardMessage = !cwd ? '请选择工作区，或等待当前聊天关联工作区。'
+      : statusInfo.loading ? (sessionKey ? '正在加载当前聊天的运行历史…' : '正在加载所选工作区的运行记录…')
         : statusInfo.errorStatus === 403 ? `无权读取当前工作区：${statusInfo.error || '访问被拒绝'}`
-          : statusInfo.error ? `读取聊天运行历史失败：${statusInfo.error}`
-            : !data ? '当前聊天暂无关联运行记录。' : null;
+          : statusInfo.error ? `${sessionKey ? '读取聊天运行历史失败' : '读取工作区运行记录失败'}：${statusInfo.error}`
+            : !data ? (sessionKey ? '当前聊天暂无关联运行记录。' : '所选工作区暂无运行记录。') : null;
     const [olderHistory, setOlderHistory] = React.useState(() => ({ key: selectionKey, runs: [], nextAfter: null, loading: false }));
     const older = olderHistory.key === selectionKey ? olderHistory : { key: selectionKey, runs: [], nextAfter: statusInfo.history?.next_after ?? null, loading: false };
     React.useEffect(() => {
@@ -651,8 +661,9 @@ export function createPlugin(require) {
 
     const formStore = controller?.store ?? emptyStore;
     const formState = React.useSyncExternalStore(formStore.subscribe, formStore.getSnapshot, formStore.getSnapshot);
-    const isGlobalEnabled = formState?.enabled ?? false;
-    const projectRow = cwd && formState?.projects ? formState.projects.find(p => samePath(p.path, cwd)) : null;
+    const savedFormState = controller?.savedSnapshot?.() ?? formState;
+    const isGlobalEnabled = savedFormState?.enabled ?? false;
+    const projectRow = cwd && savedFormState?.projects ? savedFormState.projects.find(p => samePath(p.path, cwd)) : null;
     const isProjectEnabled = (isGlobalEnabled && (projectRow?.enabled ?? false)) ?? false;
 
     const [expandedAgentId, setExpandedAgentId] = React.useState(null);
@@ -669,6 +680,8 @@ export function createPlugin(require) {
       acc.out += (a.usage?.output_tokens || 0);
       return acc;
     }, { in: 0, out: 0 });
+    const measuredAgents = agents.filter(agent => agent.usage && (agent.usage.input_tokens != null || agent.usage.output_tokens != null));
+    const totalUsageLabel = measuredAgents.length ? `${totalTokens.in} 输入 / ${totalTokens.out} 输出${measuredAgents.length < agents.length || measuredAgents.some(agent => agent.usage.input_tokens == null || agent.usage.output_tokens == null) ? '（部分数据）' : ''}` : 'Token 用量不可获取';
 
     const roleColors = {
       planner: { color: '#818cf8', bg: 'rgba(99, 102, 241, 0.15)', border: 'rgba(99, 102, 241, 0.35)', icon: '📐' },
@@ -689,7 +702,7 @@ export function createPlugin(require) {
         const matchedAgents = agents.filter(a => {
           if (!a.task) return false;
           const aTaskId = String(a.task);
-          return aTaskId === taskIdStr || aTaskId.startsWith(taskIdStr + '#');
+          return aTaskId === taskIdStr;
         });
         matchedAgents.forEach(a => assignedAgentIds.add(a.native_id || a.id));
         groups.push({
@@ -755,9 +768,10 @@ export function createPlugin(require) {
           display: 'grid',
           gap: 8,
           cursor: 'pointer',
-          minWidth: 260,
-          maxWidth: 320,
-          flex: '1 1 260px',
+          minWidth: 0,
+          width: '100%',
+          maxWidth: '100%',
+          overflowWrap: 'anywhere',
           boxSizing: 'border-box',
           position: 'relative',
           transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -886,7 +900,7 @@ export function createPlugin(require) {
         flex: '1 1 auto',
         overflowY: 'auto',
         overflowX: 'hidden',
-        padding: '20px 24px',
+        padding: theme.space,
         boxSizing: 'border-box',
         display: 'flex',
         flexDirection: 'column',
@@ -899,11 +913,12 @@ export function createPlugin(require) {
       h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.08))', paddingBottom: 14 } },
         h('div', null,
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
-            h('h2', { style: { margin: 0, fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 } }, '🌳 AI Loop 协同工作流看板'),
+            h('h2', { style: { margin: 0, fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 } }, '工作流看板'),
             data?.status ? h('span', { style: S.badge(data.status === 'active') }, data.status.toUpperCase()) : null,
           ),
           h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 8 } },
             h('span', null, `工作区: ${cwd || '未定位到当前会话工作区'}`),
+            h('span', null, sessionKey ? '当前聊天范围' : '工作区范围'),
             isProjectEnabled ? h('span', { style: { color: '#22c55e', fontSize: 11, background: 'rgba(34,197,94,0.1)', padding: '1px 6px', borderRadius: 4 } }, '已激活') : h('span', { style: { color: '#f59e0b', fontSize: 11, background: 'rgba(245,158,11,0.1)', padding: '1px 6px', borderRadius: 4 } }, '未激活'),
           ),
         ),
@@ -937,12 +952,12 @@ export function createPlugin(require) {
             }, '仅看活动任务'),
           ),
           historyRuns.length ? h('select', {
-            'aria-label': '选择当前聊天的历史运行轮次',
+            'aria-label': sessionKey ? '选择当前聊天的历史运行轮次' : '选择工作区运行',
             value: run,
             style: { ...S.input, width: 'auto', minWidth: 160 },
             onChange: e => setSelection({ key: selectionKey, run: e.target.value }),
           },
-            h('option', { value: '' }, '选择当前聊天轮次'),
+            h('option', { value: '' }, sessionKey ? '选择当前聊天轮次' : '选择工作区运行'),
             historyRuns.map((r, index) => h('option', { key: r.run_id, value: r.run_id }, `第 ${index + 1} 轮 · ${r.run_id} · ${r.status || '未知'}`)),
           ) : null,
           older.nextAfter ? h('button', { type: 'button', style: S.btn(false), disabled: older.loading, onClick: loadOlder }, older.loading ? '正在加载历史…' : '加载更早运行') : null,
@@ -1019,7 +1034,7 @@ export function createPlugin(require) {
       ) : null,
 
       // 统计卡片网格
-      h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 } },
+      h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: theme.space } },
         h('div', { style: S.dashCard },
           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
             h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '活动子代理 (Live Agents)'),
@@ -1043,8 +1058,8 @@ export function createPlugin(require) {
             h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, 'Token 消耗统计'),
             h('span', { style: { fontSize: 16 } }, '🪙'),
           ),
-          h('div', { style: { fontSize: 22, fontWeight: 700 } }, `${((totalTokens.in + totalTokens.out) / 1000).toFixed(1)}k`),
-          h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, `输入 ${totalTokens.in} · 输出 ${totalTokens.out}`),
+          h('div', { style: { fontSize: 14, fontWeight: 600 } }, totalUsageLabel),
+          h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '仅统计已记录用量；未知数据不计作零。'),
         ),
         h('div', { style: S.dashCard },
           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
@@ -1079,8 +1094,9 @@ export function createPlugin(require) {
             border: '2px solid var(--dsw-alias-brand-primary, #3b82f6)',
             borderRadius: 12,
             padding: '14px 24px',
-            minWidth: 320,
-            maxWidth: 540,
+            minWidth: 0,
+            width: '100%',
+            maxWidth: '100%',
             textAlign: 'center',
             boxShadow: '0 4px 20px rgba(59, 130, 246, 0.25)',
             zIndex: 2,
@@ -1153,8 +1169,8 @@ export function createPlugin(require) {
                 border: `1.5px solid ${taskPhase === 'done' ? '#22c55e' : taskPhase === 'developing' ? '#3b82f6' : 'rgba(255,255,255,0.12)'}`,
                 borderRadius: 10,
                 padding: '12px 20px',
-                minWidth: 340,
-                maxWidth: 620,
+                minWidth: 0,
+                maxWidth: '100%',
                 width: '100%',
                 boxSizing: 'border-box',
                 boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
@@ -1206,11 +1222,11 @@ export function createPlugin(require) {
               role: 'group',
               style: {
                 display: 'flex',
-                flexWrap: 'wrap',
+                flexDirection: 'column',
                 justifyContent: 'center',
-                gap: 14,
+                gap: theme.space,
                 width: '100%',
-                maxWidth: 1080,
+                maxWidth: '100%',
                 position: 'relative',
                 padding: '0 10px',
                 boxSizing: 'border-box',
@@ -1247,15 +1263,34 @@ export function createPlugin(require) {
 
   function SidebarDashboard(props) {
     const { controller, ctx, sessionId, initialWorkspacePath } = props;
-    const resolvedPath = initialWorkspacePath || sessionCwdOf(ctx, sessionId);
-    return h(Card, {
-      ...props,
-      controller,
-      ctx,
-      sessionId,
-      initialWorkspacePath: resolvedPath,
-      inSidebar: true,
-    });
+    const sessions = ctx?.get?.('sessions') || ctx?.sessions;
+    const sessionCwd = React.useSyncExternalStore(listener => sessions?.list?.subscribe?.(listener) || (() => {}), () => sessionCwdOf(ctx, sessionId), () => '');
+    const resolvedPath = sessionId ? sessionCwd : initialWorkspacePath || '';
+    const selectionKey = JSON.stringify([sessionId || '', resolvedPath]);
+    const [selection, setSelection] = React.useState(() => ({ key: selectionKey, path: resolvedPath }));
+    const workspaces = ctx?.get?.('workspaces') || ctx?.workspaces;
+    const snapshot = React.useSyncExternalStore(listener => workspaces?.list?.subscribe?.(listener) || (() => {}), () => workspaces?.list?.getSnapshot?.() ?? null, () => null);
+    const hooked = typeof props.useWorkspaces === 'function' ? props.useWorkspaces(value => value) : null;
+    const source = hooked ?? snapshot;
+    const ready = source?.phase === 'ready' && source?.state === 'idle' && !source?.error && Array.isArray(source.items);
+    const rows = [...new Map((Array.isArray(source?.items) ? source.items : Array.isArray(source) ? source : []).filter(row => typeof row?.path === 'string').map(row => [row.path.replace(/\\/g, '/').toLowerCase(), row])).values()];
+    const desired = selection.key === selectionKey ? selection.path : resolvedPath;
+    const path = ready && !rows.some(row => samePath(row.path, desired)) ? '' : desired;
+    const changePath = value => setSelection({ key: selectionKey, path: value });
+    React.useEffect(() => { if (ready && desired !== path) changePath(path); }, [ready, desired, path, selectionKey]);
+    const state = React.useSyncExternalStore(controller.store.subscribe, controller.store.getSnapshot, controller.store.getSnapshot);
+    const saved = controller.savedSnapshot?.() ?? state;
+    const [page, setPage] = React.useState('settings');
+    return h('section', { style: { fontSize: theme.font, minWidth: 0, height: '100%', overflowY: 'auto', padding: theme.space } },
+      h('h2', { style: S.title }, 'AI Loop 工作流'),
+      h('label', { style: S.label }, '工作区选择', h('select', { value: path, disabled: state.saving || !ready, style: S.input, onChange: event => changePath(event.target.value) },
+        h('option', { value: '' }, '全局默认 · 请选择工作区'),
+        rows.map(row => { const enabled = saved.enabled && saved.projects.some(project => samePath(project.path, row.path) && project.enabled); return h('option', { key: row.path, value: row.path }, `${enabled ? '🟢' : '🔴'} ${row.title || row.name || row.path}`); }))),
+      h('nav', { 'aria-label': '工作流页面', style: { ...S.row, margin: '12px 0' } },
+        [['settings', '工作流配置'], ['dashboard', '工作流看板']].map(([key, label]) => h('button', { key, type: 'button', style: S.btn(page === key), 'aria-pressed': page === key, onClick: () => setPage(key) }, label))),
+      h('div', { hidden: page !== 'settings' }, h(Card, { ...props, controller, ctx, sessionId, initialWorkspacePath: resolvedPath, workspacePath: path, onWorkspaceChange: changePath })),
+      h('div', { hidden: page !== 'dashboard' }, h(ConversationDashboard, { ...props, controller, ctx, sessionId, workspacePath: path })),
+    );
   }
 
   function SidebarTitle({ sessionId }) {
@@ -1338,6 +1373,7 @@ export function createPlugin(require) {
   function Card(props) {
     const { controller, ctx, useWorkspaces, sessionId, initialWorkspacePath, inSidebar } = props;
     const state = React.useSyncExternalStore(controller.store.subscribe, controller.store.getSnapshot, controller.store.getSnapshot);
+    const saved = controller.savedSnapshot?.() ?? state;
 
     const sessions = (() => { try { return ctx?.get?.('sessions') || ctx?.sessions; } catch { return ctx?.sessions; } })();
     const sessionKey = typeof sessionId === 'string' ? sessionId.trim() : '';
@@ -1349,8 +1385,9 @@ export function createPlugin(require) {
     const activeSessionCwd = sessionKey ? subscribedCwd : initialWorkspacePath || '';
     const selectionKey = JSON.stringify([sessionKey, activeSessionCwd]);
     const [selection, setSelection] = React.useState(() => ({ key: selectionKey, path: activeSessionCwd }));
-    const path = selection.key === selectionKey ? selection.path : activeSessionCwd;
-    const setPath = value => setSelection({ key: selectionKey, path: value });
+    const path = props.workspacePath === undefined ? (selection.key === selectionKey ? selection.path : activeSessionCwd) : props.workspacePath;
+    const setPath = value => props.onWorkspaceChange ? props.onWorkspaceChange(value) : setSelection({ key: selectionKey, path: value });
+    const [saveError, setSaveError] = React.useState('');
 
     const workspacesFromHook = typeof useWorkspaces === 'function' ? useWorkspaces(s => s) : null;
     const workspaceStore = (() => { try { return (ctx?.get?.('workspaces') || ctx?.workspaces)?.list; } catch { return ctx?.workspaces?.list; } })();
@@ -1381,15 +1418,15 @@ export function createPlugin(require) {
           const wsPath = ws.path;
           if (seen.has(wsPath.toLowerCase())) continue;
           seen.add(wsPath.toLowerCase());
-          const proj = state.projects.find(row => samePath(row.path, wsPath));
-          const isEn = Boolean(state.enabled && proj?.enabled);
+          const proj = saved.projects.find(row => samePath(row.path, wsPath));
+          const isEn = Boolean(saved.enabled && proj?.enabled);
           const dot = isEn ? '🟢' : '🔴';
           const name = ws.title || ws.name || wsPath;
-          list.push({ path: wsPath, label: `${dot} ${name} (${wsPath})${state.dirty ? " · 未保存" : ""}`, enabled: isEn });
+          list.push({ path: wsPath, label: `${dot} ${name} (${wsPath})`, enabled: isEn });
         }
       }
       return list;
-    }, [effectiveWorkspaces, state.projects, path, project]);
+    }, [effectiveWorkspaces, saved.projects, saved.enabled]);
 
     const formContent = h(SettingsForm, {
       state,
@@ -1401,21 +1438,22 @@ export function createPlugin(require) {
         saving: '保存中…',
       },
       onSave: () => {
-        if (workspaceReady) {
-          const pruned = state.projects.filter(p => effectiveWorkspaces.some(w => samePath(w.path, p.path)));
-          if (pruned.length !== state.projects.length) {
-            controller.edit('projects', pruned);
-          }
+        if (path && (!workspaceReady || !effectiveWorkspaces.some(workspace => samePath(workspace.path, path)))) {
+          setSaveError('所选工作区已删除或列表尚未就绪，请重新选择后保存。');
+          return;
         }
+        setSaveError('');
         controller.actions.save();
       },
       onDiscard: controller.actions.discard,
     },
+    saveError ? h('p', { role: 'alert', style: { color: theme.danger } }, saveError) : null,
+    state.dirty ? h('p', { style: S.subtitle }, '有未保存修改；工作区红绿状态仍以保存结果为准。') : null,
     // 1. 全局工作流总控卡片
     h('div', { style: S.card },
       h('div', { style: S.cardHeader },
         h('div', null,
-          h('h3', { style: S.title }, '⚡ AI Loop 核心总控'),
+          h('h3', { style: S.title }, '工作流配置'),
           h('p', { style: S.subtitle }, '统一管理 AI Loop 闭环执行引擎、子代理派发与原生工具挂载。'),
         ),
         h('span', { style: S.badge(state.enabled) }, state.enabled ? '已激活' : '已停用'),
@@ -1439,12 +1477,12 @@ export function createPlugin(require) {
     h('div', { style: S.card },
       h('div', { style: S.cardHeader },
         h('div', null,
-          h('h3', { style: S.title }, '🏢 工作区配置与独立管理'),
+          h('h3', { style: S.title }, '工作区与范围'),
           h('p', { style: S.subtitle }, '以 DSH 工作区为基本单位，独立管理每个工作区的工作流激活状态、角色模型与并发设置。'),
         ),
         path ? h('span', { style: S.badge(state.enabled && project?.enabled) }, state.enabled && project?.enabled ? '工作区已激活' : '工作区未激活') : null,
       ),
-      h('div', { style: S.row },
+      props.workspacePath === undefined ? h('div', { style: S.row },
         h('label', { style: { ...S.label, flex: '1 1 100%' } },
           '工作区选择',
           h('select', {
@@ -1456,7 +1494,7 @@ export function createPlugin(require) {
           h('option', { value: '' }, '🌐 全局默认配置 (所有工作区通用)'),
           workspaceOptions.map(opt => h('option', { key: opt.path, value: opt.path }, opt.label))),
         ),
-      ),
+      ) : null,
       path ? h('div', { style: { ...S.row, justifyContent: 'space-between', alignItems: 'center', background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.2))', padding: '10px 14px', borderRadius: 8, marginTop: 8 } },
         h('label', { style: { display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500 } },
           h('input', {
@@ -1600,7 +1638,7 @@ export function createPlugin(require) {
               icon: size => h('span', { style: { fontSize: size || 16, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' } }, '🔄'),
               order: 25,
               single: true,
-              component: tabProps => h(Card, {
+              component: tabProps => h(SidebarDashboard, {
                 controller,
                 ctx,
                 sessionId: tabProps?.scope?.sessionId,

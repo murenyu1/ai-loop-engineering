@@ -4,7 +4,7 @@
   "files": [
     {
       "path": "client.js",
-      "hash": "7e0a87d6173cd7bdb53cc320b59bf0c3a6dd866efe82be5b8ad236b9ee76b9de"
+      "hash": "a12ac71b74108614fdbf2fbce87338c7fbdd0a5748f3f000e1c5d067f63243b6"
     },
     {
       "path": "config.mjs",
@@ -81,6 +81,10 @@
     {
       "path": "core/scripts/roles.mjs",
       "hash": "59c22416311d90edaf364d8ec7ce4ef805fa7eeb9f3c0c9671ac44ee76f72af7"
+    },
+    {
+      "path": "core/scripts/ui-theme.mjs",
+      "hash": "297eb3d571499ff8b16bc924dfdaf56a8c22be5f5bbbb842a6e19aeffa05b221"
     },
     {
       "path": "core/SETUP.md",

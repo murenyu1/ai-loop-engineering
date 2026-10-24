@@ -10,6 +10,137 @@ import { recordActivity } from '../scripts/activity.mjs';
 import { PassThrough } from 'node:stream';
 import { createSettingsProtocol, DASHBOARD_TOOL, DASHBOARD_URI, PROTOCOL_VERSION, READ_TOOL, UPDATE_TOOL, runSettingsServer } from '../codex/scripts/settings-server.mjs';
 
+test('双页面板按实例隔离草稿，动作错误保持可见且不影响其他面板', async () => {
+  const saved = [], factory = () => {
+    let values = {}, fail = false;
+    return { read: async () => ({ schema: { properties: {} }, values, dirty: Object.keys(values).length > 0 }),
+      update: async set => { values = { ...values, ...set }; fail = set.fail === true; return { values }; },
+      action: async name => { if (fail) throw Error('模拟保存冲突'); saved.push({ name, values: { ...values } }); return { status: 'ok' }; } };
+  };
+  const protocol = createSettingsProtocol({}, { managerFactory: factory });
+  const call = async (name, args) => (await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })).result;
+  await call('ai_loop.panel.update', { panel_id: 'panel-one', set: { workspace_id: 'one', concurrency: 2 } });
+  await call('ai_loop.panel.update', { panel_id: 'panel-two', set: { workspace_id: 'two', concurrency: 6, fail: true } });
+  assert.equal((await call('ai_loop.panel.read', { panel_id: 'panel-one' })).structuredContent.values.concurrency, 2);
+  const failed = await call('ai_loop.panel.action', { panel_id: 'panel-two', action: 'apply' });
+  assert.equal(failed.isError, true); assert.match(failed.content[0].text, /模拟保存冲突/);
+  assert.notEqual((await call('ai_loop.panel.action', { panel_id: 'panel-one', action: 'apply' })).isError, true);
+  assert.equal(saved.length, 1); assert.equal(saved[0].values.workspace_id, 'one');
+  assert.equal((await call('ai_loop.panel.read', { panel_id: '../bad' })).isError, true);
+  assert.equal((await call('ai_loop.panel.action', { panel_id: 'panel-one', action: 'other' })).isError, true);
+});
+
+test('面板回收干净实例且保护其他范围草稿，失效实例不能空保存', async () => {
+  const factory = () => {
+    let values = {}, dirty = false;
+    return { hasDrafts: () => dirty,
+      read: async () => ({ values, dirty: false }),
+      update: async set => { values = { ...values, ...set }; if (set.concurrency !== undefined) dirty = true; return { values, dirty: false }; },
+      action: async () => ({ status: 'ok' }) };
+  };
+  const protocol = createSettingsProtocol({}, { managerFactory: factory });
+  const call = async (name, args) => (await protocol.request({ jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args} })).result;
+  await call('ai_loop.panel.update', { panel_id:'protected-panel', set:{ workspace_id:'one', concurrency:7 } });
+  for (let index=0; index<80; index++) assert.notEqual((await call('ai_loop.panel.read', { panel_id:'clean-panel-'+index })).isError, true);
+  assert.equal((await call('ai_loop.panel.read', { panel_id:'protected-panel' })).structuredContent.values.concurrency, 7, '当前范围干净也不能驱逐其他范围的草稿');
+  const stale = await call('ai_loop.panel.action', { panel_id:'clean-panel-0', action:'apply' });
+  assert.equal(stale.isError, true); assert.match(stale.content[0].text, /已回收/);
+  assert.equal((await call('ai_loop.panel.update', { panel_id:'clean-panel-0', set:{ concurrency:2 } })).isError, true);
+  const restored = await call('ai_loop.panel.update', { panel_id:'clean-panel-0', set:{ workspace_id:'two', scope:'project', concurrency:2 } });
+  assert.equal(restored.structuredContent.values.workspace_id, 'two');
+  assert.equal(restored.structuredContent.panel_created, true);
+  const full = createSettingsProtocol({}, { managerFactory: () => ({ hasDrafts: () => true, read: async () => ({ dirty:true }) }) });
+  for (let index=0; index<64; index++) assert.notEqual((await full.request({ jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'ai_loop.panel.read',arguments:{panel_id:'dirty-panel-'+index}} })).result.isError, true);
+  const blocked = (await full.request({ jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'ai_loop.panel.read',arguments:{panel_id:'dirty-panel-64'}} })).result;
+  assert.equal(blocked.isError, true); assert.match(blocked.content[0].text, /草稿已达上限/);
+});
+
+test('双页交互保持草稿与手选工作区，聊天切换刷新历史，删除项立即退出候选', async () => {
+  const html = fs.readFileSync(new URL('../codex/ui/agent-dashboard.html', import.meta.url), 'utf8');
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const elements = new Map(), handlers = new Map(), calls = [];
+  const elem = id => {
+    if (!elements.has(id)) elements.set(id, { value: '', innerHTML: '', textContent: '', hidden: false, listeners: {}, setAttribute() {}, addEventListener(name, fn) { this.listeners[name] = fn; } });
+    return elements.get(id);
+  };
+  const pages = ['settings', 'dashboard'].map(page => ({ ...elem('page-' + page), dataset: { page } }));
+  let rows = [{ id: 'one', label: '多根工作区', root: '/one', roots: ['/one', '/member'], enabled: true }, { id: 'two', label: '另一个工作区', root: '/two', roots: ['/two'], enabled: false }];
+  let chat = 'chat-A', current = 'one', values = { workspace_enabled: true, scope: '仅当前工作区', concurrency: 3 }, dirty = false, recreate = false;
+  const config = () => ({ schema: { properties: { workspace_enabled: { type: 'boolean', title: '启用工作区' }, concurrency: { type: 'integer', title: '并发', minimum: 1, maximum: 8 } } }, values, dirty, selection: { scope: 'project', workspaceId: current }, status: '示例状态' });
+  const opening = () => ({ workspaces: rows, context: { workspace_id: 'one', root: '/one', session_id: chat } });
+  const deliver = data => queueMicrotask(() => handlers.get('message')?.({ source: parent, data }));
+  const parent = { postMessage(message) {
+    calls.push(message); if (!message.id) return;
+    let result = {};
+    if (message.method === 'tools/call') {
+      const { name, arguments: args } = message.params;
+      if (name === DASHBOARD_TOOL) result = opening();
+      if (name.startsWith('ai_loop.panel.')) {
+        if (args.set?.workspace_id !== undefined || args.set?.workspace_root !== undefined) current = args.set.workspace_id ?? '';
+        const fields = Object.fromEntries(Object.entries(args.set??{}).filter(([key])=>!['workspace_id','workspace_root','scope'].includes(key)));
+        if (Object.keys(fields).length) { values = { ...values, ...fields }; dirty = true; }
+        result = config();
+        if (name.endsWith('.read') && recreate) { current=''; recreate=false; result={...config(),panel_created:true}; }
+      }
+      if (name === 'ai_loop.dashboard.runs') result = { runs: [] };
+      if (name === 'ai_loop.dashboard.history') result = { rounds: [{ run: { run_id: args.session + '-run', tasks: [] }, activity: { agents: [] } }] };
+      result = { structuredContent: result };
+    }
+    deliver({ jsonrpc: '2.0', id: message.id, result });
+  } };
+  vm.runInNewContext(script, { window: { parent, addEventListener: (name, fn) => handlers.set(name, fn) }, document: { getElementById: elem, querySelectorAll: selector => selector === '[data-page]' ? pages : [], addEventListener() {} }, setTimeout, clearTimeout, queueMicrotask });
+  const drain = () => new Promise(resolve => setTimeout(resolve, 15));
+  await drain();
+  assert.equal(elem('workspace').value, 'one'); assert.match(elem('view').innerHTML, /chat-A-run/);
+  elem('settings').listeners.change({ target: { dataset: { field: 'workspace_enabled' }, checked: false } }); await drain();
+  assert.equal(elem('dirty').textContent, '有未保存修改');
+  assert.match(elem('workspace').innerHTML, /🟢 多根工作区/); assert.match(elem('saved-state').innerHTML, /已启用/);
+  pages[1].listeners.click(); assert.equal(elem('settings-page').hidden, true); assert.equal(elem('dashboard-page').hidden, false);
+  pages[0].listeners.click(); assert.equal(elem('settings-page').hidden, false); assert.equal(dirty, true);
+  assert.ok(!calls.some(call => call.params?.name === 'ai_loop.panel.action'), '切页不能自动保存或丢弃');
+  chat = 'chat-B'; deliver({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: { structuredContent: opening() } }); await drain();
+  assert.match(elem('view').innerHTML, /chat-B-run/); assert.doesNotMatch(elem('view').innerHTML, /chat-A-run/);
+  elem('workspace').value = 'two'; await elem('workspace').listeners.change(); await drain();
+  await elem('discover').listeners.click(); await drain();
+  assert.equal(elem('workspace').value, 'two', '普通刷新不抢占手选工作区');
+  dirty=false; recreate=true;
+  await elem('discover').listeners.click(); await drain();
+  assert.equal(current, 'two', '干净实例回收后读取会恢复明确工作区');
+  const lastUpdate = calls.filter(call=>call.params?.name==='ai_loop.panel.update').at(-1);
+  assert.equal(lastUpdate.params.arguments.set.workspace_id, 'two');
+  assert.equal(lastUpdate.params.arguments.set.scope, 'project');
+  rows = rows.filter(row => row.id !== 'two'); await elem('discover').listeners.click(); await drain();
+  assert.equal(elem('workspace').value, ''); assert.doesNotMatch(elem('workspace').innerHTML, /另一个工作区/);
+  assert.match(elem('view').innerHTML, /请选择工作区/);
+});
+
+test('多根工作区聚合运行并按真实聊天定位，已删除工作区不可继续读取', async t => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-members-'));
+  const home = path.join(base, 'home'), a = path.join(base, 'a'), b = path.join(base, 'b');
+  for (const dir of [home, a, b]) fs.mkdirSync(dir);
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const host = path.join(home, '.codex-global-state.json');
+  fs.writeFileSync(host, JSON.stringify({ 'local-projects': { multi: { name: '同名工作区', rootPaths: [a, b] }, other: { name: '同名工作区', rootPaths: [b] } }, 'thread-project-assignments': { chat: { projectKind: 'local', projectId: 'multi' } }, 'selected-project': 'other' }));
+  const spec = { goal: '工作区历史', tasks: [{ id: 't1', title: '方向', review: 'self', acceptance: ['隔离'], checks: [{ id: 'c', command: 'node --version' }] }] };
+  for (const root of [a, b]) {
+    create(root, spec, 'same-run'); begin(root, 'same-run', 't1', 'development');
+    recordActivity(root, 'same-run', { id: 'dev', task: 't1', role: 'dev', harness: 'codex', state: 'requested', summary: root, context: { mode: 'independent', id: root, parent_id: 'chat' } });
+  }
+  const protocol = createSettingsProtocol({}, { home });
+  const call = async (name, args = {}) => (await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })).result;
+  const initial = (await call(DASHBOARD_TOOL, { session: 'chat' })).structuredContent;
+  assert.equal(initial.workspaces.length, 2); assert.equal(initial.context.workspace_id, 'multi');
+  assert.equal((await call(DASHBOARD_TOOL)).structuredContent.context.workspace_id, null);
+  const runs = (await call('ai_loop.dashboard.runs', { workspace_id: 'multi', session: 'chat' })).structuredContent.runs;
+  assert.equal(runs.length, 2); assert.deepEqual(new Set(runs.map(run => run.record_root)), new Set([a, b]));
+  const history = (await call('ai_loop.dashboard.history', { workspace_id: 'multi', session: 'chat' })).structuredContent;
+  assert.equal(history.rounds.length, 2); assert.deepEqual(new Set(history.rounds.map(round => round.root)), new Set([a, b]));
+  assert.equal((await call('ai_loop.dashboard.runs', { workspace_id: 'other', session: 'chat' })).isError, true);
+  fs.writeFileSync(host, JSON.stringify({ 'local-projects': {} }));
+  assert.equal((await call('ai_loop.dashboard.runs', { workspace_id: 'multi' })).isError, true);
+  assert.deepEqual((await call(DASHBOARD_TOOL)).structuredContent.workspaces, []);
+});
+
 test('initialize、discover 与 tools/list 声明 openai/settings 原生能力', async () => {
   const protocol = createSettingsProtocol({});
   const initialized = await protocol.request({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
@@ -23,7 +154,7 @@ test('initialize、discover 与 tools/list 声明 openai/settings 原生能力',
   assert.ok(tools.result.tools.some(tool => tool.name === UPDATE_TOOL && tool.outputSchema.required.includes('values')));
   const dashboard = tools.result.tools.find(tool => tool.name === DASHBOARD_TOOL);
   assert.equal(dashboard._meta.ui.resourceUri, DASHBOARD_URI);
-  assert.deepEqual(dashboard._meta['openai/ui'].entrypoints, [{ type: 'thread' }]);
+  assert.deepEqual(dashboard._meta['openai/ui'].entrypoints, [{ type: 'thread' }, { type: 'global' }]);
   assert.ok(dashboard.annotations.readOnlyHint);
   assert.equal(tools.result.tools.some(tool => tool.name === 'ai_loop.workspace.register'), false);
   assert.equal(tools.result.tools.some(tool => tool.name === 'ai_loop.workspace.toggle'), false, '旧动作仅保留调用兼容，不在面板列出');
@@ -56,7 +187,7 @@ test('代理看板完成 MCP UI 握手并通过标准 tools/call 桥读取数据
   const parent = { postMessage(message) {
     sent.push(message);
     if (!message.id) return;
-    if (message.method === 'tools/call' && message.params.name !== DASHBOARD_TOOL) { delayed.push(message); return; }
+    if (message.method === 'tools/call' && message.params.name !== DASHBOARD_TOOL && !message.params.name.startsWith('ai_loop.panel.')) { delayed.push(message); return; }
     const result = message.method === 'tools/call' ? { structuredContent: { workspaces: [], note: 'empty' } } : {};
     queueMicrotask(() => handlers.forEach(handler => handler({ source: parent, data: { jsonrpc: '2.0', id: message.id, result } })));
   } };
@@ -103,6 +234,7 @@ test('看板读取尾部活动及默认关闭角色，不把最早100条冒充�
   process.env.CODEX_HOME = home;
   t.after(() => { if (before === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = before; fs.rmSync(root, { recursive: true, force: true }); });
   registerWorkspace(home, project);
+  fs.writeFileSync(path.join(home, '.codex-global-state.json'), JSON.stringify({ 'local-projects': { p: { name: '测试工作区', rootPaths: [project] } } }));
   create(project, { goal: '活动', tasks: [{ id: 't1', title: '任务', review: 'self', acceptance: ['可验证'], checks: [{ id: 'c', command: 'node --version' }] }] }, 'r1');
   for (let index = 1; index <= 105; index++) event(project, 'r1', { type: 'decision', summary: `event-${index}` });
   const protocol = createSettingsProtocol({});

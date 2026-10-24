@@ -2,20 +2,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { BUNDLE, ID, safePath, jsonFile, mainModule } from './lib.mjs';
-import { listWorkspaces } from './workspaces.mjs';
-import { resolveProfile } from './profiles.mjs';
+import { resolveWorkspaceProfile } from './profiles.mjs';
+import { readCodexWorkspaces } from './codex-workspaces.mjs';
 import { roleEnabled } from './routing.mjs';
 
 // 钩子只读已启用工作区的短状态；工作区列表由设置页直接读取 Codex 本机项目。
 export function startupContext(input, options = {}) {
   if (!input || input.hook_event_name !== 'SessionStart' || typeof input.cwd !== 'string') return null;
   const home = options.home || process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
-  const workspaces = listWorkspaces(home);
-  const exact = workspaces.find(item => item.root === input.cwd && item.exists);
-  if (!exact) return null;
-  if (!exact.enabled) return null;
-  const workspace = exact;
-  const root = workspace.root, runs = safePath(root, '.ai-loop/runs');
+  const normalize = value => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
+  const discovery = readCodexWorkspaces(home);
+  const codexWorkspace = discovery.workspaces.find(item => item.roots.some(root => normalize(root) === normalize(input.cwd)));
+  if (!codexWorkspace?.enabled || codexWorkspace.shared_roots?.length) return null;
+  const root = codexWorkspace.roots.find(value => normalize(value) === normalize(input.cwd));
+  if (!root) return null;
+  const runs = safePath(root, '.ai-loop/runs');
   const active = [];
   if (fs.existsSync(runs)) {
     const names = fs.readdirSync(runs).filter(name => ID.test(name));
@@ -26,7 +27,7 @@ export function startupContext(input, options = {}) {
     }
   }
   const bundle = options.bundle || BUNDLE;
-  const profile = resolveProfile(root, { home }).profile;
+  const profile = resolveWorkspaceProfile(home, { ...codexWorkspace, root }).profile;
   const enabledRoles = profile ? Object.keys(profile.roles).filter(role => roleEnabled(profile.roles[role])) : [];
   const context = [
     '本工作区已由用户在 AI Loop 管理面板启用自动入口。',

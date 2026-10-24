@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { activityStatus } from './activity.mjs';
 import { events, listRuns, status } from './loop.mjs';
 import { mainModule, VERSION, validId } from './lib.mjs';
-import { readCodexWorkspaces } from './codex-workspaces.mjs';
+import { readCodexWorkspaces, resolveChatWorkspace } from './codex-workspaces.mjs';
+import { themeCss } from './ui-theme.mjs';
 import { chatHistory } from './dashboard.mjs';
 import { userHome, resolveProfile } from './profiles.mjs';
 import { disabledProfile, roleEnabled } from './routing.mjs';
@@ -39,11 +40,20 @@ const toolList = [
   { name: 'ai_loop.settings.apply', title: '应用设置', description: '统一保存工作区开关、已开启角色模型和并发设置；失败时回滚工作区开关。', inputSchema: actionSchema },
   { name: 'ai_loop.settings.discard', title: '放弃未应用草稿', description: '放弃当前范围草稿，重新打开页面后读取最新配置。', inputSchema: actionSchema },
   { name: 'ai_loop.settings.reset_project', title: '恢复项目默认', description: '移除本工具登记的项目模型覆盖并继承全局配置。', inputSchema: actionSchema },
-  { name: DASHBOARD_TOOL, title: 'AI Loop 代理看板', description: '打开只读代理树和聊天历史。若当前宿主提供真实工作区与聊天 ID，可传 root/session 自动定位；不要猜测聊天 ID。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' } }, additionalProperties: false }, outputSchema: { type: 'object', properties: { workspaces: { type: 'array' }, note: { type: 'string' } }, required: ['workspaces', 'note'] }, annotations: { readOnlyHint: true }, _meta: { ui: { resourceUri: DASHBOARD_URI }, 'openai/ui': { entrypoints: [{ type: 'thread' }] } } },
+  { name: DASHBOARD_TOOL, title: 'AI Loop 工作流', description: '打开工作流配置与纵向子代理看板。提供真实 session 可定位聊天所属工作区；不要猜测聊天 ID。打开页面只读，统一保存才写入。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' } }, additionalProperties: false }, outputSchema: { type: 'object', properties: { workspaces: { type: 'array' }, note: { type: 'string' } }, required: ['workspaces', 'note'] }, annotations: { readOnlyHint: true }, _meta: { ui: { resourceUri: DASHBOARD_URI }, 'openai/ui': { entrypoints: [{ type: 'thread' }, { type: 'global' }] } } },
+  { name: 'ai_loop.panel.read', title: '读取工作流面板', description: '按面板实例读取配置和草稿。', inputSchema: { type: 'object', properties: { panel_id: { type: 'string' } }, required: ['panel_id'], additionalProperties: false }, annotations: { readOnlyHint: true } },
+  { name: 'ai_loop.panel.update', title: '更新面板草稿', description: '只暂存当前面板的工作区配置。', inputSchema: { type: 'object', properties: { panel_id: { type: 'string' }, set: { type: 'object' } }, required: ['panel_id', 'set'], additionalProperties: false } },
+  { name: 'ai_loop.panel.action', title: '保存或放弃面板草稿', description: '明确保存、放弃草稿或恢复继承。', inputSchema: { type: 'object', properties: { panel_id: { type: 'string' }, action: { type: 'string', enum: ['apply', 'discard', 'reset_project'] } }, required: ['panel_id', 'action'], additionalProperties: false } },
   { name: 'ai_loop.dashboard.runs', title: '读取工作区运行列表', description: '读取工作区运行；提供 session 时仅列出该聊天的运行。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' } }, required: ['root'], additionalProperties: false }, annotations: { readOnlyHint: true } },
   { name: 'ai_loop.dashboard.status', title: '读取运行代理状态', description: '读取最后一次子代理观察及任务证据，不代表实时状态。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, run: { type: 'string' }, session: { type: 'string' } }, required: ['root', 'run'], additionalProperties: false }, annotations: { readOnlyHint: true } },
   { name: 'ai_loop.dashboard.history', title: '读取当前聊天历次任务', description: '按真实父聊天 ID 筛选历次运行，未知归属的旧记录单独计数，不混入当前聊天。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' }, after: { type: 'string' } }, required: ['root', 'session'], additionalProperties: false }, annotations: { readOnlyHint: true } },
 ];
+for (const name of ['ai_loop.dashboard.runs', 'ai_loop.dashboard.history']) {
+  const tool = toolList.find(item => item.name === name);
+  tool.inputSchema.properties.workspace_id = { type: 'string' };
+  tool.inputSchema.required = name.endsWith('.history') ? ['session'] : [];
+  tool.inputSchema.anyOf = [{ required: ['root'] }, { required: ['workspace_id'] }];
+}
 
 function rpcError(id, code, message) { return { jsonrpc: '2.0', id, error: { code, message } }; }
 function toolResult(structuredContent, text = '') {
@@ -62,18 +72,37 @@ function initializeResult() {
 
 export function createSettingsProtocol(manager = createSettingsManager(), options = {}) {
   const home = () => options.home || userHome();
+  const panels = new Map();
+  const panelFor = (id, create) => {
+    if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{8,100}$/.test(id)) throw new Error('面板实例标识无效');
+    if (!panels.has(id)) {
+      if (!create) throw new Error('面板实例已回收，请刷新工作区后重试');
+      if (panels.size >= 64) {
+        const clean = [...panels].find(([, panel]) => panel.hasDrafts?.() === false);
+        if (!clean) throw new Error('面板草稿已达上限，请先保存或放弃已有面板的草稿');
+        panels.delete(clean[0]);
+      }
+      panels.set(id, options.managerFactory ? options.managerFactory() : createSettingsManager({ ...options.managerOptions, home: home() }));
+    }
+    return panels.get(id);
+  };
   const discoveredRoot = value => {
     if (typeof value !== 'string') throw new Error('须选择当前存在的 Codex 工作区');
     const normalize = root => process.platform === 'win32' ? path.resolve(root).toLowerCase() : path.resolve(root);
-    const found = readCodexWorkspaces(home()).workspaces.find(item => normalize(item.root) === normalize(value));
+    const found = readCodexWorkspaces(home()).workspaces.find(item => (item.roots || [item.root]).some(root => normalize(root) === normalize(value)));
     if (!found) throw new Error('只能读取 Codex 已发现且当前存在的精确工作区');
-    return found.root;
+    return (found.roots || [found.root]).find(root => normalize(root) === normalize(value));
   };
   const sessionRuns = (root, session) => {
     if (typeof session !== 'string' || !session.trim() || session.length > 1000) throw new Error('须提供真实聊天标识');
     const rounds = []; let after;
     do { const page = chatHistory(root, { session_id: session, harness: 'codex', limit: 100, after }); rounds.push(...page.rounds); after = page.next_after; } while (after);
     return rounds;
+  };
+  const workspaceFor = id => {
+    const found = readCodexWorkspaces(home()).workspaces.find(item => item.id === id);
+    if (!found) throw new Error('工作区已删除或不可用，请刷新列表');
+    return found;
   };
   let initialized = false;
   async function request(message) {
@@ -92,14 +121,30 @@ export function createSettingsProtocol(manager = createSettingsManager(), option
         capabilities: { tools: {}, extensions: { 'openai/settings': { readTool: READ_TOOL, updateTool: UPDATE_TOOL } } },
       } };
       if (message.method === 'tools/list') return { jsonrpc: '2.0', id, result: { tools: toolList } };
-      if (message.method === 'resources/list') return { jsonrpc: '2.0', id, result: { resources: [{ uri: DASHBOARD_URI, name: 'AI Loop 代理看板', title: 'AI Loop 代理看板', description: '当前会话的只读代理观察与任务状态看板。', mimeType: 'text/html;profile=mcp-app' }] } };
+      if (message.method === 'resources/list') return { jsonrpc: '2.0', id, result: { resources: [{ uri: DASHBOARD_URI, name: 'AI Loop 工作流', title: 'AI Loop 工作流', description: '统一工作区配置与纵向代理看板。', mimeType: 'text/html;profile=mcp-app' }] } };
       if (message.method === 'resources/read') {
         if (params.uri !== DASHBOARD_URI) throw new Error('未知看板资源');
-        return { jsonrpc: '2.0', id, result: { contents: [{ uri: DASHBOARD_URI, mimeType: 'text/html;profile=mcp-app', text: fs.readFileSync(dashboardPath, 'utf8'), _meta: { 'openai/ui': { availableDisplayModes: ['inline', 'fullscreen'], preferredDisplayMode: 'fullscreen' } } }] } };
+        return { jsonrpc: '2.0', id, result: { contents: [{ uri: DASHBOARD_URI, mimeType: 'text/html;profile=mcp-app', text: fs.readFileSync(dashboardPath, 'utf8').replace('/* LOOP_THEME */', themeCss() + ';'), _meta: { 'openai/ui': { availableDisplayModes: ['inline', 'fullscreen'], preferredDisplayMode: 'fullscreen' } } }] } };
       }
       if (message.method === 'tools/call') {
         const name = params.name;
         const args = params.arguments && typeof params.arguments === 'object' && !Array.isArray(params.arguments) ? params.arguments : {};
+        if (['ai_loop.panel.read', 'ai_loop.panel.update', 'ai_loop.panel.action'].includes(name)) {
+          const allowed = name.endsWith('.update') ? ['panel_id', 'set'] : name.endsWith('.action') ? ['panel_id', 'action'] : ['panel_id'];
+          if (Object.keys(args).some(key => !allowed.includes(key))) throw new Error('面板参数无效');
+          const created = !panels.has(args.panel_id);
+          const canCreate = name.endsWith('.read') || name.endsWith('.update') && args.set && ['workspace_id', 'workspace_root'].some(key => Object.hasOwn(args.set, key));
+          const panel = panelFor(args.panel_id, canCreate);
+          let result;
+          if (name.endsWith('.read')) result = await panel.read();
+          else if (name.endsWith('.update')) result = await panel.update(args.set);
+          else {
+            if (!['apply', 'discard', 'reset_project'].includes(args.action)) throw new Error('面板动作无效');
+            const action = await panel.action('ai_loop.settings.' + args.action);
+            result = { ...await panel.read(), action_result: action };
+          }
+          return { jsonrpc: '2.0', id, result: toolResult({ ...result, panel_created: created }) };
+        }
         if (name === READ_TOOL) {
           if (Object.keys(args).length) throw new Error('settings.read 不接受参数');
           const result = await manager.read();
@@ -112,13 +157,55 @@ export function createSettingsProtocol(manager = createSettingsManager(), option
         }
         if (name === DASHBOARD_TOOL) {
           if (Object.keys(args).some(key => !['root', 'session'].includes(key))) throw new Error('看板仅接受 root/session');
-          if (args.session !== undefined && (typeof args.session !== 'string' || !args.session.trim() || args.session.length > 1000 || !args.root)) throw new Error('聊天定位需要真实 session 和 root');
+          if (args.session !== undefined && (typeof args.session !== 'string' || !args.session.trim() || args.session.length > 1000)) throw new Error('聊天定位需要真实 session');
           const discovery = readCodexWorkspaces(home());
           const workspaces = discovery.workspaces;
-          const providedRoot = args.root || options.project || process.env.AI_LOOP_PROJECT;
-          const root = providedRoot ? discoveredRoot(providedRoot) : null;
-          const result = { workspaces, context: { root, session_id: args.session || null, source: args.root ? 'explicit' : root ? 'plugin-environment' : 'unavailable' }, discovery_error: discovery.error, note: '自动读取 Codex 工作区；选择不会启用工作流。宿主没有提供真实聊天标识时仅展示工作区运行，不能推断当前聊天。观察不代表实时状态。' };
+          const mapped = args.session ? resolveChatWorkspace(home(), args.session) : null;
+          const explicitRoot = args.root ? discoveredRoot(args.root) : null;
+          if (mapped && explicitRoot && !mapped.roots.includes(explicitRoot)) throw new Error('聊天归属与所选工作区不一致');
+          const workspace = mapped || (explicitRoot ? workspaces.find(item => (item.roots || [item.root]).includes(explicitRoot)) : null);
+          const root = mapped?.root || explicitRoot || null;
+          const result = { workspaces, context: { root, workspace_id: workspace?.id || null, session_id: args.session || null, source: mapped ? 'thread-project-assignment' : explicitRoot ? 'explicit' : 'unavailable' }, discovery_error: discovery.error, note: '选择工作区不会启用工作流；红绿状态以保存结果为准。没有可靠聊天上下文时请手选工作区。代理状态为最后观察。' };
           return { jsonrpc: '2.0', id, result: { ...toolResult(result), _meta: { ui: { resourceUri: DASHBOARD_URI } } } };
+        }
+        if (['ai_loop.dashboard.runs', 'ai_loop.dashboard.history'].includes(name) && args.workspace_id !== undefined) {
+          const history = name.endsWith('.history');
+          if (Object.keys(args).some(key => !['workspace_id', 'session', ...(history ? ['after'] : [])].includes(key))) throw new Error('工作区查询参数无效');
+          const workspace = workspaceFor(args.workspace_id);
+          const roots = workspace.roots || [workspace.root];
+          if (history && !args.session) throw new Error('聊天历史需要真实 session');
+          if (args.session !== undefined && (typeof args.session !== 'string' || !args.session.trim() || args.session.length > 1000)) throw new Error('聊天标识无效');
+          const mapped = args.session ? resolveChatWorkspace(home(), args.session) : null;
+          if (mapped && mapped.id !== workspace.id) throw new Error('聊天不属于此工作区');
+          if (!history) {
+            const runs = roots.flatMap(root => (args.session === undefined ? listRuns(root) : sessionRuns(root, args.session).map(round => round.run)).map(run => ({ ...run, record_root: root })));
+            runs.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')) || a.record_root.localeCompare(b.record_root) || a.run_id.localeCompare(b.run_id));
+            return { jsonrpc: '2.0', id, result: toolResult({ workspace_id: workspace.id, runs }) };
+          }
+          const rounds = []; let unbound_count = 0, unbound_activity_count = 0;
+          for (const root of roots) {
+            let after;
+            do {
+              const page = chatHistory(root, { session_id: args.session, harness: 'codex', limit: 100, after });
+              rounds.push(...page.rounds.map(round => ({ ...round, root })));
+              if (!after) { unbound_count += page.unbound_count; unbound_activity_count += page.unbound_activity_count; }
+              after = page.next_after;
+            } while (after);
+          }
+          const key = round => JSON.stringify([round.run.created_at || '', round.root, round.run.run_id]);
+          rounds.sort((a, b) => key(a) < key(b) ? 1 : key(a) > key(b) ? -1 : 0);
+          let start = 0;
+          if (args.after !== undefined) {
+            let cursor;
+            try { cursor = JSON.parse(Buffer.from(args.after, 'base64url').toString('utf8')); } catch { throw new Error('历史游标无效'); }
+            if (cursor.workspace !== workspace.id || cursor.session !== args.session || typeof cursor.key !== 'string') throw new Error('历史游标不属于此工作区聊天');
+            // 按稳定键向后翻页，原游标记录删除也不重复前页。
+            start = rounds.findIndex(round => key(round) < cursor.key);
+            if (start < 0) start = rounds.length;
+          }
+          const page = rounds.slice(start, start + 20);
+          const next_after = start + page.length < rounds.length ? Buffer.from(JSON.stringify({ workspace: workspace.id, session: args.session, key: key(page.at(-1)) })).toString('base64url') : null;
+          return { jsonrpc: '2.0', id, result: toolResult({ workspace_id: workspace.id, rounds: page, unbound_count, unbound_activity_count, next_after }) };
         }
         if (name === 'ai_loop.dashboard.runs') {
           if (typeof args.root !== 'string' || Object.keys(args).some(key => !['root', 'session'].includes(key))) throw new Error('runs 需要 root 和可选 session');

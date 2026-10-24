@@ -53,13 +53,13 @@ function settingsView(initial) {
   return { state, edits, render(props) { cursor = 0; return flatten(view.Card({ ctx: {}, controller, ...props })); } };
 }
 
-test('工作区完整空列表不复活已删除项；加载中保存保留其他配置，成功快照才对账', () => {
+test('工作区完整空列表不复活已删除项；保存保留历史工作区配置', () => {
   const f = settingsView({ projects: [{ path: '/gone', enabled: true }, { path: '/live', enabled: true }] });
   let tree = f.render({ useWorkspaces: () => ({ items: [{ path: '/live' }], phase: 'loading', state: 'loading' }) });
   tree.find(node => node.type === 'form').props.onSave(); assert.equal(f.edits.length, 0);
   tree = f.render({ useWorkspaces: () => ({ items: [], phase: 'ready', state: 'idle' }) });
   assert.ok(!tree.some(node => node.type === 'option' && node.props.value === '/gone'));
-  tree.find(node => node.type === 'form').props.onSave(); assert.deepEqual(f.edits.at(-1), ['projects', []]);
+  tree.find(node => node.type === 'form').props.onSave(); assert.equal(f.edits.length, 0);
 });
 test('总开关关闭时工作区红点；会话异步到达及未知新会话不能保留旧配置目标', () => {
   const f = settingsView({ enabled: false, projects: [{ path: '/one', enabled: true }] });
@@ -378,7 +378,7 @@ test('看板切换会话或工作区时清空运行选择并隔离旧响应', as
   }
 });
 
-test('当前聊天切换到无工作区会话时立即丢弃上一个 cwd', async t => {
+test('聊天范围随工作区选择隔离，切换无工作区会话不残留旧 cwd', async t => {
   const requested = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async url => {
@@ -400,9 +400,9 @@ test('当前聊天切换到无工作区会话时立即丢弃上一个 cwd', asyn
   const { card } = controller();
   let byId = { one: { cwd: '/workspace-one' }, two: { cwd: '' } };
   const ctx = { get: key => key === 'sessions' ? { list: { getSnapshot: () => ({ byId }), subscribe: () => () => {} } } : undefined };
-  const render = sessionId => {
+  const render = (sessionId, workspacePath) => {
     cursor = 0; effects = [];
-    const outer = view.ConversationDashboard({ ctx, sessionId, controller: card });
+    const outer = view.ConversationDashboard({ ctx, sessionId, controller: card, workspacePath });
     const child = outer.props.children[0];
     const tree = child.type(child.props);
     effects.forEach(effect => effect());
@@ -417,6 +417,13 @@ test('当前聊天切换到无工作区会话时立即丢弃上一个 cwd', asyn
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(requested.at(-1).searchParams.get('session'), 'two');
     assert.equal(requested.at(-1).searchParams.has('project'), false);
+    render('one', '/workspace-other');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requested.at(-1).searchParams.get('project'), '/workspace-other');
+    assert.equal(requested.at(-1).searchParams.has('session'), false, '手选其他工作区不能携带原聊天过滤');
+    render('one', '/workspace-one');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requested.at(-1).searchParams.get('session'), 'one', '回到聊天所属工作区才恢复聊天范围');
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -496,6 +503,12 @@ test('聊天树展开观察对象可读，并使用真实子代理 ID 导航', a
     await olderButton.props.onClick();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(requestedHistoryUrl.searchParams.get('after'), 'cursor-1');
+    child.props.workspacePath = '/other-workspace';
+    render(); await new Promise(resolve => setImmediate(resolve)); render();
+    assert.equal(requestedHistoryUrl.searchParams.has('session'), false);
+    const workspaceAgent = flatten(render()).find(node => node?.props?.['aria-level'] === 3);
+    await workspaceAgent.props.onClick();
+    assert.equal(opened.at(-1).parentSessionId, 'parent-session', '工作区范围仍从真实记录取得父聊天');
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -668,7 +681,7 @@ test('betterSidebar 存在时注册统一的设置面板标签页并支持当前
   assert.equal(registeredTab.title(), 'AI Loop');
   assert.equal(registeredTab.single, true);
   const rendered = registeredTab.component({ scope: { sessionId: 'chat-1', cwd: 'D:\\Projects\\app' } });
-  assert.equal(rendered.type.name, 'Card');
+  assert.equal(rendered.type.name, 'SidebarDashboard');
   assert.equal(rendered.props.initialWorkspacePath, 'D:\\Projects\\app');
   assert.equal(rendered.props.sessionId, 'chat-1');
 });
@@ -714,4 +727,43 @@ test('ConversationDashboard 正确处理会话工作区与子代理看板', () =
   const child = rendered.props.children[0];
   assert.equal(child.props.sessionId, 'sess-chat');
   assert.equal(child.type(child.props).props.style.flex, '1 1 auto');
+});
+
+test('工作区状态点读取已保存快照，草稿不会提前显示已启用', () => {
+  const { card, scope } = controller({ enabled: false, projects: [{ path: '/p', enabled: false }] });
+  assert.equal(card.savedSnapshot().enabled, false);
+  card.edit('enabled', true);
+  card.updateProject('/p', project => ({ ...project, enabled: true }));
+  assert.equal(card.store.getSnapshot().enabled, true);
+  assert.equal(card.savedSnapshot().enabled, false);
+  assert.equal(card.savedSnapshot().projects[0].enabled, false);
+  scope.value = { schemaVersion: 2, enabled: false, workflowEnabled: true, roles: {}, projects: [{ path: '/p', enabled: true }] };
+  card.actions.discard();
+  assert.equal(card.savedSnapshot().enabled, true);
+  assert.equal(card.savedSnapshot().projects[0].enabled, true);
+});
+
+test('侧栏双页共用工作区选择，删除项清空且普通刷新不抢占手选', () => {
+  const slots = []; let cursor = 0; let effects = [];
+  const React = {
+    createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+    useSyncExternalStore: (_sub, read) => read(),
+    useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial; return [slots[index], next => { slots[index] = typeof next === 'function' ? next(slots[index]) : next; }]; },
+    useEffect: fn => effects.push(fn),
+  };
+  const view = createPlugin(name => name === 'react' ? React : runtime(name));
+  const { card } = controller();
+  let items = [{ path: '/one' }, { path: '/two' }];
+  const ctx = { get: key => key === 'sessions' ? { list: { getSnapshot: () => ({ byId: { chat: { cwd: '/one' } } }) } } : key === 'workspaces' ? { list: { getSnapshot: () => ({ items, phase: 'ready', state: 'idle' }) } } : undefined };
+  const render = () => { cursor = 0; effects = []; const tree = view.SidebarDashboard({ ctx, sessionId: 'chat', controller: card }); effects.forEach(fn => fn()); return tree; };
+  const flatten = node => Array.isArray(node) ? node.flatMap(flatten) : node && typeof node === 'object' ? [node, ...flatten(node.props?.children)] : [];
+  let nodes = flatten(render());
+  const paths = () => nodes.filter(node => node.type === view.Card || node.type === view.ConversationDashboard).map(node => node.props.workspacePath);
+  assert.deepEqual(paths(), ['/one', '/one']);
+  nodes.find(node => node.type === 'select').props.onChange({ target: { value: '/two' } });
+  nodes = flatten(render()); assert.deepEqual(paths(), ['/two', '/two']);
+  nodes.find(node => node.type === 'button' && node.props.children.includes('工作流看板')).props.onClick();
+  nodes = flatten(render()); assert.deepEqual(paths(), ['/two', '/two']);
+  items = [{ path: '/one' }]; nodes = flatten(render()); assert.deepEqual(paths(), ['', '']);
+  items = [{ path: '/one' }, { path: '/two' }]; nodes = flatten(render()); assert.deepEqual(paths(), ['', ''], '重新发现删除项也不能自动恢复旧选择');
 });
