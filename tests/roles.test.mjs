@@ -117,3 +117,14 @@ test('旧台账不确定执行者也阻止迁移后重复派发', t => {
   fs.writeFileSync(path.join(root, '.ai-loop/runs/r1/agents.json'), JSON.stringify({ schema_version: 1, agents: [{ id: 'legacy', task: 't1', role: 'dev', state: 'requested', native_id: null }] }));
   assert.throws(() => recordActivity(root, 'r1', { id: 'new', task: 't1', role: 'dev', harness: 'fixture', state: 'requested', summary: '未知旧执行者不能重派' }), /未确认停止/);
 });
+test('direction 只是受限展示标签；正式任务锁和子代理 session 绑定不可绕过', t => {
+  const root = fixture(t);
+  begin(root, 'r1', 't1', 'development');
+  assert.throws(() => dispatchCheck(root, 'r1', 't1#backend', 'dev', 0), /正式 task id/);
+  const base = { id: 'agent1', task: 't1', direction: 'ui', role: 'dev', attempt: 0, harness: 'fixture', state: 'requested', summary: '测试登记' };
+  recordActivity(root, 'r1', base);
+  assert.throws(() => recordActivity(root, 'r1', { ...base, id: 'agent2', direction: 'backend' }), /同一正式任务/);
+  assert.throws(() => recordActivity(root, 'r1', { ...base, id: 'agent3', direction: 'x'.repeat(65) }), /展示标签/);
+  recordActivity(root, 'r1', { id: 'agent1', state: 'running', native_id: 'child1', session_id: 'child-session-1', summary: '绑定真实会话' });
+  assert.throws(() => recordActivity(root, 'r1', { id: 'agent1', state: 'running', session_id: 'child-session-2', summary: '尝试更改' }), /session_id 绑定后不能改变/);
+});

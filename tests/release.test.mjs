@@ -82,6 +82,11 @@ test('启动钩子仅匹配已启用的精确工作区，错误事件和关闭�
   assert.equal(context.hookEventName,'SessionStart');assert.ok(context.additionalContext.includes('不全量扫描'));
   assert.ok(context.additionalContext.length<4500);
   fs.mkdirSync(path.join(root,'child'));
+  const bound=startupContext({...input,session_id:'01234567-89ab-cdef-0123-456789abcdef'},options).hookSpecificOutput.additionalContext;
+  assert.match(bound,/AI_LOOP_CHAT_CONTEXT=/);
+  assert.match(bound,/01234567-89ab-cdef-0123-456789abcdef/);
+  assert.match(bound,/context.parent_id/);
+  assert.doesNotMatch(startupContext({...input,session_id:'bad\ncontext'},options).hookSpecificOutput.additionalContext,/AI_LOOP_CHAT_CONTEXT=/);
   assert.equal(startupContext({...input,cwd:path.join(root,'child')},options),null);
   assert.equal(startupContext({...input,hook_event_name:'Stop'},options),null);
   setWorkspaceEnabled(home,root,false);assert.equal(startupContext(input,options),null);

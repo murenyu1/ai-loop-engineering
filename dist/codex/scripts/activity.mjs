@@ -7,12 +7,13 @@ import { assert, rootPath, safePath, validId, jsonFile, writeJson, locked, args,
 const terminal = new Set(['completed', 'failed', 'stopped']);
 const states = ['requested', 'running', 'waiting', 'stop_requested', 'unknown', ...terminal];
 const text = value => typeof value === 'string' && value.trim() && value.length <= 1000;
+const validDirection = value => value === undefined || value === null || typeof value === 'string' && value.length <= 64 && !/[\u0000-\u001f\u007f]/.test(value);
 export function dispatchCheck(project, run, taskId, role, attempt) {
   const root = rootPath(project), current = status(root, validId(run));
   assert(current.status === 'active', '运行已关闭或停止，不能派发');
   assert(ROLE_NAMES.includes(role), '未知子代理角色');
-  const baseTaskId = typeof taskId === 'string' && taskId.includes('#') ? taskId.split('#')[0] : taskId;
-  const task = baseTaskId === 'final' && ['tester', 'reviewer'].includes(role) && current.tasks.every(item => item.phase === 'done') ? { id: 'final', phase: role === 'reviewer' ? 'reviewing' : 'verifying', managed_execution: true, attempts: { tester: current.event_seq, reviewer: current.event_seq } } : current.tasks.find(item => item.id === baseTaskId);
+  assert(typeof taskId === 'string' && !taskId.includes('#'), '任务必须使用正式 task id；方向标签不能替代或拆分任务');
+  const task = taskId === 'final' && ['tester', 'reviewer'].includes(role) && current.tasks.every(item => item.phase === 'done') ? { id: 'final', phase: role === 'reviewer' ? 'reviewing' : 'verifying', managed_execution: true, attempts: { tester: current.event_seq, reviewer: current.event_seq } } : current.tasks.find(item => item.id === taskId);
   assert(task, '任务不属于当前运行');
   const spec = jsonFile(safePath(root, `.ai-loop/runs/${run}/spec.json`));
   if (spec.role_policy) assert(roleEnabled(spec.role_policy[role]), `角色 ${role} 已关闭，禁止派发`);
@@ -38,6 +39,7 @@ function legacyAgents(root, run) {
 export function recordActivity(project, run, input) {
   const root = rootPath(project);
   assert(input && Object.keys(input).every(key => ['id', 'task', 'direction', 'role', 'attempt', 'harness', 'native_id', 'session_id', 'state', 'requested', 'observed_model', 'observed_effort', 'usage', 'source', 'summary', 'context', 'revision', 'evidence'].includes(key)), '代理观察字段无效');
+  assert(validDirection(input.direction), 'direction 只能是最多 64 字符的展示标签');
   validId(input.id);
   assert(states.includes(input.state) && text(input.summary), '代理状态或摘要无效');
   return locked(root, `run-${validId(run)}`, () => {
@@ -50,7 +52,7 @@ export function recordActivity(project, run, input) {
       assert(input.state === 'requested', '首次观察须为 requested');
       dispatchCheck(root, run, input.task, input.role, input.attempt);
       assert(text(input.harness), '须提供宿主名称');
-      assert(![...data.agents, ...legacyAgents(root, run)].some(row => row.task === input.task && (row.direction || '') === (input.direction || '') && row.role === input.role && !terminal.has(row.state)), '同任务同方向同角色已有未确认停止的执行者');
+      assert(![...data.agents, ...legacyAgents(root, run)].some(row => row.task === input.task && row.role === input.role && !terminal.has(row.state)), '同一正式任务同角色已有未确认停止的执行者');
       item = { id: input.id, run_id: run, task: input.task, direction: input.direction ?? null, role: input.role, attempt: input.attempt ?? null, harness: input.harness, state: 'requested', native_id: null, requested: input.requested ?? null, started_at: at, history: [] };
       data.agents.push(item);
     } else {
@@ -76,7 +78,11 @@ export function recordActivity(project, run, input) {
       assert(Object.entries(input.usage).every(([key, value]) => ['input_tokens', 'output_tokens', 'cached_tokens'].includes(key) && Number.isSafeInteger(value) && value >= 0), 'usage 仅接受非负整数实际计数');
       item.usage = input.usage;
     }
-    for (const key of ['session_id', 'observed_model', 'observed_effort']) if (input[key] !== undefined) { assert(input[key] === null || text(input[key]), `${key} 无效`); item[key] = input[key]; }
+    for (const key of ['session_id', 'observed_model', 'observed_effort']) if (input[key] !== undefined) {
+      assert(input[key] === null || text(input[key]), `${key} 无效`);
+      if (key === 'session_id') assert(!item.session_id || item.session_id === input.session_id, '子代理 session_id 绑定后不能改变');
+      item[key] = input[key];
+    }
     item.state = input.state; item.updated_at = at; item.source = input.source ?? 'scheduler';
     if (terminal.has(item.state)) item.finished_at = at;
     item.history.push({ at, state: item.state, summary: input.summary });

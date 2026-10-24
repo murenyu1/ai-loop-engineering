@@ -32,6 +32,9 @@ export function startupContext(input, options = {}) {
     '本工作区已由用户在 AI Loop 管理面板启用自动入口。',
     enabledRoles.length ? `已开启角色：${enabledRoles.join('、')}。每次派发前重新核对有效配置，其他角色不调用。` : '五个子代理当前全部关闭；由主代理完成必要工作，不自动选择模型或替代子代理。独立评审要求保留待复核。',
     `精确工作区：${JSON.stringify(root)}。插件根：${JSON.stringify(bundle)}。`,
+    typeof input.session_id === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(input.session_id)
+      ? `AI_LOOP_CHAT_CONTEXT=${JSON.stringify({ root, session: input.session_id })}。这是本次 SessionStart 提供的真实父聊天标识。登记本聊天子代理时 context.parent_id 使用此 session；子代理 context.id/native_id 使用实际返回值。用户要求打开本聊天看板时，将此 root/session 原样传给 ai_loop.dashboard；缺少此上下文不得猜测或沿用其他聊天标识。`
+      : '当前钩子未提供有效聊天标识；不可推断聊天归属，看板仅按工作区选择运行。',
     `处理项目开发、继续、验证请求时，使用 ${JSON.stringify(path.join(bundle,'skills/ai-loop/SKILL.md'))}；先读取项目规则与 .ai-loop/memory/index.md，再用插件 scripts/memory.mjs bootstrap --project ROOT 按需恢复。`,
     active.length ? `发现活跃运行：${active.map(name=>JSON.stringify(name)).join('、')}。唯一运行仅帮助定位，多个候选先澄清。` : '先用 bootstrap 查看运行状态，不为普通问答新建开发任务。',
     '用户下一条命令决定工作范围；读取必要交接、未关闭工作单元与改动位置，核对实际文件，不全量扫描代码。未落盘讨论无法恢复，历史验证不能当作当前通过。',

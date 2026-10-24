@@ -35,6 +35,7 @@ export function createSettingsManager(options = {}) {
   const bases = new Map();
   let scope = 'global';
   let selectedRoot = '';
+  let initialSelection = true;
   let lastError = '';
   let applying = false;
 
@@ -112,6 +113,12 @@ export function createSettingsManager(options = {}) {
   async function read() {
     const discovery = readCodexWorkspaces(home);
     const workspaces = discovery.workspaces;
+    if (initialSelection) {
+      initialSelection = false;
+      const normalize = value => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
+      const current = defaultProject && workspaces.find(item => normalize(item.root) === normalize(defaultProject));
+      if (current) { selectedRoot = current.root; scope = 'project'; }
+    }
     if (selectedRoot && !workspaces.some(item => item.root === selectedRoot)) {
       selectedRoot = '';
       lastError = '所选工作区已不可用，请重新选择。';
@@ -179,6 +186,7 @@ export function createSettingsManager(options = {}) {
   async function update(set) {
     assert(!applying, '设置正在应用，暂不能修改草稿');
     assert(set && typeof set === 'object' && !Array.isArray(set), 'settings.update 需要 set 对象');
+    if (Object.hasOwn(set, 'workspace_root') || Object.hasOwn(set, 'scope')) initialSelection = false;
     const fields = new Set(['scope', 'workspace_root', 'workspace_enabled', 'concurrency', ...roleNames.flatMap(role => [`model.${role}`, `effort.${role}`])]);
     const entries = Object.entries(set);
     const scopeId = Object.keys(scopeLabels).find(id => set.scope === id || set.scope === scopeLabels[id]);

@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { activityStatus } from './activity.mjs';
 import { events, listRuns, status } from './loop.mjs';
 import { mainModule, VERSION, validId } from './lib.mjs';
-import { listWorkspaces, registeredRoot } from './workspaces.mjs';
+import { readCodexWorkspaces } from './codex-workspaces.mjs';
+import { chatHistory } from './dashboard.mjs';
 import { userHome, resolveProfile } from './profiles.mjs';
 import { disabledProfile, roleEnabled } from './routing.mjs';
 import { createSettingsManager } from './native-settings.mjs';
@@ -38,9 +39,10 @@ const toolList = [
   { name: 'ai_loop.settings.apply', title: '应用设置', description: '统一保存工作区开关、已开启角色模型和并发设置；失败时回滚工作区开关。', inputSchema: actionSchema },
   { name: 'ai_loop.settings.discard', title: '放弃未应用草稿', description: '放弃当前范围草稿，重新打开页面后读取最新配置。', inputSchema: actionSchema },
   { name: 'ai_loop.settings.reset_project', title: '恢复项目默认', description: '移除本工具登记的项目模型覆盖并继承全局配置。', inputSchema: actionSchema },
-  { name: DASHBOARD_TOOL, title: 'AI Loop 代理看板', description: '打开当前会话的只读子代理观察看板；只显示已登记工作区和本地记录，不调用模型。', inputSchema: actionSchema, outputSchema: { type: 'object', properties: { workspaces: { type: 'array' }, note: { type: 'string' } }, required: ['workspaces', 'note'] }, annotations: { readOnlyHint: true }, _meta: { ui: { resourceUri: DASHBOARD_URI }, 'openai/ui': { entrypoints: [{ type: 'thread' }] } } },
-  { name: 'ai_loop.dashboard.runs', title: '读取工作区运行列表', description: '读取已登记工作区的本地 AI Loop 运行记录。', inputSchema: { type: 'object', properties: { root: { type: 'string' } }, required: ['root'], additionalProperties: false }, annotations: { readOnlyHint: true } },
-  { name: 'ai_loop.dashboard.status', title: '读取运行代理状态', description: '读取最后一次子代理观察及任务证据，不代表实时状态。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, run: { type: 'string' } }, required: ['root', 'run'], additionalProperties: false }, annotations: { readOnlyHint: true } },
+  { name: DASHBOARD_TOOL, title: 'AI Loop 代理看板', description: '打开只读代理树和聊天历史。若当前宿主提供真实工作区与聊天 ID，可传 root/session 自动定位；不要猜测聊天 ID。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' } }, additionalProperties: false }, outputSchema: { type: 'object', properties: { workspaces: { type: 'array' }, note: { type: 'string' } }, required: ['workspaces', 'note'] }, annotations: { readOnlyHint: true }, _meta: { ui: { resourceUri: DASHBOARD_URI }, 'openai/ui': { entrypoints: [{ type: 'thread' }] } } },
+  { name: 'ai_loop.dashboard.runs', title: '读取工作区运行列表', description: '读取工作区运行；提供 session 时仅列出该聊天的运行。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' } }, required: ['root'], additionalProperties: false }, annotations: { readOnlyHint: true } },
+  { name: 'ai_loop.dashboard.status', title: '读取运行代理状态', description: '读取最后一次子代理观察及任务证据，不代表实时状态。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, run: { type: 'string' }, session: { type: 'string' } }, required: ['root', 'run'], additionalProperties: false }, annotations: { readOnlyHint: true } },
+  { name: 'ai_loop.dashboard.history', title: '读取当前聊天历次任务', description: '按真实父聊天 ID 筛选历次运行，未知归属的旧记录单独计数，不混入当前聊天。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' }, after: { type: 'string' } }, required: ['root', 'session'], additionalProperties: false }, annotations: { readOnlyHint: true } },
 ];
 
 function rpcError(id, code, message) { return { jsonrpc: '2.0', id, error: { code, message } }; }
@@ -58,7 +60,21 @@ function initializeResult() {
   };
 }
 
-export function createSettingsProtocol(manager = createSettingsManager()) {
+export function createSettingsProtocol(manager = createSettingsManager(), options = {}) {
+  const home = () => options.home || userHome();
+  const discoveredRoot = value => {
+    if (typeof value !== 'string') throw new Error('须选择当前存在的 Codex 工作区');
+    const normalize = root => process.platform === 'win32' ? path.resolve(root).toLowerCase() : path.resolve(root);
+    const found = readCodexWorkspaces(home()).workspaces.find(item => normalize(item.root) === normalize(value));
+    if (!found) throw new Error('只能读取 Codex 已发现且当前存在的精确工作区');
+    return found.root;
+  };
+  const sessionRuns = (root, session) => {
+    if (typeof session !== 'string' || !session.trim() || session.length > 1000) throw new Error('须提供真实聊天标识');
+    const rounds = []; let after;
+    do { const page = chatHistory(root, { session_id: session, harness: 'codex', limit: 100, after }); rounds.push(...page.rounds); after = page.next_after; } while (after);
+    return rounds;
+  };
   let initialized = false;
   async function request(message) {
     if (!message || typeof message !== 'object' || Array.isArray(message) || message.jsonrpc !== '2.0' || typeof message.method !== 'string') {
@@ -95,23 +111,34 @@ export function createSettingsProtocol(manager = createSettingsManager()) {
           return { jsonrpc: '2.0', id, result: toolResult(result) };
         }
         if (name === DASHBOARD_TOOL) {
-          if (Object.keys(args).length) throw new Error(`${DASHBOARD_TOOL} 不接受参数`);
-          const workspaces = listWorkspaces(userHome()).filter(item => item.exists).map(item => ({ root: item.root, enabled: item.enabled }));
-          const result = { workspaces, note: '每个线程单独显示；请选择已登记工作区后读取运行。观察数据仅来自最后一次本地记录，不代表实时运行，也不调用模型。' };
+          if (Object.keys(args).some(key => !['root', 'session'].includes(key))) throw new Error('看板仅接受 root/session');
+          if (args.session !== undefined && (typeof args.session !== 'string' || !args.session.trim() || args.session.length > 1000 || !args.root)) throw new Error('聊天定位需要真实 session 和 root');
+          const discovery = readCodexWorkspaces(home());
+          const workspaces = discovery.workspaces;
+          const providedRoot = args.root || options.project || process.env.AI_LOOP_PROJECT;
+          const root = providedRoot ? discoveredRoot(providedRoot) : null;
+          const result = { workspaces, context: { root, session_id: args.session || null, source: args.root ? 'explicit' : root ? 'plugin-environment' : 'unavailable' }, discovery_error: discovery.error, note: '自动读取 Codex 工作区；选择不会启用工作流。宿主没有提供真实聊天标识时仅展示工作区运行，不能推断当前聊天。观察不代表实时状态。' };
           return { jsonrpc: '2.0', id, result: { ...toolResult(result), _meta: { ui: { resourceUri: DASHBOARD_URI } } } };
         }
         if (name === 'ai_loop.dashboard.runs') {
-          if (typeof args.root !== 'string' || Object.keys(args).some(key => key !== 'root')) throw new Error('runs 需要且只接受 root');
-          const root = registeredRoot(userHome(), args.root);
-          return { jsonrpc: '2.0', id, result: toolResult({ root, runs: listRuns(root) }) };
+          if (typeof args.root !== 'string' || Object.keys(args).some(key => !['root', 'session'].includes(key))) throw new Error('runs 需要 root 和可选 session');
+          const root = discoveredRoot(args.root);
+          return { jsonrpc: '2.0', id, result: toolResult({ root, runs: args.session === undefined ? listRuns(root) : sessionRuns(root, args.session).map(item => item.run) }) };
         }
         if (name === 'ai_loop.dashboard.status') {
-          if (typeof args.root !== 'string' || typeof args.run !== 'string' || Object.keys(args).some(key => !['root', 'run'].includes(key))) throw new Error('status 需要 root 和 run');
-          const root = registeredRoot(userHome(), args.root), run = validId(args.run);
+          if (typeof args.root !== 'string' || typeof args.run !== 'string' || Object.keys(args).some(key => !['root', 'run', 'session'].includes(key))) throw new Error('status 需要 root 和 run');
+          const root = discoveredRoot(args.root), run = validId(args.run);
+          const bound = args.session === undefined ? null : sessionRuns(root, args.session).find(item => item.run.run_id === run);
+          if (args.session !== undefined && !bound) throw new Error('此运行不属于当前聊天');
           const current = status(root, run);
-          const profile = resolveProfile(root, { home: userHome() }).profile || disabledProfile('codex');
+          const profile = resolveProfile(root, { home: home() }).profile || disabledProfile('codex');
           const roles = Object.fromEntries(Object.entries(profile.roles).map(([role, value]) => [role, { enabled: roleEnabled(value), model: value.model }]));
-          return { jsonrpc: '2.0', id, result: toolResult({ root, run: current, roles, activity: activityStatus(root, run), events: events(root, run, Math.max(0, current.event_seq - 100), 100).events }) };
+          return { jsonrpc: '2.0', id, result: toolResult({ root, run: current, roles, activity: bound?.activity ?? activityStatus(root, run), events: events(root, run, Math.max(0, current.event_seq - 100), 100).events }) };
+        }
+        if (name === 'ai_loop.dashboard.history') {
+          if (typeof args.session !== 'string' || !args.session.trim() || args.session.length > 1000 || Object.keys(args).some(key => !['root', 'session', 'after'].includes(key))) throw new Error('history 需要真实 root/session 与可选 after');
+          const root = discoveredRoot(args.root);
+          return { jsonrpc: '2.0', id, result: toolResult({ root, ...chatHistory(root, { session_id: args.session, harness: 'codex', after: args.after, limit: 20 }) }) };
         }
         if (typeof name === 'string' && ['ai_loop.settings.apply', 'ai_loop.settings.discard', 'ai_loop.settings.reset_project', 'ai_loop.workspace.toggle'].includes(name)) {
           if (Object.keys(args).length) throw new Error(`${name} 不接受参数`);

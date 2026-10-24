@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { registerWorkspace } from '../scripts/workspaces.mjs';
-import { create, event } from '../scripts/loop.mjs';
+import { create, event, begin } from '../scripts/loop.mjs';
+import { recordActivity } from '../scripts/activity.mjs';
 import { PassThrough } from 'node:stream';
 import { createSettingsProtocol, DASHBOARD_TOOL, DASHBOARD_URI, PROTOCOL_VERSION, READ_TOOL, UPDATE_TOOL, runSettingsServer } from '../codex/scripts/settings-server.mjs';
 
@@ -112,6 +113,81 @@ test('看板读取尾部活动及默认关闭角色，不把最早100条冒充�
   assert.equal(value.events.at(-1).summary, 'event-105');
   assert.ok(value.events[0].seq > 1);
   assert.ok(Object.values(value.roles).every(role => role.enabled === false));
+});
+
+test('看板直接发现未登记工作区，只读定位且不猜测当前聊天', async t => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-discovery-'));
+  const home = path.join(base, 'home'), project = path.join(base, 'project'), other = path.join(base, 'other');
+  for (const directory of [home, project, other]) fs.mkdirSync(directory);
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const file = path.join(home, '.codex-global-state.json');
+  const native = JSON.stringify({ 'local-projects': { p: { name: '自动发现', rootPaths: [project] } }, 'active-workspace-roots': [project] });
+  fs.writeFileSync(file, native);
+  const protocol = createSettingsProtocol({}, { home });
+  const call = async (name, args = {}) => (await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })).result;
+  const initial = (await call(DASHBOARD_TOOL)).structuredContent;
+  assert.equal(initial.workspaces[0].enabled, false);
+  assert.equal(initial.context.session_id, null);
+  assert.equal(initial.context.root, null, 'active 列表不代表当前聊天');
+  const explicit = (await call(DASHBOARD_TOOL, { root: project, session: 'chat-A' })).structuredContent;
+  assert.equal(explicit.context.root, fs.realpathSync(project));
+  assert.equal(explicit.context.session_id, 'chat-A');
+  assert.deepEqual((await call('ai_loop.dashboard.runs', { root: project })).structuredContent.runs, []);
+  assert.equal((await call('ai_loop.dashboard.runs', { root: other })).isError, true);
+  assert.equal(fs.existsSync(path.join(home, 'ai-loop')), false, '查看不应登记或启用工作区');
+  assert.equal(fs.readFileSync(file, 'utf8'), native);
+});
+
+test('看板聊天历史、运行列表及单次运行都隔离同工作区其他聊天', async t => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-chat-'));
+  const home = path.join(base, 'home'), project = path.join(base, 'project');
+  fs.mkdirSync(home); fs.mkdirSync(project);
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(home, '.codex-global-state.json'), JSON.stringify({ 'active-workspace-roots': [project] }));
+  const spec = { goal: '历史', tasks: [{ id: 't1', title: '开发方向', review: 'self', acceptance: ['可测'], checks: [{ id: 'c', command: 'node --version' }] }] };
+  for (const [run, parent] of [['r1', 'A'], ['r2', 'A'], ['r3', 'B'], ['legacy', null]]) {
+    create(project, spec, run); begin(project, run, 't1', 'development');
+    recordActivity(project, run, { id: 'dev', task: 't1', role: 'dev', harness: 'codex', state: 'requested', summary: run, ...(parent ? { context: { mode: 'independent', id: run + '-child', parent_id: parent } } : {}) });
+  }
+  const protocol = createSettingsProtocol({}, { home });
+  const call = async (name, args) => (await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })).result;
+  const history = (await call('ai_loop.dashboard.history', { root: project, session: 'A' })).structuredContent;
+  assert.deepEqual(history.rounds.map(item => item.run.run_id).sort(), ['r1', 'r2']);
+  assert.equal(history.rounds[0].run.tasks.length, 1);
+  assert.equal(history.unbound_count, 1);
+  const runs = (await call('ai_loop.dashboard.runs', { root: project, session: 'A' })).structuredContent.runs;
+  assert.deepEqual(runs.map(item => item.run_id).sort(), ['r1', 'r2']);
+  assert.equal((await call('ai_loop.dashboard.status', { root: project, run: 'r3', session: 'A' })).isError, true);
+  assert.equal((await call('ai_loop.dashboard.history', { root: project, session: 'A', after: 'not-a-cursor' })).isError, true);
+});
+
+test('代理树展示多运行历史、转义内容并仅允许真实 Codex 聊天地址', async () => {
+  const html = fs.readFileSync(new URL('../codex/ui/agent-dashboard.html', import.meta.url), 'utf8');
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const elements = new Map(), handlers = [], calls = [];
+  const elem = id => { if (!elements.has(id)) elements.set(id, { value: '', innerHTML: '', textContent: '', hidden: true, listeners: {}, addEventListener(n, fn) { this.listeners[n] = fn; } }); return elements.get(id); };
+  const parent = { postMessage(message) { calls.push(message); if (!message.id) return; let result = {};
+    if (message.method === 'tools/call') {
+      const { name, arguments: args } = message.params;
+      if (name === DASHBOARD_TOOL) result = { workspaces: [{ root: 'root-A', enabled: false }], context: { root: 'root-A', session_id: 'A' } };
+      if (name === 'ai_loop.dashboard.runs') { assert.equal(args.session, 'A'); result = { runs: [] }; }
+      if (name === 'ai_loop.dashboard.history') result = { rounds: ['first', 'second'].map(run => ({ run: { run_id: run, tasks: [] }, activity: { agents: [{ role: 'dev', harness: 'codex', native_id: '/root/dev', observation: { summary: '<script>bad</script>' } }, { role: 'dev', harness: 'codex', context: { id: '/root/dev' }, native_id: '01234567-89ab-cdef-0123-456789abcdef' }] } })), next_after: null };
+      result = { structuredContent: result };
+    }
+    if (message.method === 'ui/open-link') result = { isError: true };
+    queueMicrotask(() => handlers.forEach(fn => fn({ source: parent, data: { jsonrpc: '2.0', id: message.id, result } })));
+  } };
+  vm.runInNewContext(script, { window: { parent, addEventListener: (name, fn) => handlers.push(fn) }, document: { getElementById: elem, querySelectorAll: () => [] }, setTimeout, clearTimeout, queueMicrotask });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const view = elem('view');
+  assert.match(view.innerHTML, /first/); assert.match(view.innerHTML, /second/);
+  assert.match(view.innerHTML, /class="tree"/); assert.match(view.innerHTML, /&lt;script&gt;/);
+  assert.doesNotMatch(view.innerHTML, /data-session="\/root/);
+  assert.match(view.innerHTML, /data-session="01234567-89ab-cdef-0123-456789abcdef"/);
+  await view.listeners.click({ target: { closest: () => ({ dataset: { session: '01234567-89ab-cdef-0123-456789abcdef' } }) } });
+  assert.ok(calls.some(call => call.method === 'ui/open-link' && call.params.url === 'codex://threads/01234567-89ab-cdef-0123-456789abcdef'));
+  assert.match(elem('message').textContent, /宿主未能打开聊天.*宿主拒绝/);
+  assert.doesNotMatch(elem('message').textContent, /已向宿主请求打开/);
 });
 
 test('read/update 和动作调用返回 MCP structuredContent，update等待并传回刷新schema', async () => {

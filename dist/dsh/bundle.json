@@ -4,7 +4,7 @@
   "files": [
     {
       "path": "client.js",
-      "hash": "9b44d41cec964dd9d3707da823b0f93bce696ee285df7764129f155c22e6a42a"
+      "hash": "7e0a87d6173cd7bdb53cc320b59bf0c3a6dd866efe82be5b8ad236b9ee76b9de"
     },
     {
       "path": "config.mjs",
@@ -20,7 +20,7 @@
     },
     {
       "path": "core/agents/loop-planner.md",
-      "hash": "55fc43738ffb3e092388e0dff5c5dfb4299ba744f6b4c490e92ecff46a35592c"
+      "hash": "914a2619a84eb02036368dbbf558767598946a84ae23b4e49761846573f3f77e"
     },
     {
       "path": "core/agents/loop-reviewer.md",
@@ -48,7 +48,11 @@
     },
     {
       "path": "core/scripts/activity.mjs",
-      "hash": "03aa240baf8dcddeab3187dd184b5967c85f8c0f7faad432f269842ba42cf402"
+      "hash": "b63443a55b2d6ce1861d4befce84b2a26a98f5616d33778b1496aa5446a2c50e"
+    },
+    {
+      "path": "core/scripts/dashboard.mjs",
+      "hash": "8b147711a4bb823d7ef5d79a19965703d7dec3566f5081bf053801d772c7dd00"
     },
     {
       "path": "core/scripts/execution.mjs",
@@ -92,11 +96,11 @@
     },
     {
       "path": "core/WORKFLOW.md",
-      "hash": "00a1a8f62c28b8a634e1c7a90b790c8745b7d2c50452554dbad939f5c4efee14"
+      "hash": "761d8d3866634f8ae2e9139c1a4fd4060dcd23aed1f8f0eda7eda5a562bfe91a"
     },
     {
       "path": "index.mjs",
-      "hash": "a62d04feae8e962791c8133f3980ba45503aacb5ac90085e9295a35794e74624"
+      "hash": "ec607da037988eca03ae4dec96232253a6df1ebeb17bfa59d74f5cec9263b4a7"
     },
     {
       "path": "package.json",

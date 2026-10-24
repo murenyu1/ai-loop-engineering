@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { createConfig, projectKey, projectSettings, roleOptions, validateConfig, validateProjects, validateRoles } from '../dsh/config.mjs';
 import * as loop from '../core/scripts/loop.mjs';
 import { recordActivity } from '../core/scripts/activity.mjs';
+import { chatHistory } from '../core/scripts/dashboard.mjs';
 
 const root = 'D:\\Projects\\example';
 const config = extra => ({ enabled: true, maxConcurrent: 2, roles: { reviewer: { provider: 'parent-provider', model: 'parent-model' } }, projects: [{ path: root, enabled: true }], ...extra });
@@ -186,6 +187,63 @@ test('状态路由以公开 sessions.get 会话 cwd 为权威，不接受工作�
   res = response();
   await f.routes[0].handler({ method: 'GET', url: '/plugins/ai-loop-engineering/state?session=unknown' }, res);
   assert.equal(res.status, 400);
+  await f.routes[0].handler({ method: 'GET', url: `/plugins/ai-loop-engineering/state?session=unknown&project=${encodeURIComponent(f.project)}` }, res);
+  assert.equal(res.status, 400);
+});
+
+test('共享聊天历史按父会话服务端隔离，旧未绑定观察仅计数且游标分页稳定', t => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-chat-history-'));
+  t.after(() => fs.rmSync(project, { recursive: true, force: true }));
+  const spec = { goal: 'chat history', project_path: '.', tasks: [{ id: 'task1', title: 'task', acceptance: ['done'], review: 'none', checks: [{ id: 'c', command: 'node --version' }] }] };
+  const makeRun = (id, created, agents) => {
+    loop.create(project, spec, id);
+    const directory = path.join(project, '.ai-loop', 'runs', id);
+    const stateFile = path.join(directory, 'state.json');
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    state.created_at = created;
+    fs.writeFileSync(stateFile, JSON.stringify(state));
+    fs.writeFileSync(path.join(directory, 'activity.json'), JSON.stringify({ schema_version: 2, agents }));
+  };
+  const agent = (id, harness, context, extra = {}) => ({ id, run_id: 'ignored', task: 'task1', role: 'dev', attempt: 0, harness, state: 'running', native_id: `native-${id}`, context, started_at: '2026-10-01T00:00:00.000Z', ...extra });
+  makeRun('chat-old', '2026-10-01T00:00:00.000Z', [
+    agent('old-chat', 'dsh', { mode: 'independent', id: 'child-1', parent_id: 'session-1' }),
+    agent('other-chat', 'dsh', { mode: 'independent', id: 'child-2', parent_id: 'session-2' }),
+    agent('legacy', 'dsh', undefined),
+    agent('other-harness', 'codex', { mode: 'independent', id: 'child-3', parent_id: 'session-1' }),
+  ]);
+  makeRun('chat-new', '2026-10-02T00:00:00.000Z', [agent('new-chat', 'dsh', { mode: 'independent', id: 'child-4', parent_id: 'session-1' })]);
+  const first = chatHistory(project, { session_id: 'session-1', harness: 'dsh', limit: 1 });
+  assert.deepEqual(first.rounds.map(round => round.run.run_id), ['chat-new']);
+  assert.deepEqual(first.rounds[0].run.tasks.map(task => task.id), ['task1']);
+  assert.equal(first.rounds[0].activity.agents[0].native_id, 'native-new-chat');
+  assert.equal(first.unbound_count, 1);
+  assert.ok(first.next_after);
+  const next = chatHistory(project, { session_id: 'session-1', harness: 'dsh', limit: 1, after: first.next_after });
+  assert.deepEqual(next.rounds.map(round => round.run.run_id), ['chat-old']);
+  assert.deepEqual(next.rounds[0].activity.agents.map(item => item.id), ['old-chat']);
+  assert.equal(next.next_after, null);
+  assert.throws(() => chatHistory(project, { session_id: 'session-1', harness: 'dsh', limit: 1, after: 'invalid' }), /游标/);
+});
+
+test('共享聊天历史对同时间戳的混合 run ID 使用一致排序与游标分页', t => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-chat-history-order-'));
+  t.after(() => fs.rmSync(project, { recursive: true, force: true }));
+  const spec = { goal: 'history order', project_path: '.', tasks: [{ id: 'task1', title: 'task', acceptance: ['done'], review: 'none', checks: [{ id: 'c', command: 'node --version' }] }] };
+  const ids = ['A.run', 'a-run', 'a.runs', 'a_run'];
+  for (const id of ids) {
+    loop.create(project, spec, id);
+    const directory = path.join(project, '.ai-loop', 'runs', id);
+    fs.writeFileSync(path.join(directory, 'state.json'), JSON.stringify({ ...JSON.parse(fs.readFileSync(path.join(directory, 'state.json'), 'utf8')), created_at: '2026-10-03T00:00:00.000Z' }));
+    fs.writeFileSync(path.join(directory, 'activity.json'), JSON.stringify({ schema_version: 2, agents: [{ id: `agent-${id}`, task: 'task1', role: 'dev', harness: 'dsh', context: { id: `child-${id}`, parent_id: 'session-1' }, state: 'running' }] }));
+  }
+  const seen = [];
+  let after;
+  do {
+    const page = chatHistory(project, { session_id: 'session-1', harness: 'dsh', limit: 1, after });
+    seen.push(...page.rounds.map(round => round.run.run_id));
+    after = page.next_after;
+  } while (after);
+  assert.deepEqual(seen, ['a_run', 'a.runs', 'a-run', 'A.run']);
 });
 
 test('状态路由返回活动与历史运行供前端切换，工作区路径须精确启用', async () => {
@@ -211,6 +269,27 @@ test('状态路由返回活动与历史运行供前端切换，工作区路径�
   }
 });
 
+test('DSH 状态路由只返回当前会话已绑定的运行和代理活动', async t => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-session-route-'));
+  t.after(() => fs.rmSync(project, { recursive: true, force: true }));
+  const spec = { goal: 'session route', tasks: [{ id: 'task1', title: 'task', acceptance: ['done'], review: 'none', checks: [{ id: 'c', command: 'node --version' }] }] };
+  for (const id of ['session-run', 'private-run']) loop.create(project, spec, id);
+  const writeAgents = (run, agents) => fs.writeFileSync(path.join(project, '.ai-loop', 'runs', run, 'activity.json'), JSON.stringify({ schema_version: 2, agents }));
+  const makeAgent = (id, parent_id) => ({ id, task: 'task1', role: 'dev', attempt: 0, harness: 'dsh', state: 'running', native_id: `native-${id}`, context: { mode: 'independent', id: `child-${id}`, parent_id }, started_at: '2026-10-01T00:00:00.000Z' });
+  writeAgents('session-run', [makeAgent('bound', 'session-1'), makeAgent('hidden', 'session-2')]);
+  writeAgents('private-run', [makeAgent('private', 'session-2')]);
+  const f = fixture(config({ projects: [{ path: project, enabled: true }] }));
+  f.ctx.sessions.get = id => id === 'session-1' ? { header: { cwd: project } } : undefined;
+  const res = { status: 0, body: '', writeHead(code) { this.status = code; }, end(body) { this.body = body; } };
+  await f.routes[0].handler({ method: 'GET', url: '/plugins/ai-loop-engineering/state?session=session-1' }, res);
+  assert.equal(res.status, 200);
+  const result = JSON.parse(res.body);
+  assert.deepEqual(result.runs.map(run => run.run_id), ['session-run']);
+  assert.deepEqual(result.chat_history.rounds[0].activity.agents.map(item => item.id), ['bound']);
+  await f.routes[0].handler({ method: 'GET', url: '/plugins/ai-loop-engineering/state?session=session-1&run=private-run' }, res);
+  assert.match(JSON.parse(res.body).message, /没有关联此运行/);
+});
+
 test('DSH 独立评审使用原生 spawn、准确模型预检和原生生命周期', async () => {
   const f = fixture(config({ roles: { reviewer: { provider: 'deepseek', model: 'reasoner', reasoningEffort: 'high' } } }));
   assert.match(await f.run(), /独立上下文/);
@@ -224,7 +303,7 @@ test('DSH 独立评审使用原生 spawn、准确模型预检和原生生命周�
   assert.match(spec.request.prompt[0].text, /这是叶角色任务/);
   assert.match(spec.request.prompt[0].text, /审批策略为 never/);
   assert.deepEqual(spec.request.agentOptions, { provider: 'deepseek', model: 'reasoner', reasoningEffort: 'high' });
-  await assert.rejects(f.run('reviewer', {}, 1), /即使 attempt 改变/);
+  await assert.rejects(f.run('reviewer', {}, 1), /更换 direction 或 attempt/);
   f.pending[0].resolve({ stopReason: 'completed' });
 });
 
@@ -272,6 +351,17 @@ test('DSH 插件重载后仍以核心非终态代理观察阻止重复派发', a
   fs.writeFileSync(activityFile, JSON.stringify(data));
   await assert.rejects(f.run('reviewer', {}, 1), /核心代理台账中仍为非终态/);
   assert.equal(f.calls.length, 0);
+});
+
+test('DSH 方向标签不能拆分 task 或绕过同一正式任务的执行锁', async () => {
+  const f = fixture();
+  await f.run();
+  const execute = (task, direction) => f.tools[0].execute({ role: 'reviewer', run: 'dispatch-run', task, direction, attempt: 0, description: '第二个方向', prompt: '检查方向' }, { agent: f.parent, signal: signal() });
+  await assert.rejects(execute('task1', 'backend'), /更换 direction 或 attempt/);
+  await assert.rejects(execute('task1#backend', undefined), /正式 task id/);
+  await assert.rejects(execute('task2', 'x'.repeat(65)), /最多 64 字符/);
+  assert.equal(f.calls.length, 1);
+  f.pending[0].resolve({ stopReason: 'completed' });
 });
 
 test('状态路由用同 native_id 的 live 状态覆盖旧观察，终态保留磁盘观察且不再显示待停止', async () => {

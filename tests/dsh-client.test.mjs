@@ -32,7 +32,7 @@ class FormBridge {
 }
 
 const runtime = name => {
-  if (name === 'react') return { createElement: (type, props) => ({ type, props }) };
+  if (name === 'react') return { Component: class {}, createElement: (type, props) => ({ type, props }) };
   if (name === '@deepseek-ai/dsh-client-ui-primitives') return { SettingsFormModel: FormBridge };
   throw new Error(`Unexpected host dependency: ${name}`);
 };
@@ -123,7 +123,7 @@ test('DSH status bridge uses same-origin fetch, encodes paths, preserves errors 
   assert.equal(request.options.method, 'GET');
   assert.equal(request.url.pathname, '/plugins/ai-loop-engineering/state');
   assert.equal(result.runs.length, 2);
-  await assert.rejects(plugin.requestStatus(async () => ({ ok: false, status: 403, json: async () => ({ error: '工作区未启用' }) }), 'D:\\Projects\\x'), /工作区未启用/);
+  await assert.rejects(plugin.requestStatus(async () => ({ ok: false, status: 403, json: async () => ({ error: '工作区未启用' }) }), 'D:\\Projects\\x'), error => error.message === '工作区未启用' && error.status === 403);
   await assert.rejects(plugin.requestStatus(async () => { throw new Error('network down'); }, 'D:\\Projects\\x'), /network down/);
 });
 
@@ -141,6 +141,20 @@ test('两个看板订阅同一 session/project/run 时共享一次状态请求',
   assert.equal(pending[0].options.signal.aborted, false);
   second();
   assert.equal(pending[0].options.signal.aborted, true);
+});
+
+test('聊天看板按 opaque 游标请求更早历史页并保留会话与工作区绑定', async () => {
+  let requested;
+  const store = plugin.createStatusPollStore(async url => {
+    requested = new URL(url);
+    return { ok: true, status: 200, json: async () => ({ chat_history: { rounds: [], next_after: null } }) };
+  });
+  const page = await store.loadHistory({ path: '/workspace', sessionId: 'session-1' }, 'opaque-cursor');
+  assert.equal(requested.searchParams.get('project'), '/workspace');
+  assert.equal(requested.searchParams.get('session'), 'session-1');
+  assert.equal(requested.searchParams.get('after'), 'opaque-cursor');
+  assert.equal(requested.searchParams.get('limit'), '20');
+  assert.equal(page.chat_history.next_after, null);
 });
 
 test('共享状态轮询串行执行，页面隐藏时暂停并取消请求，恢复时立即刷新', async () => {
@@ -364,6 +378,207 @@ test('看板切换会话或工作区时清空运行选择并隔离旧响应', as
   }
 });
 
+test('当前聊天切换到无工作区会话时立即丢弃上一个 cwd', async t => {
+  const requested = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async url => {
+    requested.push(new URL(url));
+    return { ok: true, status: 200, json: async () => ({ runs: [], message: 'no history' }) };
+  };
+  const slots = []; let cursor = 0; let effects = [];
+  const same = (left, right) => Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((item, index) => Object.is(item, right[index]));
+  const React = {
+    Component: class {}, createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+    useMemo: fn => fn(), useRef: value => ({ current: value }), useSyncExternalStore: (_sub, get) => get(),
+    useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial; return [slots[index], next => { slots[index] = typeof next === 'function' ? next(slots[index]) : next; }]; },
+    useEffect(fn, deps) {
+      const index = cursor++; const old = slots[index];
+      if (!old || !same(old.deps, deps)) effects.push(() => { old?.cleanup?.(); slots[index] = { deps, cleanup: fn() }; });
+    },
+  };
+  const view = createPlugin(name => name === 'react' ? React : runtime(name));
+  const { card } = controller();
+  let byId = { one: { cwd: '/workspace-one' }, two: { cwd: '' } };
+  const ctx = { get: key => key === 'sessions' ? { list: { getSnapshot: () => ({ byId }), subscribe: () => () => {} } } : undefined };
+  const render = sessionId => {
+    cursor = 0; effects = [];
+    const outer = view.ConversationDashboard({ ctx, sessionId, controller: card });
+    const child = outer.props.children[0];
+    const tree = child.type(child.props);
+    effects.forEach(effect => effect());
+    return tree;
+  };
+  t.after(() => { globalThis.fetch = originalFetch; slots.forEach(slot => slot?.cleanup?.()); });
+  try {
+    render('one');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requested.at(-1).searchParams.get('project'), '/workspace-one');
+    render('two');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requested.at(-1).searchParams.get('session'), 'two');
+    assert.equal(requested.at(-1).searchParams.has('project'), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('聊天树展开观察对象可读，并使用真实子代理 ID 导航', async t => {
+  const observation = { state: 'failed', summary: '子代理调用失败', native_id: 'child-real' };
+  const payload = {
+    run_id: 'round-1', goal: '树形看板', status: 'active',
+    runs: [{ run_id: 'round-1', project_path: '.', status: 'active' }],
+    tasks: [{ id: 'task1', title: '实现', phase: 'developing', ready: true }],
+    chat_history: { rounds: [{ run: { run_id: 'round-1' }, activity: { agents: [] } }], unbound_count: 0, next_after: 'cursor-1' },
+    activity: { agents: [
+      { id: 'execution-record', native_id: 'child-real', task: 'task1', role: 'dev', state: 'failed', live: false, context: { id: 'child-real', parent_id: 'parent-session' }, observation },
+      { id: 'child-partial', native_id: 'child-partial', task: 'task1', role: 'tester', state: 'completed', live: false, context: { id: 'child-partial', parent_id: 'parent-session' }, usage: { input_tokens: 12 } },
+    ] },
+  };
+  const originalFetch = globalThis.fetch;
+  let requestedHistoryUrl;
+  globalThis.fetch = async url => { requestedHistoryUrl = new URL(url); return { ok: true, status: 200, json: async () => payload }; };
+  const slots = []; let cursor = 0; const effects = [];
+  let expandedAgentId = 'child-real';
+  const React = {
+    Component: class {},
+    createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+    useMemo: fn => fn(), useRef: value => ({ current: value }),
+    useState(initial) {
+      const index = cursor++;
+      if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial;
+      if (initial === null) slots[index] = expandedAgentId;
+      return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }];
+    },
+    useEffect(fn, deps) {
+      const index = cursor++;
+      const old = slots[index];
+      if (!old || !old.deps || old.deps.length !== deps?.length || deps.some((value, i) => !Object.is(value, old.deps[i]))) effects.push(() => {
+        old?.cleanup?.();
+        slots[index] = { deps, cleanup: fn() };
+      });
+    },
+    useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
+  };
+  const view = createPlugin(name => name === 'react' ? React : runtime(name));
+  const { card } = controller();
+  const opened = [];
+  const ctx = {
+    get: key => key === 'sessions' ? {
+      list: { getSnapshot: () => ({ byId: { 'parent-session': { cwd: '/project' } } }), subscribe: () => () => {} },
+      openSubagent: address => opened.push(address), subagentAddress: () => undefined,
+    } : key === 'layout' ? { selectPanel: () => {} } : undefined,
+  };
+  const flatten = node => Array.isArray(node) ? node.flatMap(flatten) : node && typeof node === 'object' ? [node, ...(node.props?.children || []).flatMap(flatten)] : [node];
+  const child = view.ConversationDashboard({ ctx, sessionId: 'parent-session', controller: card }).props.children[0];
+  const render = () => { cursor = 0; const tree = child.type(child.props); effects.splice(0).forEach(effect => effect()); return tree; };
+  t.after(() => { globalThis.fetch = originalFetch; slots.forEach(slot => slot?.cleanup?.()); });
+  try {
+    render();
+    await new Promise(resolve => setImmediate(resolve));
+    render();
+    const tree = render();
+    const nodes = flatten(tree);
+    assert.ok(nodes.includes(JSON.stringify(observation, null, 2)));
+    assert.ok(!nodes.includes(observation));
+    assert.ok(nodes.includes('Token 用量不可获取'));
+    assert.ok(nodes.includes('Tokens: 12 In / 不可获取 Out（部分数据）'));
+    assert.ok(nodes.some(node => node?.props?.children?.includes('任务分支 1')));
+    assert.ok(!nodes.some(node => node?.props?.children?.includes('Round 1')));
+    expandedAgentId = 'child-partial';
+    assert.ok(flatten(render()).includes('观察数据不可获取。'));
+    expandedAgentId = 'child-real';
+    render();
+    const agentNode = nodes.find(node => node?.props?.['aria-level'] === 3);
+    assert.equal(agentNode?.props?.role, 'treeitem');
+    assert.equal(typeof agentNode?.props?.onKeyDown, 'function');
+    await agentNode.props.onClick();
+    assert.deepEqual(opened, [{ parentSessionId: 'parent-session', childSessionId: 'child-real', mode: 'continuable' }]);
+    const olderButton = nodes.find(node => node?.type === 'button' && node.props.children?.includes('加载更早运行'));
+    assert.ok(olderButton);
+    await olderButton.props.onClick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requestedHistoryUrl.searchParams.get('after'), 'cursor-1');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('聊天看板组件区分加载、403、网络错误与空历史并保留错误重试', async t => {
+  const originalFetch = globalThis.fetch;
+  const mounts = [];
+  const mount = fetcher => {
+    let calls = 0;
+    globalThis.fetch = (...args) => { calls++; return fetcher(...args); };
+    const slots = []; let cursor = 0; const effects = [];
+    const same = (left, right) => Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => Object.is(value, right[index]));
+    const React = {
+      Component: class {},
+      createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+      useMemo: fn => fn(), useRef: value => ({ current: value }),
+      useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial; return [slots[index], next => { slots[index] = typeof next === 'function' ? next(slots[index]) : next; }]; },
+      useEffect(fn, deps) { const index = cursor++; const old = slots[index]; if (!old || !same(old.deps, deps)) effects.push(() => { old?.cleanup?.(); slots[index] = { deps, cleanup: fn() }; }); },
+      useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
+    };
+    const view = createPlugin(name => name === 'react' ? React : runtime(name));
+    const state = { enabled: true, maxConcurrent: 3, roles: {}, projects: [{ path: '/workspace', enabled: true }] };
+    const controller = new view.Controller({ value: state, mutate: () => true });
+    const sessionId = `session-${mounts.length}`;
+    const ctx = { get: key => key === 'sessions' ? { list: { getSnapshot: () => ({ byId: { [sessionId]: { cwd: '/workspace' } } }), subscribe: () => () => {} } } : undefined };
+    const flatten = node => Array.isArray(node) ? node.flatMap(flatten) : node && typeof node === 'object' ? [node, ...(node.props?.children || []).flatMap(flatten)] : [node];
+    const render = () => {
+      cursor = 0; effects.length = 0;
+      const wrapper = view.ConversationDashboard({ ctx, sessionId, controller });
+      const child = wrapper.props.children[0];
+      const tree = child.type(child.props);
+      effects.splice(0).forEach(effect => effect());
+      return flatten(tree);
+    };
+    const entry = { render, get calls() { return calls; }, cleanup: () => slots.forEach(slot => slot?.cleanup?.()) };
+    mounts.push(entry);
+    return entry;
+  };
+  t.after(() => { globalThis.fetch = originalFetch; mounts.forEach(item => item.cleanup()); });
+
+  let finishLoading;
+  const loading = mount(() => new Promise(resolve => { finishLoading = resolve; }));
+  let nodes = loading.render();
+  await new Promise(resolve => setImmediate(resolve));
+  nodes = loading.render();
+  assert.ok(nodes.includes('正在加载当前聊天的运行历史…'));
+  assert.ok(!nodes.some(node => node?.props?.role === 'tree'));
+  assert.ok(!nodes.includes('已就绪，等待工程任务编排与派发'));
+  assert.ok(!nodes.includes('当前聊天暂无关联运行记录。'));
+
+  finishLoading({ ok: false, status: 403, json: async () => ({ error: '工作区未启用' }) });
+  await new Promise(resolve => setImmediate(resolve));
+  nodes = loading.render();
+  assert.ok(nodes.includes('无权读取当前工作区：工作区未启用'));
+  assert.ok(nodes.some(node => node?.props?.role === 'alert'));
+  assert.ok(!nodes.includes('当前聊天暂无关联运行记录。'));
+  const retry = nodes.find(node => node?.type === 'button' && node.props.children?.includes('重试'));
+  assert.ok(retry);
+  const priorCalls = loading.calls;
+  retry.props.onClick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(loading.calls > priorCalls);
+
+  const network = mount(async () => { throw new Error('network down'); });
+  network.render();
+  await new Promise(resolve => setImmediate(resolve));
+  nodes = network.render();
+  assert.ok(nodes.includes('读取聊天运行历史失败：network down'));
+  assert.ok(nodes.some(node => node?.type === 'button' && node.props.children?.includes('重试')));
+  assert.ok(!nodes.includes('已就绪，等待工程任务编排与派发'));
+
+  const empty = mount(async () => ({ ok: true, status: 200, json: async () => ({ runs: [], chat_history: { rounds: [], unbound_count: 0, next_after: null }, message: '当前聊天暂无关联运行记录。' }) }));
+  empty.render();
+  await new Promise(resolve => setImmediate(resolve));
+  nodes = empty.render();
+  assert.ok(nodes.includes('当前聊天暂无关联运行记录。'));
+  assert.ok(nodes.some(node => node?.props?.role === 'status'));
+  assert.ok(!nodes.some(node => node?.props?.role === 'alert'));
+  assert.ok(!nodes.some(node => node?.props?.role === 'tree'));
+  assert.ok(!nodes.includes('已就绪，等待工程任务编排与派发'));
+});
+
 test('活动数量只统计真实 live 且未结算的状态', () => {
   assert.equal(plugin.activeActivityCount([
     { live: true, state: 'running' },
@@ -371,6 +586,18 @@ test('活动数量只统计真实 live 且未结算的状态', () => {
     { live: false, state: 'running' },
     { live: true, state: 'completed' },
   ]), 1);
+});
+
+test('Token 用量明确标识不可获取和部分数据', () => {
+  assert.equal(plugin.tokenUsageLabel(null), 'Token 用量不可获取');
+  assert.equal(plugin.tokenUsageLabel({ input_tokens: 0, output_tokens: 4 }), 'Tokens: 0 In / 4 Out');
+  assert.equal(plugin.tokenUsageLabel({ input_tokens: 12 }), 'Tokens: 12 In / 不可获取 Out（部分数据）');
+});
+
+test('运行状态明确区分加载、403 和无关联运行记录', () => {
+  assert.equal(plugin.statusMessage({ loading: true, error: '旧错误', errorStatus: 403 }), '正在加载当前聊天的运行状态…');
+  assert.equal(plugin.statusMessage({ loading: false, error: '工作区未启用', errorStatus: 403 }), '无权读取此工作区：工作区未启用');
+  assert.equal(plugin.statusMessage({ loading: false, error: null, errorStatus: null }), '当前聊天在此工作区暂无关联运行记录。');
 });
 test('DSH restore inheritance removes only the selected role override', async () => {
   const { card, scope } = controller({ projects: [{ path: '/a', enabled: true, maxConcurrent: 4, roles: { dev: { provider: '', model: '' }, reviewer: { provider: 'p', model: 'r' } } }] });
@@ -396,7 +623,7 @@ test('DSH removal means unknown project is no longer explicitly enabled', async 
 test('DSH form rejects invalid concurrency and model routes while retaining inherited blanks', () => {
   const { card } = controller();
   const number = card.form.specs.find(spec => spec.field === 'maxConcurrent');
-  for (const value of ['0', '17', '1.5', 'NaN', '']) assert.equal(number.parse(value), undefined);
+  for (const value of ['0', '33', '1.5', 'NaN', '']) assert.equal(number.parse(value), undefined);
   assert.deepEqual(number.parse('4'), { kind: 'set', value: 4 });
   assert.equal(plugin.rolesValid({ dev: { provider: '', model: 'code' } }), false);
   assert.equal(plugin.rolesValid({ dev: { provider: 'p', model: '' } }), false);
@@ -477,12 +704,14 @@ test('ConversationDashboard 正确处理会话工作区与子代理看板', () =
   const mockReact = {
     createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
     useState: initial => [typeof initial === 'function' ? initial() : initial, () => {}],
-    useEffect: () => {},
+    useEffect: () => {}, useMemo: fn => fn(), useRef: value => ({ current: value }),
     useSyncExternalStore: (sub, get) => get(),
   };
   const customPlugin = createPlugin(name => name === 'react' ? mockReact : runtime(name));
   const { card } = controller();
   const rendered = customPlugin.ConversationDashboard({ ctx, sessionId: 'sess-chat', controller: card });
   assert.ok(rendered);
-  assert.equal(rendered.props.style.flex, '1 1 0');
+  const child = rendered.props.children[0];
+  assert.equal(child.props.sessionId, 'sess-chat');
+  assert.equal(child.type(child.props).props.style.flex, '1 1 auto');
 });

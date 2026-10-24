@@ -46,6 +46,23 @@ test('原生读取返回schema、当前值和动作布局，构造阶段不探�
   assert.equal(fs.existsSync(path.join(home, 'ai-loop')), false, 'read 不应创建持久化目录');
 });
 
+test('显式工作区只在首次读取定位，用户切换后保持其选择且不写启用状态', async t => {
+  const home = temp(), project = temp(), other = temp();
+  t.after(() => { for (const root of [home, project, other]) fs.rmSync(root, { recursive: true, force: true }); });
+  addCodexProject(home, project, '当前'); addCodexProject(home, other, '其他');
+  const manager = createSettingsManager({ home, project, modelsProvider: modelList });
+  const first = await manager.read();
+  assert.equal(first.values.scope, '仅当前工作区');
+  assert.ok(first.values.workspace_root.includes(fs.realpathSync(project)));
+  assert.equal(first.values.workspace_enabled, false);
+  await manager.update({ workspace_root: other });
+  assert.ok((await manager.read()).values.workspace_root.includes(fs.realpathSync(other)));
+  assert.equal(fs.existsSync(path.join(home, 'ai-loop')), false);
+  const direct = createSettingsManager({ home, project, modelsProvider: modelList });
+  await direct.update({ workspace_root: other });
+  assert.ok((await direct.read()).values.workspace_root.includes(fs.realpathSync(other)), '首次显式选择不能被默认定位覆盖');
+});
+
 test('没有显式工作区时使用global配置，绝不把插件进程cwd当项目', async t => {
   const home = temp(), project = temp();
   const previousProject = process.env.AI_LOOP_PROJECT;

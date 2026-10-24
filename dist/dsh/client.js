@@ -6,6 +6,7 @@ window.__ModuleLoader__.load({
   const h = React.createElement;
   const PACKAGE = 'dsh-plugin-ai-loop-engineering';
   const CONFIG_ID = 'ai-loop-engineering';
+  const emptyStore = { subscribe: () => () => {}, getSnapshot: () => null };
   const ROLES = {
     planner: { name: '计划 (Planner)', desc: '任务规划与规格拆解' },
     dev: { name: '开发 (Dev)', desc: '核心代码实现与修复' },
@@ -292,16 +293,37 @@ window.__ModuleLoader__.load({
     },
   };
 
-  async function requestStatus(fetcher, path, run, sessionId, signal) {
+  async function requestStatus(fetcher, path, run, sessionId, signal, page = {}) {
     const base = typeof document !== 'undefined' && document.baseURI ? document.baseURI : 'http://dsh.internal/';
     const url = new URL('/plugins/ai-loop-engineering/state', base);
     if (path) url.searchParams.set('project', path);
     if (sessionId) url.searchParams.set('session', sessionId);
     if (run) url.searchParams.set('run', run);
+    if (page.after) url.searchParams.set('after', page.after);
+    if (page.limit) url.searchParams.set('limit', String(page.limit));
     const response = await fetcher(url.href, { method: 'GET', cache: 'no-store', credentials: 'same-origin', signal });
     const parsed = await response.json().catch(() => ({}));
-    if (!response.ok || parsed.error) throw new Error(parsed.error || `HTTP ${response.status}`);
+    if (!response.ok || parsed.error) {
+      const error = new Error(parsed.error || `HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
     return parsed;
+  }
+
+  function tokenUsageLabel(usage) {
+    if (!usage || (usage.input_tokens == null && usage.output_tokens == null)) return 'Token 用量不可获取';
+    const input = usage.input_tokens == null ? '不可获取' : String(usage.input_tokens);
+    const output = usage.output_tokens == null ? '不可获取' : String(usage.output_tokens);
+    const partial = usage.input_tokens == null || usage.output_tokens == null;
+    return `Tokens: ${input} In / ${output} Out${partial ? '（部分数据）' : ''}`;
+  }
+
+  function statusMessage(state) {
+    if (state.loading) return '正在加载当前聊天的运行状态…';
+    if (state.errorStatus === 403) return `无权读取此工作区：${state.error || '访问被拒绝'}`;
+    if (state.error) return `读取运行状态失败：${state.error}`;
+    return '当前聊天在此工作区暂无关联运行记录。';
   }
 
   function createStatusPollStore(fetcher = globalThis.fetch, host = globalThis) {
@@ -324,11 +346,11 @@ window.__ModuleLoader__.load({
       try {
         const data = await requestStatus(fetcher, params.path, params.run, params.sessionId, abort.signal);
         if (entry.abort !== abort) return;
-        entry.state = { loading: false, data: data.run_id ? data : null, runs: Array.isArray(data.runs) ? data.runs : entry.state.runs, error: data.error || data.message || null };
+        entry.state = { loading: false, data: data.run_id ? data : null, history: data.chat_history ?? entry.state.history ?? null, runs: Array.isArray(data.runs) ? data.runs : entry.state.runs, error: null, errorStatus: null };
       } catch (error) {
         if (entry.abort !== abort) return;
         if (error?.name === 'AbortError') return;
-        entry.state = { loading: false, data: null, runs: [], error: error instanceof Error ? error.message : String(error) };
+        entry.state = { loading: false, data: null, history: null, runs: [], error: error instanceof Error ? error.message : String(error), errorStatus: error?.status ?? null };
       } finally {
         if (entry.abort === abort) {
           entry.abort = undefined;
@@ -337,12 +359,12 @@ window.__ModuleLoader__.load({
         }
       }
     };
-    const get = params => entries.get(keyOf(params))?.state ?? { loading: false, data: null, runs: [], error: null };
+    const get = params => entries.get(keyOf(params))?.state ?? { loading: false, data: null, history: null, runs: [], error: null };
     const subscribe = (params, listener) => {
       const key = keyOf(params);
       let entry = entries.get(key);
       if (!entry) {
-        entry = { state: { loading: false, data: null, runs: [], error: null }, listeners: new Set(), timer: undefined, abort: undefined, visibility: undefined };
+        entry = { state: { loading: false, data: null, history: null, runs: [], error: null }, listeners: new Set(), timer: undefined, abort: undefined, visibility: undefined };
         entries.set(key, entry);
       }
       entry.listeners.add(listener);
@@ -369,7 +391,8 @@ window.__ModuleLoader__.load({
       const entry = entries.get(keyOf(params));
       if (entry && !entry.abort) poll(entry, params);
     };
-    return { get, subscribe, refresh };
+    const loadHistory = (params, after) => requestStatus(fetcher, params.path, '', params.sessionId, undefined, { after, limit: 20 });
+    return { get, subscribe, refresh, loadHistory };
   }
 
   const statusPollStore = createStatusPollStore((...args) => globalThis.fetch(...args));
@@ -383,7 +406,7 @@ window.__ModuleLoader__.load({
       return statusPollStore.subscribe(params, () => setSnapshot({ key, ...statusPollStore.get(params) }));
     }, [key]);
     const state = snapshot.key === key ? snapshot : { loading: Boolean(path || sessionId), data: null, runs: [], error: null };
-    return { ...state, refresh: () => statusPollStore.refresh(params) };
+    return { ...state, refresh: () => statusPollStore.refresh(params), loadHistory: after => statusPollStore.loadHistory(params, after) };
   }
 
   function RunDashboard({ path, ctx, projects = [], onProjectChange, sessionId }) {
@@ -417,8 +440,10 @@ window.__ModuleLoader__.load({
         projects.length ? h('label', { style: S.label }, '工作区', h('select', { value: path, style: S.input, onChange: event => onProjectChange?.(event.target.value) }, h('option', { value: '' }, '请选择工作区'), projects.map(row => h('option', { key: row.path, value: row.path }, row.path)))) : null,
         runInfo.runs.length ? h('label', { style: S.label }, '选择运行', h('select', { value: run, style: S.input, onChange: event => setSelection({ key: selectionKey, run: event.target.value }) }, h('option', { value: '' }, '请选择运行'), runInfo.runs.map(row => h('option', { key: row.run_id, value: row.run_id }, `${row.project_path || "."} / ${row.run_id} · ${row.status || '未知'} · ${row.goal || ''}`)))) : null,
       ),
-      !path ? h('div', { style: { color: 'var(--dsw-alias-label-secondary, #888)', fontSize: 13, padding: '12px 0' } }, '请选择一个已启用的工作区。') : runInfo.error || !data ? h('div', { style: { color: 'var(--dsw-alias-label-secondary, #888)', fontSize: 13, padding: '12px 0' } },
-        runInfo.loading ? '正在加载当前运行状态…' : (runInfo.error || '当前工作区暂无运行记录。'),
+      !path ? h('div', { role: 'status', style: { color: 'var(--dsw-alias-label-secondary, #888)', fontSize: 13, padding: '12px 0' } }, '请选择一个已启用的工作区。') : runInfo.loading || runInfo.error || !data ? h('div', {
+        role: runInfo.loading ? 'status' : runInfo.error ? 'alert' : 'status',
+        style: { color: runInfo.error ? '#fca5a5' : 'var(--dsw-alias-label-secondary, #888)', fontSize: 13, padding: '12px 0' },
+      }, statusMessage(runInfo),
       ) : h('div', { style: { display: 'grid', gap: 14 } },
         h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center', background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.15))', padding: '10px 14px', borderRadius: 8 } },
           h('div', null,
@@ -459,7 +484,7 @@ window.__ModuleLoader__.load({
             h('span', null, `${agent.role || '未知角色'} · ${agent.task || '未关联任务'}`),
             h('code', null, agent.native_id || '无原生子代理 ID'),
             h('span', null, agent.live ? agentStateLabel(agent.state) : `最后观察 · ${agentStateLabel(agent.state)}`),
-            h('span', null, agent.usage ? `Token ${agent.usage.input_tokens ?? '?'} / ${agent.usage.output_tokens ?? '?'}` : 'Token 用量不可获取'),
+          h('span', null, tokenUsageLabel(agent.usage)),
             agent.note ? h('span', { style: S.subtitle }, agent.note) : null,
           )) : h('p', { style: S.subtitle }, '暂无可显示的子代理观察。'),
           data.activity?.note ? h('p', { style: S.subtitle }, data.activity.note) : null,
@@ -490,7 +515,7 @@ window.__ModuleLoader__.load({
   }
 
   async function openAgentSession(ctx, parentSessionId, agent) {
-    const childId = agent?.native_id || agent?.context?.id || agent?.id;
+    const childId = agent?.native_id || agent?.session_id || agent?.context?.id;
     if (!childId) return false;
     const sessions = ctx?.get?.('sessions') || ctx?.sessions;
     const workspaces = ctx?.get?.('workspaces') || ctx?.workspaces;
@@ -522,7 +547,8 @@ window.__ModuleLoader__.load({
     return false;
   }
 
-  class SafeErrorBoundary extends React.Component {
+  const ComponentBase = React.Component || class {};
+  class SafeErrorBoundary extends ComponentBase {
     constructor(props) {
       super(props);
       this.state = { hasError: false, error: null };
@@ -561,14 +587,17 @@ window.__ModuleLoader__.load({
 
   function ConversationDashboardView({ ctx, sessionId, controller }) {
     const sessionKey = typeof sessionId === 'string' ? sessionId.trim() : '';
-    const [cwd, setCwd] = React.useState(() => sessionCwdOf(ctx, sessionKey));
+    const [cwdState, setCwdState] = React.useState(() => ({ sessionKey, cwd: sessionCwdOf(ctx, sessionKey) }));
+    const cwd = cwdState.sessionKey === sessionKey ? cwdState.cwd : sessionCwdOf(ctx, sessionKey);
 
     React.useEffect(() => {
       let alive = true;
       const sync = () => {
         if (alive && sessionKey) {
           const next = sessionCwdOf(ctx, sessionKey);
-          if (next) setCwd(next);
+          setCwdState({ sessionKey, cwd: next });
+        } else if (alive) {
+          setCwdState({ sessionKey, cwd: '' });
         }
       };
       sync();
@@ -590,14 +619,46 @@ window.__ModuleLoader__.load({
 
     const statusInfo = useStatus(cwd, run, sessionKey);
     const data = statusInfo.data;
+    const dashboardMessage = !cwd ? '当前聊天尚未关联工作区，无法读取运行历史。'
+      : statusInfo.loading ? '正在加载当前聊天的运行历史…'
+        : statusInfo.errorStatus === 403 ? `无权读取当前工作区：${statusInfo.error || '访问被拒绝'}`
+          : statusInfo.error ? `读取聊天运行历史失败：${statusInfo.error}`
+            : !data ? '当前聊天暂无关联运行记录。' : null;
+    const [olderHistory, setOlderHistory] = React.useState(() => ({ key: selectionKey, runs: [], nextAfter: null, loading: false }));
+    const older = olderHistory.key === selectionKey ? olderHistory : { key: selectionKey, runs: [], nextAfter: statusInfo.history?.next_after ?? null, loading: false };
+    React.useEffect(() => {
+      if (olderHistory.key !== selectionKey) setOlderHistory({ key: selectionKey, runs: [], nextAfter: statusInfo.history?.next_after ?? null, loading: false });
+    }, [selectionKey]);
+    React.useEffect(() => {
+      if (statusInfo.history?.next_after) setOlderHistory(current => current.key === selectionKey ? { ...current, nextAfter: statusInfo.history.next_after } : current);
+    }, [selectionKey, statusInfo.history?.next_after]);
+    const historyRuns = [...new Map([...(statusInfo.runs ?? []), ...older.runs].map(item => [item.run_id, item])).values()];
+    const loadOlder = async () => {
+      if (!older.nextAfter || older.loading) return;
+      setOlderHistory(current => ({ ...current, key: selectionKey, loading: true }));
+      try {
+        const page = await statusInfo.loadHistory(older.nextAfter);
+        const found = page.chat_history;
+        setOlderHistory(current => current.key === selectionKey ? {
+          ...current,
+          runs: [...new Map([...current.runs, ...(found?.rounds ?? []).map(round => round.run)].map(item => [item.run_id, item])).values()],
+          nextAfter: found?.next_after ?? null,
+          loading: false,
+        } : current);
+      } catch {
+        setOlderHistory(current => current.key === selectionKey ? { ...current, loading: false } : current);
+      }
+    };
 
-    const formState = controller ? React.useSyncExternalStore(controller.store.subscribe, controller.store.getSnapshot, controller.store.getSnapshot) : null;
+    const formStore = controller?.store ?? emptyStore;
+    const formState = React.useSyncExternalStore(formStore.subscribe, formStore.getSnapshot, formStore.getSnapshot);
     const isGlobalEnabled = formState?.enabled ?? false;
     const projectRow = cwd && formState?.projects ? formState.projects.find(p => samePath(p.path, cwd)) : null;
     const isProjectEnabled = (isGlobalEnabled && (projectRow?.enabled ?? false)) ?? false;
 
     const [expandedAgentId, setExpandedAgentId] = React.useState(null);
     const [filterMode, setFilterMode] = React.useState('all'); // 'all' | 'active'
+    const [navigationError, setNavigationError] = React.useState('');
 
     const agents = data?.activity?.agents || [];
     const activeAgentsCount = activeActivityCount(agents);
@@ -619,6 +680,7 @@ window.__ModuleLoader__.load({
     };
 
     // 组织一轮轮的任务与挂载的子 agent
+    const roundIndex = Math.max(0, historyRuns.findIndex(round => round.run_id === data?.run_id));
     const taskGroups = React.useMemo(() => {
       const groups = [];
       const assignedAgentIds = new Set();
@@ -632,7 +694,7 @@ window.__ModuleLoader__.load({
         });
         matchedAgents.forEach(a => assignedAgentIds.add(a.native_id || a.id));
         groups.push({
-          round: index + 1,
+          round: roundIndex + 1,
           task,
           agents: matchedAgents,
         });
@@ -640,9 +702,9 @@ window.__ModuleLoader__.load({
 
       // 未归属具体任务的子 agent（如全局规划、整体记录等）
       const unassignedAgents = agents.filter(a => !assignedAgentIds.has(a.native_id || a.id));
-      if (unassignedAgents.length > 0 || groups.length === 0) {
+      if (unassignedAgents.length > 0) {
         groups.push({
-          round: groups.length + 1,
+          round: roundIndex + 1,
           task: { id: 'workflow', title: '全局协作与支撑阶段', phase: 'developing' },
           agents: unassignedAgents,
           isGlobal: true,
@@ -650,7 +712,7 @@ window.__ModuleLoader__.load({
       }
 
       return groups;
-    }, [tasks, agents]);
+    }, [tasks, agents, roundIndex]);
 
     const displayedGroups = React.useMemo(() => {
       if (filterMode === 'active') {
@@ -666,10 +728,25 @@ window.__ModuleLoader__.load({
       const roleDesc = ROLES[agent.role]?.name || agent.role || '未知角色';
       const isLive = agent.live === true && !['completed', 'failed', 'cancelled', 'stopped', 'ended_unknown'].includes(agent.state);
       const direction = agent.direction || (typeof agent.task === 'string' && agent.task.includes('#') ? agent.task.split('#')[1] : null);
+      const childId = agent.native_id || agent.session_id || agent.context?.id;
+      const openSession = () => {
+        if (!childId) { setNavigationError('此记录没有真实子代理会话 ID，无法打开聊天。'); return; }
+        openAgentSession(ctx, sessionKey, agent).then(opened => setNavigationError(opened ? '' : '未能打开子代理聊天，请确认 DSH 会话仍可用。'));
+      };
 
       return h('div', {
         key: agentId,
-        onClick: () => openAgentSession(ctx, sessionKey, agent),
+        role: 'treeitem',
+        'aria-level': 3,
+        'aria-label': `${roleDesc}${direction ? `，方向 ${direction}` : ''}，${agentStateLabel(agent.state)}；${childId ? '按回车进入子代理会话' : '没有可打开的真实子代理会话'}`,
+        'aria-disabled': !childId,
+        tabIndex: childId ? 0 : -1,
+        onClick: openSession,
+        onKeyDown: event => {
+          if (childId && (event.key === 'Enter' || event.key === ' ') && event.target === event.currentTarget) {
+            event.preventDefault(); openSession();
+          }
+        },
         title: '点击直接进入该子 Agent 的独立聊天上下文',
         style: {
           background: 'var(--dsw-alias-bg-layer-2, rgba(20, 24, 33, 0.85))',
@@ -760,11 +837,11 @@ window.__ModuleLoader__.load({
 
         // Token 统计
         h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 6 } },
-          agent.usage ? `Tokens: ${agent.usage.input_tokens ?? 0} In / ${agent.usage.output_tokens ?? 0} Out` : 'Token 消耗统计中',
+          tokenUsageLabel(agent.usage),
         ),
 
         // 观察产物与指令
-        agent.note || agent.observation ? h('div', {
+        h('div', {
           style: { marginTop: 2 },
           onClick: e => e.stopPropagation(),
         },
@@ -797,8 +874,8 @@ window.__ModuleLoader__.load({
               maxHeight: 180,
               overflowY: 'auto',
             },
-          }, agent.note || agent.observation || '无额外观察记录。') : null,
-        ) : null,
+          }, typeof agent.note === 'string' ? agent.note : agent.note ? JSON.stringify(agent.note, null, 2) : agent.observation ? JSON.stringify(agent.observation, null, 2) : '观察数据不可获取。') : null,
+        ),
       );
     };
 
@@ -845,7 +922,7 @@ window.__ModuleLoader__.load({
                 cursor: 'pointer',
               },
               onClick: () => setFilterMode('all'),
-            }, `全部任务轮次 (${taskGroups.length})`),
+            }, `当前运行任务 (${taskGroups.length})`),
             h('button', {
               type: 'button',
               style: {
@@ -858,16 +935,18 @@ window.__ModuleLoader__.load({
                 cursor: 'pointer',
               },
               onClick: () => setFilterMode('active'),
-            }, '仅看当前轮次'),
+            }, '仅看活动任务'),
           ),
-          statusInfo.runs.length ? h('select', {
+          historyRuns.length ? h('select', {
+            'aria-label': '选择当前聊天的历史运行轮次',
             value: run,
             style: { ...S.input, width: 'auto', minWidth: 160 },
             onChange: e => setSelection({ key: selectionKey, run: e.target.value }),
           },
-            h('option', { value: '' }, '当前活跃运行'),
-            statusInfo.runs.map(r => h('option', { key: r.run_id, value: r.run_id }, `${r.project_path || "."} / ${r.run_id} · ${r.status || 'status'}`)),
+            h('option', { value: '' }, '选择当前聊天轮次'),
+            historyRuns.map((r, index) => h('option', { key: r.run_id, value: r.run_id }, `第 ${index + 1} 轮 · ${r.run_id} · ${r.status || '未知'}`)),
           ) : null,
+          older.nextAfter ? h('button', { type: 'button', style: S.btn(false), disabled: older.loading, onClick: loadOlder }, older.loading ? '正在加载历史…' : '加载更早运行') : null,
           h('button', {
             type: 'button',
             style: S.btn(false),
@@ -876,6 +955,8 @@ window.__ModuleLoader__.load({
           }, statusInfo.loading ? '正在刷新…' : '🔄 刷新看板'),
         ),
       ),
+
+      navigationError ? h('div', { role: 'alert', style: { color: '#fca5a5', fontSize: 12 } }, navigationError) : null,
 
       // 未激活提醒
       !isProjectEnabled && cwd ? h('div', {
@@ -908,6 +989,34 @@ window.__ModuleLoader__.load({
             }
           },
         }, '为此工作区一键激活 AI Loop'),
+      ) : null,
+
+      statusInfo.history?.unbound_count > 0 ? h('div', {
+        role: 'note',
+        style: { color: 'var(--dsw-alias-text-secondary, #94a3b8)', fontSize: 11 },
+      }, `${statusInfo.history.unbound_count} 个旧运行含未绑定当前聊天的活动，已从历史中隐藏。`) : null,
+
+      dashboardMessage ? h('div', {
+        role: statusInfo.error ? 'alert' : 'status',
+        style: {
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          padding: '12px 14px',
+          borderRadius: 8,
+          border: `1px solid ${statusInfo.error ? 'rgba(248,113,113,0.35)' : 'rgba(148,163,184,0.2)'}`,
+          background: statusInfo.error ? 'rgba(127,29,29,0.18)' : 'rgba(148,163,184,0.08)',
+          color: statusInfo.error ? '#fca5a5' : 'var(--dsw-alias-text-secondary, #94a3b8)',
+          fontSize: 13,
+        },
+      },
+        h('span', null, dashboardMessage),
+        statusInfo.error ? h('button', {
+          type: 'button',
+          style: S.btn(false),
+          onClick: statusInfo.refresh,
+        }, '重试') : null,
       ) : null,
 
       // 统计卡片网格
@@ -949,7 +1058,9 @@ window.__ModuleLoader__.load({
       ),
 
       // 思维导图式树形布局区（从上到下垂直延伸）
-      h('div', {
+      dashboardMessage ? null : h('div', {
+        role: 'tree',
+        'aria-label': `当前聊天运行关系树，第 ${roundIndex + 1} 轮`,
         style: {
           display: 'flex',
           flexDirection: 'column',
@@ -961,6 +1072,9 @@ window.__ModuleLoader__.load({
       },
         // 1. 顶部主 Agent 节点 (Root Node)
         h('div', {
+          role: 'treeitem',
+          'aria-level': 1,
+          'aria-label': '主代理',
           style: {
             background: 'var(--dsw-alias-bg-layer-1, #1e222d)',
             border: '2px solid var(--dsw-alias-brand-primary, #3b82f6)',
@@ -990,6 +1104,7 @@ window.__ModuleLoader__.load({
 
         // 2. 从主 Agent 延伸向下的主干连接线
         h('div', {
+          'aria-hidden': true,
           style: {
             width: 3,
             height: 36,
@@ -1013,14 +1128,17 @@ window.__ModuleLoader__.load({
           },
         },
           h('div', { style: { fontSize: 24 } }, '🌱'),
-          h('div', { style: { fontSize: 14, fontWeight: 600 } }, '当前运行暂无已分解的任务轮次'),
-          h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '在当前聊天中向主 Agent 发送工程开发指令，工作流将自动分解多方向任务并在此绘制思维导图。'),
+          h('div', { style: { fontSize: 14, fontWeight: 600 } }, filterMode === 'active' ? '当前没有活动任务' : data?.run_id ? '当前运行暂无正式任务' : '当前聊天暂无关联运行'),
+          h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, data?.run_id ? '任务完成或被筛选隐藏后，状态会显示在对应工作流轮次中。' : '只有绑定到当前聊天的运行历史会显示在此处。'),
         ) : displayedGroups.map((group, gIdx) => {
           const isLastGroup = gIdx === displayedGroups.length - 1;
           const taskPhase = group.task.phase || 'pending';
 
           return h('div', {
             key: `group-${group.task.id}-${gIdx}`,
+            role: 'treeitem',
+            'aria-level': 2,
+            'aria-expanded': true,
             style: {
               display: 'flex',
               flexDirection: 'column',
@@ -1057,7 +1175,7 @@ window.__ModuleLoader__.load({
                       padding: '2px 8px',
                       borderRadius: 12,
                     },
-                  }, `Round ${group.round}`),
+                  }, `任务分支 ${group.round}`),
                   h('span', { style: { fontWeight: 700, fontSize: 14 } },
                     group.isGlobal ? group.task.title : `任务 #${group.task.id}: ${group.task.title || '开发任务'}`,
                   ),
@@ -1076,6 +1194,7 @@ window.__ModuleLoader__.load({
 
             // 从任务节点向下延伸的分支导轨
             group.agents.length > 0 ? h('div', {
+              'aria-hidden': true,
               style: {
                 width: 2,
                 height: 24,
@@ -1085,6 +1204,7 @@ window.__ModuleLoader__.load({
 
             // 该任务下的子 Agent 节点群（挂载在任务下方，呈思维导图分支）
             group.agents.length > 0 ? h('div', {
+              role: 'group',
               style: {
                 display: 'flex',
                 flexWrap: 'wrap',
@@ -1104,10 +1224,11 @@ window.__ModuleLoader__.load({
                 color: 'var(--dsw-alias-text-secondary, #64748b)',
                 padding: '6px 0',
               },
-            }, '该轮次暂无派发的独立子代理'),
+            }, '该任务分支暂无派发的独立子代理'),
 
             // 轮次之间的垂直延伸主线
             !isLastGroup ? h('div', {
+              'aria-hidden': true,
               style: {
                 width: 3,
                 height: 36,
@@ -1519,6 +1640,6 @@ window.__ModuleLoader__.load({
       };
     }, 'ai-loop: conversation view');
   }
-  return { inject: ['slots', 'configForms', 'remote', 'remote.session', 'workspaces', 'sessions'], apply, Controller, samePath, rolesValid, projectsValid, requestStatus, createStatusPollStore, RunDashboard, SidebarDashboard, SidebarTitle, activeActivityCount, useCatalog, RoleCard, Card, ConversationDashboard, sessionCwdOf };
+  return { inject: ['slots', 'configForms', 'remote', 'remote.session', 'workspaces', 'sessions'], apply, Controller, samePath, rolesValid, projectsValid, requestStatus, tokenUsageLabel, statusMessage, createStatusPollStore, RunDashboard, SidebarDashboard, SidebarTitle, activeActivityCount, useCatalog, RoleCard, Card, ConversationDashboard, sessionCwdOf };
 }
 });

@@ -15,7 +15,7 @@
     },
     {
       "path": "agents/loop-planner.md",
-      "hash": "55fc43738ffb3e092388e0dff5c5dfb4299ba744f6b4c490e92ecff46a35592c"
+      "hash": "914a2619a84eb02036368dbbf558767598946a84ae23b4e49761846573f3f77e"
     },
     {
       "path": "agents/loop-reviewer.md",
@@ -59,7 +59,7 @@
     },
     {
       "path": "scripts/activity.mjs",
-      "hash": "03aa240baf8dcddeab3187dd184b5967c85f8c0f7faad432f269842ba42cf402"
+      "hash": "b63443a55b2d6ce1861d4befce84b2a26a98f5616d33778b1496aa5446a2c50e"
     },
     {
       "path": "scripts/adapters.mjs",
@@ -76,6 +76,10 @@
     {
       "path": "scripts/codex-workspaces.mjs",
       "hash": "1186939df33724a7ed77782f33aa20c12de07f909866814559813131d2233048"
+    },
+    {
+      "path": "scripts/dashboard.mjs",
+      "hash": "8b147711a4bb823d7ef5d79a19965703d7dec3566f5081bf053801d772c7dd00"
     },
     {
       "path": "scripts/doctor.mjs",
@@ -95,7 +99,7 @@
     },
     {
       "path": "scripts/install.mjs",
-      "hash": "a3e9aa867992668432acb903649366e944bb3baa97e137889e17fb7fab55abe2"
+      "hash": "0f4e41a72906b4174e8a024bfa8445f7022d3c81a82e7b6d30cc6553503ae34c"
     },
     {
       "path": "scripts/lib.mjs",
@@ -123,7 +127,7 @@
     },
     {
       "path": "scripts/native-settings.mjs",
-      "hash": "1b2ba76d05cfd618263c8f25024d5e16cebf40c88cd5c0631a8efd57c9d27426"
+      "hash": "e6c1d205a867d7254103ac43ca2bb39a7f2132120e3ed16cb4485401d834d674"
     },
     {
       "path": "scripts/plugin-models.mjs",
@@ -151,15 +155,15 @@
     },
     {
       "path": "scripts/session-start.mjs",
-      "hash": "21ed0d7a170fea7b8548894bde547198ca45980bdcd0e8405b9714f95aa6ca9e"
+      "hash": "7ca55fadc36906ca87abeddd6e6a2911cc9b33827b7e556dea780461bac9d9d6"
     },
     {
       "path": "scripts/settings-server.mjs",
-      "hash": "8a77305730785f769b28f5751086430e223614ee5ed4b58a11d0d35acafd2a9f"
+      "hash": "be7f52baf4f8b0c1597628baf2537652539290466a8e98471d93aeb7c723edb6"
     },
     {
       "path": "scripts/source.mjs",
-      "hash": "65ca9720cfea511933dbd747d9a0b78adecf9fa00d45cdd70f3b3516244a5c5c"
+      "hash": "839bdd6bd453049aad494ee54cc364dc71b518b3b469fd205f9950dde0a0d8bb"
     },
     {
       "path": "scripts/toml.mjs",
@@ -183,7 +187,7 @@
     },
     {
       "path": "skills/ai-loop/SKILL.md",
-      "hash": "cd573ae4e8ffc0b5f53032b614a5e855230e4a3a006509df49a59d74eb9e263d"
+      "hash": "00c3e5593d043e3570c78a88b4cd92f75c0371d9476dbad263fe2bfcb51b71ce"
     },
     {
       "path": "templates/memory-index.md",
@@ -195,11 +199,11 @@
     },
     {
       "path": "ui/agent-dashboard.html",
-      "hash": "f7f608c7dc83a83fccffa6b7e21b6bbc832da6f9678a9ca4030a0eac1d407cbb"
+      "hash": "8a691934be2545e8eaed125e1aee5ced91a9ff6746d362c59974ba5eee052fd3"
     },
     {
       "path": "WORKFLOW.md",
-      "hash": "00a1a8f62c28b8a634e1c7a90b790c8745b7d2c50452554dbad939f5c4efee14"
+      "hash": "761d8d3866634f8ae2e9139c1a4fd4060dcd23aed1f8f0eda7eda5a562bfe91a"
     }
   ]
 }

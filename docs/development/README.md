@@ -1,5 +1,7 @@
 # 两端开发入口
 
+本轮进行中：[三版本看板与工作区定位优化](dashboard-workspaces-20261024.md)，基于 `a297b98` 检查 DSH 看板体验、聊天历史、动态派发和 Codex 工作区入口。完成状态、验证证据及宿主限制以该交接为准。
+
 当前本地候选 4.6.2（已安装、未发布）：[三版本可靠性修复与真实验收](reliability-4.6.0.md)。重点是原生执行证据门、DSH 工作区/派发和通用包适配；自动测试与真实宿主、独立评审分开验收。下方 4.5.0 为历史交接。
 
 - 当前子代理控制与会话看板版本：[4.5.0 开发交接](agent-control-4.5.0.md)，批准依据与原审查见 [agent-control-audit.md](agent-control-audit.md)。当前发行状态见 [v4.5.0 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.5.0)；客户端设置页、看板显示、实际模型及停止能力仍需分别验收。
