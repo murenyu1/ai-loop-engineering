@@ -22,19 +22,28 @@ export function chatHistory(project, { session_id, harness, limit = 20, after } 
   assert(typeof harness === 'string' && harness.trim().length > 0 && harness.length <= 100, '必须提供有效 harness');
   assert(Number.isInteger(limit) && limit >= 1 && limit <= 100, '历史数量须为 1–100');
   const cursor = decodeCursor(after);
-  const runs = listRuns(root).map(run => {
-    const stateFile = safePath(root, `.ai-loop/runs/${run.run_id}/state.json`);
-    const state = jsonFile(stateFile);
-    const current = status(root, run.run_id);
-    const activity = activityStatus(root, run.run_id);
-    const hostAgents = activity.agents.filter(agent => agent.harness === harness);
-    const agents = hostAgents.filter(agent => agent.context?.parent_id === session_id);
-    const unbound = hostAgents.filter(agent => !agent.context?.parent_id).length;
-    return {
-      run: { ...current, created_at: state.created_at ?? run.updated_at ?? '' },
-      activity: { ...activity, agents },
-      unbound,
-    };
+  let unreadable_count = 0;
+  const runs = listRuns(root).flatMap(run => {
+    try {
+      const stateFile = safePath(root, `.ai-loop/runs/${run.run_id}/state.json`);
+      const state = jsonFile(stateFile);
+      const current = status(root, run.run_id);
+      const activity = activityStatus(root, run.run_id);
+      const hostAgents = activity.agents.filter(agent => agent.harness === harness);
+      const agents = hostAgents.filter(agent => agent.context?.parent_id === session_id);
+      const unbound = hostAgents.filter(agent => !agent.context?.parent_id).length;
+      return [{
+        run: { ...current, created_at: state.created_at ?? run.updated_at ?? '' },
+        activity: { ...activity, agents },
+        unbound,
+      }];
+    } catch (error) {
+      // Invalid JSON or a concurrently removed run must not hide unrelated valid history.
+      // Permission failures and other validation errors remain visible, never bypassed.
+      if (!(error instanceof SyntaxError) && error.code !== 'ENOENT') throw error;
+      unreadable_count++;
+      return [];
+    }
   });
   const ordered = runs.sort((a, b) => -compareRunKey(a.run, b.run));
   const unbound_count = ordered.filter(item => item.unbound > 0).length;
@@ -49,6 +58,7 @@ export function chatHistory(project, { session_id, harness, limit = 20, after } 
     rounds,
     unbound_count,
     unbound_activity_count,
+    unreadable_count,
     next_after: hasMore && last ? encodeCursor({ created_at: last.run.created_at, run_id: last.run.run_id }) : null,
   };
 }

@@ -30,4 +30,6 @@ description: 用户要求使用 AI Loop 工作流开发、验证、评审、记�
 
 SessionStart 的 `AI_LOOP_CHAT_CONTEXT` 为当前聊天提供真实 root/session。有该上下文时，子代理观察的 context.parent_id 使用 session，用户请求打开看板时调用 `ai_loop.dashboard` 并传入相同 root/session，自动进入本聊天历次运行。禁止把原生代理别名（如 /root）、插件 cwd、首个工作区或其他聊天缓存当作当前聊天标识。宿主空参数线程入口本身不携带聊天 ID；缺少上下文时只提供工作区运行选择，不能声称已自动定位。子代理聊天入口只使用宿主实际返回的可导航会话 ID，缺少地址保持不可打开。
 
+侧栏安全边界：`ai_loop.dashboard` 只用于用户明确要求打开面板；页面内刷新、初始化和配置后读取仅调用无 UI 资源的 `ai_loop.dashboard.read`。上下文缺失时保留手选，禁止自动发送定位聊天消息、让模型回调打开面板或从其他聊天缓存猜测归属。
+
 4.5.0 角色策略：未配置默认全部关闭，设置模型菜单的“关闭”映射 enabled=false，不把它当模型 ID。保存保留原模型，关闭或仅改自动入口不依赖模型目录。doctor dispatch=disabled 时由主代理继续工作，不能调用已发现但已关闭的角色；保留的原生文件不是启用证据。运行中停止需原生确认，independent 要求不能自动降级。包内 MCP thread 看板不启动 HTTP；真实客户端渲染、实际模型及 UI 仍分别验收。

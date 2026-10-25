@@ -75,11 +75,11 @@
     },
     {
       "path": "scripts/codex-workspaces.mjs",
-      "hash": "1363b2beee67c3f56ec7050f90377b8d754c21a1ace7eafc4e7a31b57d3a7dc7"
+      "hash": "276261f3f13f480e5f58bb23f097b372d6fced97487dbc2d1b5d52290e3ccf8d"
     },
     {
       "path": "scripts/dashboard.mjs",
-      "hash": "8b147711a4bb823d7ef5d79a19965703d7dec3566f5081bf053801d772c7dd00"
+      "hash": "f7758148d792079e7dfa0bd5e92a4c80189e32733e0da6a7cdc7cd8d60771ff3"
     },
     {
       "path": "scripts/doctor.mjs",
@@ -127,7 +127,7 @@
     },
     {
       "path": "scripts/native-settings.mjs",
-      "hash": "26f1746ef8ca8fec3020d18e98cba461a580f7da507cc1a3848d230a94e90d1c"
+      "hash": "c7211cb12e38cd26b21352225c7d4dfcd61251c3754d44ac15e34adbe9b0efb5"
     },
     {
       "path": "scripts/plugin-models.mjs",
@@ -139,7 +139,7 @@
     },
     {
       "path": "scripts/profiles.mjs",
-      "hash": "474d94204bfcc97b0624712a0a8ffdddf7a76b667b9e59942a197f596eeab640"
+      "hash": "7ae7f02f96eff1398d9a300bb2828bf06c1f3e7e0250dbef5ecc990bddbff802"
     },
     {
       "path": "scripts/README.md",
@@ -159,7 +159,7 @@
     },
     {
       "path": "scripts/settings-server.mjs",
-      "hash": "c384f8b92368bf79c9011f39356852f79b634dcd1bba6f0512660e067e60a5a3"
+      "hash": "c379d5d02c8e9a22fd29f0c644f6adc9ab40e25b93d7f831a1b0fd5284cb868f"
     },
     {
       "path": "scripts/source.mjs",
@@ -183,7 +183,7 @@
     },
     {
       "path": "scripts/workspace-recency.mjs",
-      "hash": "9a38f5bde6135175acb6d04e03873ed9d89a1f79be2e4778b77fc0d3cb9faf3d"
+      "hash": "8312b7c96ace4eb85d8281ed91153ede58812c6445896c13e1ef944596753931"
     },
     {
       "path": "scripts/workspaces.mjs",
@@ -199,7 +199,7 @@
     },
     {
       "path": "skills/ai-loop/SKILL.md",
-      "hash": "3489210ad33e814fad5180ce45f6836492609f703c03d0abb7d0db063b336a43"
+      "hash": "46e2f7fc59f92f0ea8cd8c8310ff282e644cae4180cb0f792361c1b1d428f3af"
     },
     {
       "path": "templates/memory-index.md",
@@ -211,7 +211,7 @@
     },
     {
       "path": "ui/agent-dashboard.html",
-      "hash": "853195dde440a3a4159ab29e8ce97562b6e596d04a97a1e953b29d8446c837e9"
+      "hash": "ee60552d426a930274294b0e6b525abcc0fb6fcecbb4f4b5d6b9521f5c2cc0fa"
     },
     {
       "path": "WORKFLOW.md",

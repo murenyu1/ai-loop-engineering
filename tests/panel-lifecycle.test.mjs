@@ -1,0 +1,66 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { panelHost } from './support/panel-host.mjs';
+import { DASHBOARD_READ_TOOL, DASHBOARD_TOOL } from '../codex/scripts/settings-server.mjs';
+
+test('旧版在受限宿主生命周期夹具中复现跨实例扩张，测试不发送真实聊天消息', async t => {
+  const html = fs.readFileSync(new URL('./support/legacy-loop.html', import.meta.url), 'utf8');
+  const host = await panelHost(t, { html, limit: 5 });
+  await host.open(); await host.flush();
+  assert.equal(host.panels.length, 5);
+  assert.ok(host.renders > 1);
+  assert.ok(host.messages.length > 0, '旧版自动定位消息被离线夹具截获');
+});
+
+test('空入口、重复初始化、切页、刷新、保存和后台轮询均不创建新面板或自动消息', async t => {
+  const host = await panelHost(t); await host.open(); await host.flush();
+  const panel = host.panels[0];
+  assert.equal(panel.element('workspace').value, '');
+  assert.equal(panel.eval('typeof locateChat'), 'undefined');
+  await panel.eval('Promise.all([init(),init(),init()])');
+  for (let turn = 0; turn < 4; turn++) {
+    panel.pages[1].listeners.get('click')(); panel.pages[0].listeners.get('click')();
+    panel.dispatch('focus', {}); for (const tick of panel.intervals.values()) tick();
+    await host.flush();
+  }
+  panel.element('settings').listeners.get('change')({ target: { dataset: { field: 'concurrency' }, value: '4' } }); await host.flush();
+  await panel.element('save').listeners.get('click')(); await host.flush();
+  assert.equal(host.renders, 1); assert.equal(host.panels.length, 1); assert.equal(host.messages.length, 0); assert.deepEqual(host.errors, []);
+  assert.equal(host.calls.filter(call => call.name === DASHBOARD_TOOL).length, 1);
+  assert.ok(host.calls.some(call => call.name === DASHBOARD_READ_TOOL));
+});
+
+test('显式真实上下文只定位现有面板，重复通知和后台刷新不会重新挂载', async t => {
+  const host = await panelHost(t); await host.open({ root: host.root, session: 'chat' }); await host.flush();
+  const panel = host.panels[0]; assert.equal(panel.element('workspace').value, 'project');
+  const before = host.calls.length;
+  for (let turn = 0; turn < 5; turn++) panel.dispatch('message', { source: panel.context.window.parent, data: { jsonrpc: '2.0', method: 'ui/notifications/tool-input', params: { root: host.root, session: 'chat' } } });
+  await host.flush(); assert.equal(host.calls.length, before, '相同输入幂等');
+  await panel.eval('discover()'); await host.flush();
+  assert.equal(host.renders, 1); assert.equal(host.messages.length, 0); assert.equal(panel.element('workspace').value, 'project');
+});
+
+test('关闭后清除轮询、拒收迟到响应，重新打开也不触发自动消息', async t => {
+  const host = await panelHost(t); await host.open(); await host.flush();
+  const panel = host.panels[0], oldTicks = [...panel.intervals.values()];
+  host.close(panel); const calls = host.calls.length;
+  for (const tick of oldTicks) tick(); panel.dispatch('focus', {}); await panel.eval('discover()'); await host.flush();
+  assert.equal(panel.intervals.size, 0); assert.equal(host.calls.length, calls); assert.equal(panel.eval('pending.size'), 0);
+  await host.open(); await host.flush(); assert.equal(host.panels.length, 2); assert.equal(host.renders, 2); assert.equal(host.messages.length, 0);
+});
+
+
+test('真实请求在途时关闭会拒绝等待并忽略迟到协议响应和通知', async t => {
+  const host = await panelHost(t); await host.open({ root: host.root }); await host.flush();
+  const panel = host.panels[0], gate = host.pauseNext(DASHBOARD_READ_TOOL);
+  const reading = panel.eval('discover()'); await gate.entered;
+  assert.equal(panel.eval('pending.size'), 1, '请求确实未完成');
+  const before = panel.element('settings').innerHTML;
+  host.close(panel); await reading;
+  const calls = host.calls.length; gate.release(); await host.flush();
+  panel.dispatch('message', { source: panel.context.window.parent, data: { jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: { structuredContent: { workspaces: [], context: {} } } } });
+  assert.equal(panel.eval('pending.size'), 0); assert.equal(panel.intervals.size, 0);
+  assert.equal(panel.element('settings').innerHTML, before);
+  assert.equal(host.calls.length, calls); assert.equal(host.renders, 1); assert.equal(host.messages.length, 0);
+});

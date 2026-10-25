@@ -6,8 +6,9 @@ const require = createRequire(import.meta.url);
 const normalize = root => process.platform === 'win32' ? path.resolve(root).toLowerCase() : path.resolve(root);
 
 // Optional desktop data: old Node versions or unavailable databases keep a stable order.
-export function sortWorkspaces(home, state, workspaces) {
+export function sortWorkspaces(home, state, workspaces, diagnostics = {}) {
   const recent = new Map();
+  Object.assign(diagnostics, { status: 'unavailable', reason: '最近使用信息不可用，已按启用状态分组并保留宿主顺序。' });
   let db;
   try {
     const { DatabaseSync } = require('node:sqlite');
@@ -19,9 +20,19 @@ export function sortWorkspaces(home, state, workspaces) {
       const columns = new Set(db.prepare('PRAGMA table_info(threads)').all().map(row => row.name));
       const times = ['recency_at_ms', 'recency_at', 'updated_at_ms', 'updated_at'].filter(name => columns.has(name));
       if (times.length && columns.has('id') && columns.has('cwd')) {
-        const used = `COALESCE(${times.map(name => name.endsWith('_ms') ? name : `${name} * 1000`).join(', ')}, 0)`;
-        const where = [columns.has('archived') ? 'archived = 0' : '1', columns.has('has_user_event') ? 'has_user_event = 1' : '1'].join(' AND ');
-        for (const row of db.prepare(`SELECT id, cwd, ${used} AS used FROM threads WHERE ${where}`).all()) {
+        const used = `COALESCE(${times.map(name => `CASE WHEN ${name} > 0 THEN ${name}${name.endsWith('_ms') ? '' : ' * 1000'} END`).join(', ')}, 0)`;
+        const where = columns.has('archived') ? 'archived = 0' : '1';
+        const source = columns.has('source') ? 'source' : 'NULL AS source';
+        const userEvent = columns.has('has_user_event') ? 'has_user_event' : '0 AS has_user_event';
+        let userRows = 0;
+        for (const row of db.prepare(`SELECT id, cwd, ${source}, ${userEvent}, ${used} AS used FROM threads WHERE ${where}`).all()) {
+          // source is the host's actual origin; has_user_event is unset for current desktop chats.
+          let origin = row.source;
+          if (typeof origin === 'string') { try { origin = JSON.parse(origin); } catch {} }
+          const knownUser = ['cli', 'vscode'].includes(origin);
+          const legacyUser = (origin === null || origin === '') && row.has_user_event === 1;
+          if (!knownUser && !legacyUser) continue;
+          userRows++;
           if (Array.isArray(state['projectless-thread-ids']) && state['projectless-thread-ids'].includes(row.id)) continue;
           const assignment = state['thread-project-assignments']?.[row.id];
           let workspace;
@@ -35,9 +46,10 @@ export function sortWorkspaces(home, state, workspaces) {
           }
           if (workspace && Number.isFinite(row.used)) recent.set(workspace.id, Math.max(recent.get(workspace.id) || 0, row.used));
         }
+        Object.assign(diagnostics, { status: userRows ? 'available' : 'empty', reason: userRows ? '' : '尚无可识别的用户聊天活动，已保留各组的宿主顺序。' });
       }
     }
-  } catch { /* Never write desktop data or guess usage from project updatedAt. */ }
+  } catch { /* Preserve the explicit unavailable diagnostic; never guess from project updatedAt. */ }
   finally { db?.close(); }
   return workspaces.map(item => ({ ...item, last_used_at: recent.get(item.id) || null }))
     .sort((a, b) => Number(b.enabled) - Number(a.enabled) || (b.last_used_at || 0) - (a.last_used_at || 0));

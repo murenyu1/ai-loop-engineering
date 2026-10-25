@@ -207,6 +207,7 @@ export function resetWorkspaceProfile(home, workspace, options = {}) {
 function resetWorkspaceProfileTransaction(home, workspace, options = {}) {
   workspace = workspaceCurrent(home, workspace);
   if (options.expectedHash !== undefined) assert(workspace.registry_hash === options.expectedHash, '工作区配置在编辑期间变化，请重新读取后保存');
+  const memberBaseline = assertMemberProfiles(home, workspace, options.expectedMemberProfiles);
   const previous = workspaceEntryById(home, workspace.id);
   const backups = new Map(), after = new Map();
   for (const root of workspace.roots) {
@@ -217,13 +218,16 @@ function resetWorkspaceProfileTransaction(home, workspace, options = {}) {
       backups.set(file, fs.existsSync(file) ? fs.readFileSync(file) : null);
     }
   }
-  const applied = [];
+  const applied = [], resetMembers = new Set();
   try {
-    for (const root of workspace.roots) {
+    for (const [index, root] of workspace.roots.entries()) {
+      const expectedNow = memberBaseline.map(item => resetMembers.has(item.root) ? { root: item.root, profile_hash: null } : item);
+      assertMemberProfiles(home, workspace, expectedNow);
       resetProjectProfile(root, { ...options, home, apply: true });
       for (const file of backups.keys()) if (within(root, file)) after.set(file, fs.existsSync(file) ? fs.readFileSync(file) : null);
       applied.push(root);
-      options.onAfterMemberReset?.(root, applied.length - 1);
+      resetMembers.add(root);
+      options.onAfterMemberReset?.(root, index);
     }
     workspaceCurrent(home, workspace);
     const global = resolveProfile(workspace.root, { home, scope: 'global' }).profile;
@@ -234,8 +238,10 @@ function resetWorkspaceProfileTransaction(home, workspace, options = {}) {
     delete next.materialized_profiles;
     options.onBeforeRegistryCommit?.();
     workspaceCurrent(home, workspace);
+    const clearedMembers = memberBaseline.map(item => ({ root: item.root, profile_hash: null }));
+    assertMemberProfiles(home, workspace, clearedMembers);
     const registry = setWorkspaceRecordById(home, next, { expectedHash: options.expectedHash ?? workspace.registry_hash });
-    try { workspaceCurrent(home, workspace); }
+    try { workspaceCurrent(home, workspace); assertMemberProfiles(home, workspace, clearedMembers); }
     catch (error) {
       restoreWorkspaceRecordById(home, workspace.id, previous, { expectedRevision: registry.revision });
       throw error;

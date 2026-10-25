@@ -424,10 +424,16 @@ export function createSettingsManager(options = {}) {
     assert(['ready', 'not-windows'].includes(info.status), 'Windows 目录所有者检查未通过，停止恢复');
     const base = bases.get(key());
     const currentSnapshot = profileSnapshot(project, home, scope, draft().workspace_profile_source_id, selectedWorkspaceId);
-    assert(!base || (currentSnapshot.profile_hash || null) === base.profile_hash, '工作区配置在编辑期间发生变化，请放弃草稿后重新进入设置');
+    assert(base && !currentSnapshot.error
+      && (currentSnapshot.profile_hash || null) === base.profile_hash
+      && currentSnapshot.fallback_hash === base.fallback_hash
+      && currentSnapshot.materialized_hash === base.materialized_hash
+      && Array.isArray(base.member_profiles)
+      && workspaceHash(base.member_profiles) === base.materialized_hash,
+    '工作区配置或成员配置在编辑期间发生变化，请放弃草稿后重新进入设置');
     const workspace = selectedWorkspace();
     assert(workspace, '所选工作区已不可用');
-    const result = resetWorkspaceProfile(home, workspace, { expectedHash: base?.workspace_registry_hash });
+    const result = resetWorkspaceProfile(home, workspace, { expectedHash: base.workspace_registry_hash, expectedMemberProfiles: base.member_profiles });
     clearModelDraft(); lastError = '';
     return { ...result, message: '已恢复全局继承。请重新进入插件详情页刷新原生设置。' };
   }

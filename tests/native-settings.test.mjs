@@ -669,6 +669,33 @@ test('project scope 可显式应用并安全恢复到全局继承', async t => {
   assert.equal(workspace.inherits_global, true, '恢复项目配置后由工作区身份继承全局');
 });
 
+test('恢复工作区默认校验读取时的全部成员配置并保留外部改动', async t => {
+  const home = temp(), a = temp(), b = temp();
+  t.after(() => { for (const root of [home, a, b]) fs.rmSync(root, { recursive: true, force: true }); });
+  fs.writeFileSync(path.join(home, '.codex-global-state.json'), JSON.stringify({ 'local-projects': { w: { name: '多根工作区', rootPaths: [a, b] } } }));
+  const original = balanced('codex'); original.roles.dev.model = 'gpt-6-luna';
+  configureWorkspaceProfile(home, { id: 'w', roots: [a, b] }, original, { apply: true, enabled: false });
+
+  const manager = createSettingsManager({ home, modelsProvider: modelList });
+  await manager.update({ workspace_id: 'w' });
+  await manager.read();
+
+  const external = balanced('codex'); external.roles.dev.model = 'gpt-6.1-sol';
+  configureProfile(a, external, { home, scope: 'project', apply: true });
+  const changedRecord = resolveProfile(a, { home, scope: 'project' });
+  const changedFiles = [...Object.keys(changedRecord.native), '.ai-loop/models.json'];
+  const externalBytes = new Map(changedFiles.map(relative => [relative, fs.readFileSync(path.join(a, relative))]));
+  assert.throws(() => manager.action('ai_loop.settings.reset_project'), /成员配置|编辑期间发生变化/);
+  for (const [relative, content] of externalBytes) assert.deepEqual(fs.readFileSync(path.join(a, relative)), content, `${relative} 外部内容必须保留`);
+
+  configureProfile(a, original, { home, scope: 'project', apply: true });
+  await manager.read();
+  assert.equal(manager.action('ai_loop.settings.reset_project').status, 'reset', '成员恢复到读取基线后仍可正常恢复默认');
+  assert.equal(resolveProfile(a, { home, scope: 'project' }).profile, null);
+  assert.equal(resolveProfile(b, { home, scope: 'project' }).profile, null);
+  assert.equal(workspaceEntryById(home, 'w').inherits_global, true);
+});
+
 test('恢复项目配置后开关草稿仍拒绝外部revision变化', async t => {
   for (const hasProjectOverride of [false, true]) {
     const home = temp(), project = temp();

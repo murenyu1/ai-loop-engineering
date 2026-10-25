@@ -6,6 +6,10 @@ import { sortWorkspaces } from './workspace-recency.mjs';
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const identity = root => process.platform === 'win32' ? root.toLowerCase() : root;
 const cleanName = value => typeof value === 'string' ? value.replace(/[\r\n\t]/g, ' ').trim().slice(0, 120) : '';
+function sortedDiscovery(home, state, workspaces, error, mode) {
+  const recency = {};
+  return { workspaces: sortWorkspaces(home, state, workspaces, recency), error, mode, recency };
+}
 
 function existingRoot(value) {
   if (typeof value !== 'string' || value.length > 4096 || !path.isAbsolute(value)) return null;
@@ -79,7 +83,7 @@ export function readCodexWorkspaces(home) {
       const memberships = new Map();
       for (const workspace of workspaces) for (const root of workspace.roots) memberships.set(identity(root), [...(memberships.get(identity(root)) || []), workspace.id]);
       for (const workspace of workspaces) workspace.shared_roots = workspace.roots.filter(root => (memberships.get(identity(root)) || []).length > 1);
-      return { workspaces: sortWorkspaces(home, state, workspaces), error: settings.conflicts.length ? `${error}${error ? ' ' : ''}部分旧工作区启用状态冲突，保存新工作区选择后可解决。` : error, mode: 'workspace-id' };
+      return sortedDiscovery(home, state, workspaces, settings.conflicts.length ? `${error}${error ? ' ' : ''}部分旧工作区启用状态冲突，保存新工作区选择后可解决。` : error, 'workspace-id');
     } catch (cause) {
       error = `无法读取 Codex 工作区列表：${cause.message}。`;
       return { workspaces: [], error, mode: 'workspace-id' };
@@ -98,7 +102,7 @@ export function readCodexWorkspaces(home) {
       mode = 'legacy-root';
     } catch (cause) { error = `无法读取 Codex 工作区列表：${cause.message}。`; }
   }
-  return { workspaces: sortWorkspaces(home, state || {}, workspaces), error, mode };
+  return sortedDiscovery(home, state || {}, workspaces, error, mode);
 }
 
 function workspaceRecord(home, id) {

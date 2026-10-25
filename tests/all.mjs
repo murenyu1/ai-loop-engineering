@@ -12,6 +12,8 @@ await import('./upgrade.test.mjs');
 await import('./codex-workspaces.test.mjs');
 await import('./native-settings.test.mjs');
 await import('./settings-server.test.mjs');
+await import('./panel-lifecycle.test.mjs');
+await import('./dashboard-history.test.mjs');
 await import('./release.test.mjs');
 await import('./dsh-plugin.test.mjs');
 await import('./dsh-client.test.mjs');

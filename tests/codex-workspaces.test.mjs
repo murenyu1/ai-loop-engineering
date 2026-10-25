@@ -282,3 +282,50 @@ test('旧版根目录列表仍可直接选择；状态读取失败在设置页�
   fs.writeFileSync(f.stateFile, 'not-json');
   assert.match((await manager.read()).layout.at(-1).title, /无法读取 Codex 工作区列表/);
 });
+
+
+test('真实桌面默认用户标志为0时按顶层来源排序，拒绝无角色代理与exec污染', t => {
+  let DatabaseSync; try { ({ DatabaseSync } = createRequire(import.meta.url)('node:sqlite')); } catch { t.skip('无内置SQLite'); return; }
+  const f = fixture(t);
+  f.save({ 'project-order': ['b', 'a'], 'local-projects': { a: { rootPaths: [f.a] }, b: { rootPaths: [f.b] } } });
+  const db = new DatabaseSync(path.join(f.home, 'state_5.sqlite'));
+  db.exec('CREATE TABLE threads (id TEXT, cwd TEXT, updated_at_ms INTEGER, recency_at_ms INTEGER, archived INTEGER, has_user_event INTEGER, source TEXT)');
+  const insert = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)');
+  insert.run('a-user', f.a, 70000, 0, 0, 0, 'vscode');
+  insert.run('b-user', f.b, 10000, 20000, 0, 0, '"cli"');
+  for (const source of ['{"subagent":{"thread_spawn":{}}}', '{"subagent":{"other":"guardian"}}', 'exec', '{bad-json', 'unknown']) insert.run(source, f.b, 999999, 999999, 0, 1, source);
+  insert.run('archived', f.b, 999999, 999999, 1, 0, 'vscode');
+  db.close();
+  const result = readCodexWorkspaces(f.home);
+  assert.deepEqual(result.workspaces.map(row => [row.id, row.last_used_at]), [['a', 70000], ['b', 20000]]);
+  assert.equal(result.recency.status, 'available');
+});
+
+test('无数据库或未知来源时最近使用明确降级而不虚报活动', t => {
+  let DatabaseSync; try { ({ DatabaseSync } = createRequire(import.meta.url)('node:sqlite')); } catch { t.skip('无内置SQLite'); return; }
+  const f = fixture(t); f.save({ 'local-projects': { a: { rootPaths: [f.a] } } });
+  assert.equal(readCodexWorkspaces(f.home).recency.status, 'unavailable');
+  const db = new DatabaseSync(path.join(f.home, 'state_5.sqlite'));
+  db.exec('CREATE TABLE threads (id TEXT, cwd TEXT, updated_at INTEGER, source TEXT, has_user_event INTEGER)');
+  db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?)').run('unknown', f.a, 99999, 'exec', 1); db.close();
+  const result = readCodexWorkspaces(f.home);
+  assert.equal(result.recency.status, 'empty'); assert.match(result.recency.reason, /尚无/);
+  assert.equal(result.workspaces[0].last_used_at, null);
+});
+
+test('恢复事务在最后成员清理后及提交前拒绝外部新配置，保留外部字节', t => {
+  for (const stage of ['last-member', 'before-commit']) {
+    const f = fixture(t);
+    f.save({ 'local-projects': { a: { rootPaths: [f.a, f.b] } } });
+    const profile = balanced('codex');
+    configureWorkspaceProfile(f.home, readCodexWorkspaces(f.home).workspaces[0], profile, { scope: 'project', apply: true });
+    const external = disabledProfile('codex');
+    let bytes;
+    const change = () => { configureProfile(f.b, external, { home: f.home, scope: 'project', apply: true }); bytes = fs.readFileSync(path.join(f.b, '.ai-loop/models.json')); };
+    assert.throws(() => resetWorkspaceProfile(f.home, readCodexWorkspaces(f.home).workspaces[0], {
+      ...(stage === 'last-member' ? { onAfterMemberReset(root, index) { if (index === 1) change(); } } : { onBeforeRegistryCommit: change }),
+    }), /成员配置|并发改动|成员目录/);
+    assert.deepEqual(fs.readFileSync(path.join(f.b, '.ai-loop/models.json')), bytes);
+    assert.notEqual(workspaceEntryById(f.home, 'a').inherits_global, true);
+  }
+});
