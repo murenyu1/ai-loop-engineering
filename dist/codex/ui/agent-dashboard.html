@@ -32,9 +32,10 @@ function message(text,error=false){if(disposed)return;$('message').textContent=t
 function receiveMessage(event){
  if(disposed)return;
  if(event.source!==window.parent)return;const data=event.data;if(!data||data.jsonrpc!=='2.0')return;
- if(data.id&&pending.has(data.id)){const item=pending.get(data.id);pending.delete(data.id);data.error?item.reject(Error(data.error.message??'宿主请求失败')):item.resolve(data.result);return;}
+ if(!data.method&&pending.has(data.id)){const item=pending.get(data.id);pending.delete(data.id);data.error?item.reject(Error(data.error.message??'宿主请求失败')):item.resolve(data.result);return;}
  if(data.method==='ui/notifications/tool-result'){try{const value=structured(data.params);if(value?.workspaces)acceptInitial(value,true);}catch(error){message(error.message,true);}}
- if(data.method==='ui/notifications/tool-input'){acceptToolInput(data.params).catch(error=>message(error.message,true));}
+ if(data.method==='ui/notifications/tool-input'){const params=data.params;acceptToolInput(params&&Object.hasOwn(params,'arguments')?params.arguments:params).catch(error=>message(error.message,true));}
+ if(data.method==='ui/resource-teardown'){if(Object.hasOwn(data,'id'))window.parent.postMessage({jsonrpc:'2.0',id:data.id,result:{}},'*');dispose();}
 }
 window.addEventListener('message',receiveMessage);
 function contextArgs(input){if(!input||typeof input!=='object'||Array.isArray(input))return null;const args={};if(typeof input.root==='string'&&input.root.trim())args.root=input.root;if(typeof input.session==='string'&&input.session.trim())args.session=input.session;return Object.keys(args).length?args:null;}
@@ -58,7 +59,7 @@ function request(method,params={}){if(disposed)return Promise.reject(Error('面�
 async function call(name,args={}){if(disposed)throw Error('面板已关闭');const value=!bridgeConnected&&app?.callTool?await app.callTool(name,args):await request('tools/call',{name,arguments:args});return structured(value);}
 function fillWorkspaces(rows){const previous=$('workspace').value;workspacesLoaded=true;workspaceRows=rows;$('workspace').innerHTML='<option value="">全局默认 · 请选择工作区</option>'+rows.map(row=>'<option value="'+esc(rowValue(row))+'">'+(row.enabled?'🟢':'🔴')+' '+esc(row.label??row.root)+(row.id?' · '+esc(row.id.slice(0,8)):'')+' · '+(row.enabled?'已启用':'未启用')+(rootsOf(row).length>1?' · '+rootsOf(row).length+' 个成员根':'')+'</option>').join('');$('workspace').value=rows.some(row=>rowValue(row)===previous)?previous:'';savedState();}
 function savedState(){const row=selected();$('saved-state').innerHTML=row?'<span class="dot '+(row.enabled?'enabled':'')+'"></span>'+(row.enabled?'已启用':'未启用'):'未选择工作区';}
-function updateScope(){$('scope').textContent=boundChat()?'当前聊天 · 已定位所属工作区':'工作区范围 · 没有此工作区的可靠聊天上下文';}
+function updateScope(){$('scope').textContent=boundChat()?'当前聊天 · 已定位所属工作区':selected()?'工作区范围 · 显示所选工作区的运行，未按当前聊天筛选':'此入口未提供聊天与工作区上下文，请选择工作区。面板不会自动发送聊天消息。';}
 function acceptInitial(value,entry=false){
  if(disposed||entry&&!matchesEntry(value))return;
  if(value.context?.binding_state==='invalid'){invalidateContext(value,value.note);return;}
@@ -113,8 +114,8 @@ async function discover(){
 }
 function init(){
  if(disposed)return Promise.resolve();if(initPromise)return initPromise;
- initPromise=(async()=>{try{let connected=false;try{await request('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'AI Loop 工作流',version:'4.6.3'},appCapabilities:{availableDisplayModes:['inline','fullscreen']}});if(disposed)return;connected=true;bridgeConnected=true;}catch(error){if(disposed||!app?.callTool)throw error;}
- if(connected)window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}},'*');
+ initPromise=(async()=>{try{let connected=false;try{await request('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'AI Loop 工作流',version:/* LOOP_VERSION */'development'},appCapabilities:{availableDisplayModes:['inline','fullscreen']}});if(disposed)return;connected=true;bridgeConnected=true;}catch(error){if(disposed||!app?.callTool)throw error;}
+ const before=entryRequestId;if(connected)window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}},'*');if(entryRequestId!==before)return;
  const input=entryInput??contextArgs(app?.toolInput);if(input){await acceptToolInput(input,true);return;}
  if(app?.toolOutput){const initial=structured(app.toolOutput);if(initial?.workspaces)acceptInitial(initial,true);}
  if(!workspacesLoaded)await acceptToolInput({},true);

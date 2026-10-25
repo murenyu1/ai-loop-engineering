@@ -23,6 +23,7 @@ export const DASHBOARD_URI = 'ui://ai-loop-engineering/agent-dashboard';
 const dashboardPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../ui/agent-dashboard.html');
 export const dashboardHtml = () => fs.readFileSync(dashboardPath, 'utf8')
   .replace('/* LOOP_THEME */', themeCss() + ';')
+  .replace("/* LOOP_VERSION */'development'", JSON.stringify(VERSION))
   .replace('/* LOOP_GRAPH */', 'const createWorkflowGraph = ' + createWorkflowGraph.toString() + ';');
 const MAX_LINE_BYTES = 1024 * 1024;
 
@@ -45,7 +46,7 @@ const toolList = [
   { name: 'ai_loop.settings.apply', title: '应用设置', description: '统一保存工作区开关、已开启角色模型和并发设置；失败时回滚工作区开关。', inputSchema: actionSchema },
   { name: 'ai_loop.settings.discard', title: '放弃未应用草稿', description: '放弃当前范围草稿，重新打开页面后读取最新配置。', inputSchema: actionSchema },
   { name: 'ai_loop.settings.reset_project', title: '恢复项目默认', description: '移除本工具登记的项目模型覆盖并继承全局配置。', inputSchema: actionSchema },
-  { name: DASHBOARD_TOOL, title: 'AI Loop 工作流', description: '仅在用户明确要求打开时显示工作流面板。提供真实root/session可定位；页面内部读取和刷新必须使用ai_loop.dashboard.read，不发送定位聊天消息。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' }, binding: { type: 'string', description: '仅兼容旧定位标识；不得为获得该标识发送聊天消息。' } }, additionalProperties: false }, outputSchema: { type: 'object', properties: { workspaces: { type: 'array' }, note: { type: 'string' } }, required: ['workspaces', 'note'] }, annotations: { readOnlyHint: true }, _meta: { ui: { resourceUri: DASHBOARD_URI }, 'openai/ui': { entrypoints: [{ type: 'thread' }, { type: 'global' }] } } },
+  { name: DASHBOARD_TOOL, title: 'AI Loop 工作流', description: '仅在用户明确要求打开时显示工作流面板。提供真实root/session可定位；页面内部读取和刷新必须使用ai_loop.dashboard.read，不发送定位聊天消息。旧版binding打开入口已停用。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' } }, additionalProperties: false }, outputSchema: { type: 'object', properties: { workspaces: { type: 'array' }, note: { type: 'string' } }, required: ['workspaces', 'note'] }, annotations: { readOnlyHint: true }, _meta: { ui: { resourceUri: DASHBOARD_URI }, 'openai/ui': { entrypoints: [{ type: 'thread' }, { type: 'global' }] } } },
   { name: DASHBOARD_READ_TOOL, title: '读取 AI Loop 工作流数据', description: '仅读取工作流看板数据。可提供真实 root/session；binding 仅用于兼容旧定位标识。此工具不会打开页面。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' }, binding: { type: 'string' } }, additionalProperties: false }, outputSchema: { type: 'object', properties: { workspaces: { type: 'array' }, note: { type: 'string' } }, required: ['workspaces', 'note'] }, annotations: { readOnlyHint: true } },
   { name: 'ai_loop.panel.read', title: '读取工作流面板', description: '按面板实例读取配置和草稿。', inputSchema: { type: 'object', properties: { panel_id: { type: 'string' } }, required: ['panel_id'], additionalProperties: false }, annotations: { readOnlyHint: true } },
   { name: 'ai_loop.panel.update', title: '更新面板草稿', description: '只暂存当前面板的工作区配置。', inputSchema: { type: 'object', properties: { panel_id: { type: 'string' }, set: { type: 'object' } }, required: ['panel_id', 'set'], additionalProperties: false } },
@@ -207,6 +208,7 @@ export function createSettingsProtocol(manager = createSettingsManager(), option
           return { jsonrpc: '2.0', id, result: toolResult(result) };
         }
         if (name === DASHBOARD_TOOL || name === DASHBOARD_READ_TOOL) {
+          if (name === DASHBOARD_TOOL && Object.hasOwn(args, 'binding')) throw new Error('旧版自动消息定位入口已停用，请关闭旧面板后重新打开；不再发送定位消息。');
           const result = toolResult(dashboardData(args));
           if (name === DASHBOARD_TOOL) return { jsonrpc: '2.0', id, result: { ...result, _meta: { ui: { resourceUri: DASHBOARD_URI } } } };
           return { jsonrpc: '2.0', id, result };

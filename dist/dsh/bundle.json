@@ -1,5 +1,5 @@
 {
-  "version": "4.6.3",
+  "version": "4.6.4",
   "harness": "dsh",
   "files": [
     {
@@ -60,7 +60,7 @@
     },
     {
       "path": "core/scripts/lib.mjs",
-      "hash": "1906e17a0ba736a0d5eb7a2e7bc0e3158e5e4815f0a170622309677ab4b1c3a6"
+      "hash": "bc8febfac7579a9c21a19ec84cbfac47c1ecd452234c61cf423b0a9a9aa4160e"
     },
     {
       "path": "core/scripts/loop.mjs",
@@ -112,7 +112,7 @@
     },
     {
       "path": "package.json",
-      "hash": "cf423041bd254e899aa304603bda1ef449ad839bd1d2aaa9282aa613671e2de1"
+      "hash": "148dd28f25759df6602dd730e92e7605fa2bcb38109c863c028d1b1d4ad68645"
     },
     {
       "path": "README.md",

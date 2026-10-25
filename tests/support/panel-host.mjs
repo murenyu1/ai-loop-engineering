@@ -6,6 +6,7 @@ import { createSettingsProtocol, dashboardHtml, DASHBOARD_TOOL } from '../../cod
 
 // Host resource display is an observable effect, not a canned structuredContent reply.
 export async function panelHost(t, options = {}) {
+  const standard = options.standard !== false;
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-panel-host-'));
   const home = path.join(base, 'home'), root = path.join(base, 'project');
   fs.mkdirSync(home); fs.mkdirSync(root);
@@ -19,7 +20,7 @@ export async function panelHost(t, options = {}) {
   const protocol = createSettingsProtocol({}, { home, managerFactory });
   const tools = (await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/list' })).result.tools;
   const script = (options.html || dashboardHtml()).match(/<script>([\s\S]*?)<\/script>/)[1];
-  const host = { panels: [], calls: [], messages: [], errors: [], renders: 0, jobs: new Set(), gates: [], root, home, limit: options.limit || 6 };
+  const host = { panels: [], calls: [], messages: [], errors: [], replies: [], renders: 0, jobs: new Set(), gates: [], root, home, limit: options.limit || 6 };
   let id = 10;
   async function invoke(name, args = {}, display = true) {
     host.calls.push({ name, args: structuredClone(args) });
@@ -44,7 +45,14 @@ export async function panelHost(t, options = {}) {
     const add = (event, fn) => { if (!handlers.has(event)) handlers.set(event, new Set()); handlers.get(event).add(fn); };
     const remove = (event, fn) => handlers.get(event)?.delete(fn);
     const parent = { postMessage(message) {
-      if (!message.id) return;
+      if (!message.method) { host.replies.push(structuredClone(message)); return; }
+      if (!message.id) {
+        if (message.method === 'ui/notifications/initialized' && standard) {
+          dispatch('message', { source: parent, data: { jsonrpc: '2.0', method: 'ui/notifications/tool-input', params: { arguments: input } } });
+          dispatch('message', { source: parent, data: { jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: output } });
+        }
+        return;
+      }
       const job = (async () => {
         let result = {};
         try {
@@ -57,9 +65,9 @@ export async function panelHost(t, options = {}) {
       host.jobs.add(job); job.finally(() => host.jobs.delete(job));
     } };
     const document = { visibilityState: 'visible', getElementById: element, querySelectorAll: selector => selector === '[data-page]' ? pages : [], addEventListener: add, removeEventListener: remove };
-    const context = vm.createContext({ window: { parent, openai: { toolInput: input, toolOutput: output }, addEventListener: add, removeEventListener: remove }, document, setTimeout, clearTimeout, queueMicrotask,
+    const context = vm.createContext({ window: { parent, ...(standard ? {} : { openai: { toolInput: input, toolOutput: output } }), addEventListener: add, removeEventListener: remove }, document, setTimeout, clearTimeout, queueMicrotask,
       setInterval: fn => { const key = intervals.size + 1; intervals.set(key, fn); return key; }, clearInterval: key => intervals.delete(key) });
-    const panel = { context, element, pages, intervals, dispatch, eval: code => vm.runInContext(code, context) };
+    const panel = { context, element, pages, intervals, dispatch, notify: (method, params, requestId) => dispatch('message', { source: parent, data: { jsonrpc: '2.0', method, params, ...(requestId === undefined ? {} : { id: requestId }) } }), eval: code => vm.runInContext(code, context) };
     host.panels.push(panel);
     vm.runInContext(script, context);
     return panel;

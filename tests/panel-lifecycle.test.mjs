@@ -4,6 +4,74 @@ import fs from 'node:fs';
 import { panelHost } from './support/panel-host.mjs';
 import { DASHBOARD_READ_TOOL, DASHBOARD_TOOL } from '../codex/scripts/settings-server.mjs';
 
+test('标准宿主不注入 window.openai，arguments 通知仍定位设置与看板且不发消息', async t => {
+  const host = await panelHost(t, { standard: true });
+  await host.open({ root: host.root, session: 'chat' }); await host.flush();
+  const panel = host.panels[0];
+  assert.equal(panel.element('workspace').value, 'project');
+  assert.equal(panel.eval('chat.id'), 'chat');
+  assert.ok(host.calls.some(call => call.name === 'ai_loop.panel.update' && call.args.set.workspace_id === 'project'));
+  assert.ok(host.calls.some(call => call.name === 'ai_loop.dashboard.history' && call.args.session === 'chat'));
+  panel.pages[1].listeners.get('click')(); panel.pages[0].listeners.get('click')();
+  assert.equal(panel.element('workspace').value, 'project');
+  assert.equal(host.messages.length, 0); assert.equal(host.panels.length, 1);
+});
+
+test('标准空输入清除原聊天，未知线程字段与局部输入不能冒充归属', async t => {
+  const host = await panelHost(t, { standard: true });
+  await host.open({ root: host.root, session: 'chat' }); await host.flush();
+  const panel = host.panels[0];
+  panel.notify('ui/notifications/tool-input-partial', { arguments: { session: 'other' } });
+  await host.flush(); assert.equal(panel.eval('chat.id'), 'chat');
+  panel.notify('ui/notifications/tool-input', { arguments: {}, session: 'chat', root: host.root });
+  await host.flush();
+  assert.equal(panel.element('workspace').value, ''); assert.equal(panel.eval('chat'), null);
+  assert.match(panel.element('scope').textContent, /未提供/);
+  panel.notify('ui/notifications/tool-input', { arguments: { threadId: 'chat', cwd: host.root } });
+  await host.flush(); assert.equal(panel.element('workspace').value, '');
+  assert.equal(host.messages.length, 0); assert.equal(host.panels.length, 1);
+});
+
+test('标准宿主关闭请求与在途请求ID相同时仍销毁面板并确认关闭', async t => {
+  const host = await panelHost(t, { standard: true });
+  await host.open({ root: host.root }); await host.flush();
+  const panel = host.panels[0], gate = host.pauseNext(DASHBOARD_READ_TOOL);
+  const reading = panel.eval('discover()'); await gate.entered;
+  const requestId = panel.eval('[...pending.keys()][0]');
+  panel.notify('ui/resource-teardown', { reason: '关闭侧栏' }, requestId);
+  await reading;
+  assert.equal(panel.eval('disposed'), true); assert.equal(panel.eval('pending.size'), 0);
+  assert.equal(panel.intervals.size, 0);
+  assert.deepEqual(host.replies, [{ jsonrpc: '2.0', id: requestId, result: {} }]);
+  const count = host.calls.length; gate.release(); await host.flush();
+  panel.notify('ui/notifications/tool-input', { arguments: { root: host.root, session: 'chat' } });
+  await host.flush(); assert.equal(host.calls.length, count); assert.equal(host.messages.length, 0);
+});
+
+test('旧版binding渲染请求明确停用且不返回UI资源', async t => {
+  const host = await panelHost(t);
+  const result = await host.invoke(DASHBOARD_TOOL, { binding: 'legacy-binding-0001' }, false);
+  assert.equal(result.isError, true); assert.match(result.content[0].text, /已停用/);
+  assert.equal(result._meta, undefined); assert.equal(host.panels.length, 0);
+});
+
+test('标准空入口不被在途旧聊天响应重新绑定，兼容宿主仍可定位', async t => {
+  const host = await panelHost(t);
+  await host.open({ root: host.root, session: 'chat' }); await host.flush();
+  const panel = host.panels[0], gate = host.pauseNext(DASHBOARD_READ_TOOL);
+  const reading = panel.eval('discover()'); await gate.entered;
+  panel.notify('ui/notifications/tool-input', { arguments: {} });
+  // New entry's request completes while the previous chat's request remains paused.
+  for (let turn = 0; turn < 4; turn++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(panel.element('workspace').value, '');
+  gate.release(); await reading; await host.flush();
+  assert.equal(panel.element('workspace').value, ''); assert.equal(panel.eval('chat'), null);
+  const compatible = await panelHost(t, { standard: false });
+  await compatible.open({ root: compatible.root, session: 'chat' }); await compatible.flush();
+  assert.equal(compatible.panels[0].element('workspace').value, 'project');
+  assert.equal(host.messages.length + compatible.messages.length, 0);
+});
+
 test('旧版在受限宿主生命周期夹具中复现跨实例扩张，测试不发送真实聊天消息', async t => {
   const html = fs.readFileSync(new URL('./support/legacy-loop.html', import.meta.url), 'utf8');
   const host = await panelHost(t, { html, limit: 5 });

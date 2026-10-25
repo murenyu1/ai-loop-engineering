@@ -587,7 +587,7 @@ test('旧保存成功或失败结束时，新定位失败的面板都能恢复�
 });
 
 
-test('侧栏定位请求按实例回传真实工作区，拒绝未知请求、串聊及过期归属', async t => {
+test('旧binding仅兼容无UI数据读取，按实例隔离并拒绝串聊及过期归属', async t => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-binding-'));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const home = path.join(base, 'home'), a = path.join(base, 'a'), b = path.join(base, 'b');
@@ -596,7 +596,7 @@ test('侧栏定位请求按实例回传真实工作区，拒绝未知请求、�
   const host = { 'local-projects': { a: { rootPaths: [a] }, b: { rootPaths: [b] } }, 'thread-project-assignments': { chat: { projectKind: 'local', projectId: 'a' } } };
   fs.writeFileSync(file, JSON.stringify(host));
   const protocol = createSettingsProtocol({}, { home });
-  const call = async args => (await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: DASHBOARD_TOOL, arguments: args } })).result;
+  const call = async args => (await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: DASHBOARD_READ_TOOL, arguments: args } })).result;
   const one = 'panel-one-request-0001', two = 'panel-two-request-0002';
   assert.equal((await call({ binding: one, root: a })).isError, true);
   assert.equal((await call({ binding: one })).structuredContent.context.root, null);
@@ -633,10 +633,9 @@ test('服务端对共享根目录拒绝自动猜测，有真实聊天归属才�
   fs.writeFileSync(path.join(home, '.codex-global-state.json'), JSON.stringify({ 'local-projects': { a: { rootPaths: [root] }, b: { rootPaths: [root] } }, 'thread-project-assignments': { chat: { projectKind: 'local', projectId: 'b' } } }));
   const protocol = createSettingsProtocol({}, { home });
   const call = async args => (await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: DASHBOARD_TOOL, arguments: args } })).result;
-  const binding = 'shared-binding-0001'; await call({ binding });
-  const failed = await call({ binding, root }); assert.equal(failed.isError, true); assert.match(failed.content[0].text, /多个工作区/);
-  assert.equal((await call({ binding })).structuredContent.context.workspace_id, null);
-  assert.equal((await call({ binding, session: 'chat', root })).structuredContent.context.workspace_id, 'b');
+  const failed = await call({ root }); assert.equal(failed.isError, true); assert.match(failed.content[0].text, /多个工作区/);
+  assert.equal((await call({})).structuredContent.context.workspace_id, null);
+  assert.equal((await call({ session: 'chat', root })).structuredContent.context.workspace_id, 'b');
 });
 
 

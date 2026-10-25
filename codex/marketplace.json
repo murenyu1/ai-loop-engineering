@@ -2,7 +2,7 @@
   "name": "ai-loop-engineering",
   "plugins": [{
     "name": "ai-loop-engineering",
-    "version": "4.6.3",
+    "version": "4.6.4",
     "source": { "source": "local", "path": "./dist/codex" },
     "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
     "category": "Productivity"
