@@ -4,6 +4,94 @@ import vm from 'node:vm';
 import { buildDshClient } from '../scripts/build-dsh-client.mjs';
 import { createPlugin } from '../dsh/client/index.mjs';
 
+test('后台轮询保留已有运行，网络失败不清空，403立即清除缓存', async () => {
+  const pending = [], timers = new Map(); let timerId = 0;
+  const host = { setTimeout: fn => { timers.set(++timerId, fn); return timerId; }, clearTimeout: id => timers.delete(id) };
+  const store = plugin.createStatusPollStore(() => new Promise((resolve, reject) => pending.push({ resolve, reject })), host);
+  const params = { path: '/workspace', sessionId: 'chat' };
+  const off = store.subscribe(params, () => {});
+  assert.equal(store.get(params).loading, true);
+  const reply = async value => { pending.shift().resolve({ ok: true, json: async () => value }); await new Promise(resolve => setImmediate(resolve)); };
+  await reply({ run_id: 'r1', tasks: [], chat_history: { rounds: [] } });
+  const data = store.get(params).data;
+  const tick = () => { const [id, fn] = timers.entries().next().value; timers.delete(id); fn(); };
+  tick();
+  assert.equal(store.get(params).loading, false);
+  assert.equal(store.get(params).refreshing, true);
+  assert.equal(store.get(params).data, data);
+  pending.shift().reject(new Error('网络断开'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(store.get(params).data, data);
+  assert.match(store.get(params).error, /网络断开/);
+  tick();
+  pending.shift().resolve({ ok: false, status: 403, json: async () => ({ error: '访问被拒绝' }) });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(store.get(params).data, null);
+  assert.equal(store.get(params).history, null);
+  off(); assert.equal(timers.size, 0);
+});
+
+test('子代理导航优先真实会话、等待异步成功并正确返回拒绝和失败', async () => {
+  const opened = [], panels = [];
+  const agent = { harness: 'dsh', native_id: 'native-alias', session_id: 'child', context: { id: 'other', parent_id: 'recorded-parent' } };
+  let finish;
+  const sessions = { openSubagent: address => { opened.push(address); return new Promise(resolve => { finish = resolve; }); } };
+  const ctx = { sessions, layout: { selectPanel: value => panels.push(value) } };
+  const result = plugin.openAgentSession(ctx, 'current-chat', agent);
+  assert.equal(panels.length, 0);
+  assert.equal(opened[0].childSessionId, 'child');
+  assert.equal(opened[0].parentSessionId, 'recorded-parent');
+  finish(false); assert.equal(await result, false); assert.equal(panels.length, 0);
+  sessions.openSubagent = async () => { throw new Error('已删除'); };
+  assert.equal(await plugin.openAgentSession(ctx, '', agent), false);
+  sessions.openSubagent = async () => ({ ok: true });
+  assert.equal(await plugin.openAgentSession(ctx, '', agent), true);
+  assert.deepEqual(panels, [null]);
+  assert.equal(plugin.agentSessionId({ harness: 'codex', session_id: 'wrong-host' }), '');
+  assert.equal(plugin.agentSessionId({ native_id: '/root/alias' }), '');
+});
+
+test('403清除组件分页缓存与游标，恢复访问后在途旧分页也不能回流', async () => {
+  const originalFetch = globalThis.fetch;
+  const flatten = node => Array.isArray(node) ? node.flatMap(flatten) : node && typeof node === 'object' ? [node, ...(node.props?.children || []).flatMap(flatten)] : [node];
+  for (const mode of ['loaded', 'pending']) {
+    let allowed = true, finishPage, cursor = 0;
+    const slots = [], effects = [];
+    const same = (a, b) => a && b && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
+    const React = {
+      Component: class {}, createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+      useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial; return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }]; },
+      useRef(initial) { const index = cursor++; if (!(index in slots)) slots[index] = { current: initial }; return slots[index]; },
+      useMemo(fn, deps) { const index = cursor++; if (!slots[index] || !same(slots[index].deps, deps)) slots[index] = { deps, value: fn() }; return slots[index].value; },
+      useEffect(fn, deps) { const index = cursor++, old = slots[index]; if (!old || !same(old.deps, deps)) effects.push(() => { old?.cleanup?.(); slots[index] = { deps, cleanup: fn() }; }); },
+      useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
+    };
+    globalThis.fetch = async url => {
+      if (new URL(url).searchParams.has('after')) return new Promise(resolve => { finishPage = () => resolve({ ok: true, json: async () => ({ chat_history: { rounds: [{ run: { run_id: 'secret-old', status: 'active' } }], next_after: 'old-cursor' } }) }); });
+      return allowed ? { ok: true, json: async () => ({ run_id: 'latest', tasks: [], runs: [{ run_id: 'latest' }], chat_history: { next_after: 'cursor' } }) }
+        : { ok: false, status: 403, json: async () => ({ error: '工作区已禁用' }) };
+    };
+    const view = createPlugin(name => name === 'react' ? React : runtime(name));
+    const controller = new view.Controller({ value: { enabled: true, maxConcurrent: 3, roles: {}, projects: [{ path: '/workspace', enabled: true }] }, mutate: () => true });
+    const ctx = { sessions: { list: { getSnapshot: () => ({ byId: { parent: { cwd: '/workspace' } } }), subscribe: () => () => {} } } };
+    const render = () => { cursor = 0; const wrapper = view.ConversationDashboard({ ctx, sessionId: 'parent', controller }); const child = wrapper.props.children[0]; const tree = child.type(child.props); effects.splice(0).forEach(fn => fn()); return flatten(tree); };
+    const settle = async () => { await new Promise(resolve => setImmediate(resolve)); render(); return render(); };
+    const refresh = nodes => nodes.find(node => node?.type === 'button' && node.props.children?.includes('🔄 刷新看板')).props.onClick();
+    try {
+      render(); let nodes = await settle();
+      const paging = nodes.find(node => node?.type === 'button' && node.props.children?.includes('加载更早运行')).props.onClick();
+      if (mode === 'loaded') { finishPage(); await paging; nodes = render(); assert.ok(nodes.some(node => typeof node === 'string' && node.includes('secret-old'))); }
+      allowed = false; refresh(nodes); nodes = await settle();
+      assert.ok(nodes.some(node => typeof node === 'string' && node.includes('无权读取当前工作区')));
+      assert.ok(!nodes.some(node => typeof node === 'string' && node.includes('secret-old')), mode);
+      assert.ok(!nodes.some(node => node?.type === 'button' && node.props.children?.includes('加载更早运行')));
+      allowed = true; refresh(nodes); nodes = await settle();
+      if (mode === 'pending') { finishPage(); await paging; nodes = render(); }
+      assert.ok(!nodes.some(node => typeof node === 'string' && node.includes('secret-old')), mode + '：重新授权后也不能合入旧响应');
+    } finally { slots.forEach(slot => slot?.cleanup?.()); globalThis.fetch = originalFetch; }
+  }
+});
+
 // Minimal native-form bridge: field serialization and persistence belong to the
 // host. Capture the bridge boundary so tests assert our writes, not host internals.
 class FormBridge {

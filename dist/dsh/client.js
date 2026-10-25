@@ -146,8 +146,9 @@ window.__ModuleLoader__.load({
 
   const S = {
     card: {
-      background: 'var(--dsw-alias-bg-layer-1, #1e1e24)',
-      border: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.08))',
+      color: 'var(--dsw-alias-text-primary, CanvasText)',
+      background: 'var(--dsw-alias-bg-layer-1, Canvas)',
+      border: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, CanvasText 18%, transparent))',
       borderRadius: theme.radius,
       padding: '16px 20px',
       display: 'grid',
@@ -158,14 +159,14 @@ window.__ModuleLoader__.load({
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.06))',
+      borderBottom: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, CanvasText 18%, transparent))',
       paddingBottom: 12,
     },
     title: {
       margin: 0,
       fontSize: 15,
       fontWeight: 600,
-      color: 'var(--dsw-alias-label-primary, #ffffff)',
+      color: 'var(--dsw-alias-text-primary, CanvasText)',
       display: 'flex',
       alignItems: 'center',
       gap: 8,
@@ -173,7 +174,7 @@ window.__ModuleLoader__.load({
     subtitle: {
       margin: 0,
       fontSize: 12,
-      color: 'var(--dsw-alias-label-secondary, #999)',
+      color: 'var(--dsw-alias-text-secondary, GrayText)',
       lineHeight: 1.5,
     },
     badge: active => ({
@@ -182,7 +183,7 @@ window.__ModuleLoader__.load({
       padding: '2px 8px',
       borderRadius: 12,
       background: active ? 'rgba(74, 222, 128, 0.12)' : 'rgba(156, 163, 175, 0.12)',
-      color: active ? 'var(--dsw-alias-state-success-primary, #4ade80)' : 'var(--dsw-alias-label-secondary, #9ca3af)',
+      color: active ? 'var(--dsw-alias-state-success-primary, #4ade80)' : 'var(--dsw-alias-text-secondary, GrayText)',
       border: `1px solid ${active ? 'rgba(74, 222, 128, 0.25)' : 'rgba(156, 163, 175, 0.2)'}`,
     }),
     row: {
@@ -194,9 +195,9 @@ window.__ModuleLoader__.load({
     input: {
       font: 'inherit',
       fontSize: 13,
-      color: 'var(--dsw-alias-label-primary, inherit)',
-      background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.25))',
-      border: '1px solid var(--dsw-alias-border-l2, rgba(255,255,255,0.15))',
+      color: 'var(--dsw-alias-text-primary, CanvasText)',
+      background: 'var(--dsw-alias-bg-layer-2, Canvas)',
+      border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, CanvasText 18%, transparent))',
       borderRadius: 6,
       padding: '7px 10px',
       outline: 'none',
@@ -210,9 +211,9 @@ window.__ModuleLoader__.load({
       cursor: 'pointer',
       padding: '6px 14px',
       borderRadius: 6,
-      border: primary ? 'none' : '1px solid var(--dsw-alias-border-l2, rgba(255,255,255,0.15))',
-      background: primary ? 'var(--dsw-alias-brand-primary, #2563eb)' : 'var(--dsw-alias-bg-layer-2, rgba(255,255,255,0.05))',
-      color: primary ? '#ffffff' : 'var(--dsw-alias-label-primary, inherit)',
+      border: primary ? 'none' : '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, CanvasText 18%, transparent))',
+      background: primary ? 'var(--dsw-alias-brand-primary, #2563eb)' : 'var(--dsw-alias-bg-layer-2, Canvas)',
+      color: primary ? '#ffffff' : 'var(--dsw-alias-text-primary, CanvasText)',
       display: 'inline-flex',
       alignItems: 'center',
       gap: 6,
@@ -224,8 +225,8 @@ window.__ModuleLoader__.load({
       gap: 14,
     },
     roleCard: {
-      background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.18))',
-      border: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.06))',
+      background: 'var(--dsw-alias-bg-layer-2, Canvas)',
+      border: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, CanvasText 18%, transparent))',
       borderRadius: 8,
       padding: '12px 14px',
       display: 'grid',
@@ -240,11 +241,12 @@ window.__ModuleLoader__.load({
       display: 'grid',
       gap: 4,
       fontSize: 12,
-      color: 'var(--dsw-alias-label-secondary, #aaa)',
+      color: 'var(--dsw-alias-text-secondary, GrayText)',
     },
     dashCard: {
-      background: 'var(--dsw-alias-bg-layer-1, #1e1e24)',
-      border: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.08))',
+      color: 'var(--dsw-alias-text-primary, CanvasText)',
+      background: 'var(--dsw-alias-bg-layer-1, Canvas)',
+      border: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, CanvasText 18%, transparent))',
       borderRadius: 10,
       padding: '16px 20px',
       display: 'grid',
@@ -268,7 +270,7 @@ window.__ModuleLoader__.load({
         pending: 'rgba(255, 255, 255, 0.08)',
       };
       return {
-        background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.2))',
+        background: 'var(--dsw-alias-bg-layer-2, Canvas)',
         border: `1px solid ${colors[phase] || colors.pending}`,
         borderRadius: 8,
         padding: '12px 14px',
@@ -347,16 +349,18 @@ window.__ModuleLoader__.load({
       if (!entry.listeners.size || !visible() || entry.abort) return;
       const abort = new AbortController();
       entry.abort = abort;
-      entry.state = { ...entry.state, loading: true, error: null };
+      entry.state = { ...entry.state, loading: !entry.loaded, refreshing: Boolean(entry.loaded), error: null };
       notify(entry);
       try {
         const data = await requestStatus(fetcher, params.path, params.run, params.sessionId, abort.signal);
         if (entry.abort !== abort) return;
-        entry.state = { loading: false, data: data.run_id ? data : null, history: data.chat_history ?? entry.state.history ?? null, runs: Array.isArray(data.runs) ? data.runs : entry.state.runs, error: null, errorStatus: null };
+        entry.loaded = true;
+        entry.state = { loading: false, refreshing: false, data: data.run_id ? data : null, history: data.chat_history ?? null, runs: Array.isArray(data.runs) ? data.runs : [], error: null, errorStatus: null };
       } catch (error) {
         if (entry.abort !== abort) return;
         if (error?.name === 'AbortError') return;
-        entry.state = { loading: false, data: null, history: null, runs: [], error: error instanceof Error ? error.message : String(error), errorStatus: error?.status ?? null };
+        const denied = error?.status === 403;
+        entry.state = { ...entry.state, loading: false, refreshing: false, ...(denied ? { data: null, history: null, runs: [] } : {}), error: error instanceof Error ? error.message : String(error), errorStatus: error?.status ?? null };
       } finally {
         if (entry.abort === abort) {
           entry.abort = undefined;
@@ -446,18 +450,18 @@ window.__ModuleLoader__.load({
         projects.length ? h('label', { style: S.label }, '工作区', h('select', { value: path, style: S.input, onChange: event => onProjectChange?.(event.target.value) }, h('option', { value: '' }, '请选择工作区'), projects.map(row => h('option', { key: row.path, value: row.path }, row.path)))) : null,
         runInfo.runs.length ? h('label', { style: S.label }, '选择运行', h('select', { value: run, style: S.input, onChange: event => setSelection({ key: selectionKey, run: event.target.value }) }, h('option', { value: '' }, '请选择运行'), runInfo.runs.map(row => h('option', { key: row.run_id, value: row.run_id }, `${row.project_path || "."} / ${row.run_id} · ${row.status || '未知'} · ${row.goal || ''}`)))) : null,
       ),
-      !path ? h('div', { role: 'status', style: { color: 'var(--dsw-alias-label-secondary, #888)', fontSize: 13, padding: '12px 0' } }, '请选择一个已启用的工作区。') : runInfo.loading || runInfo.error || !data ? h('div', {
+      !path ? h('div', { role: 'status', style: { color: 'var(--dsw-alias-text-secondary, GrayText)', fontSize: 13, padding: '12px 0' } }, '请选择一个已启用的工作区。') : runInfo.loading || !data ? h('div', {
         role: runInfo.loading ? 'status' : runInfo.error ? 'alert' : 'status',
-        style: { color: runInfo.error ? '#fca5a5' : 'var(--dsw-alias-label-secondary, #888)', fontSize: 13, padding: '12px 0' },
+        style: { color: runInfo.error ? '#fca5a5' : 'var(--dsw-alias-text-secondary, GrayText)', fontSize: 13, padding: '12px 0' },
       }, statusMessage(runInfo),
       ) : h('div', { style: { display: 'grid', gap: 14 } },
-        h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center', background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.15))', padding: '10px 14px', borderRadius: 8 } },
+        h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center', background: 'var(--dsw-alias-bg-layer-2, Canvas)', padding: '10px 14px', borderRadius: 8 } },
           h('div', null,
-            h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #999)', display: 'block' } }, '运行编号 (Run ID)'),
+            h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)', display: 'block' } }, '运行编号 (Run ID)'),
             h('code', { style: { fontSize: 13, fontWeight: 600, color: 'var(--dsw-alias-brand-primary, #60a5fa)' } }, data.run_id),
           ),
           h('div', null,
-            h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #999)', display: 'block' } }, '总目标 (Goal)'),
+            h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)', display: 'block' } }, '总目标 (Goal)'),
             h('div', { style: { fontSize: 13, fontWeight: 500 } }, data.goal),
           ),
           h('div', { style: { marginLeft: 'auto' } },
@@ -470,7 +474,7 @@ window.__ModuleLoader__.load({
               h('span', { style: { fontWeight: 600, fontSize: 13 } }, `${task.id}: ${task.title}`),
               h('span', { style: S.phaseBadge(task.phase) }, phaseLabel(task.phase)),
             ),
-            h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #888)', display: 'flex', gap: 12 } },
+            h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)', display: 'flex', gap: 12 } },
               h('span', null, `评审: ${task.review || 'none'}`),
               h('span', null, `修复轮次: ${task.fixes || 0}`),
               h('span', null, `依赖: ${(task.dependencies || []).join(', ') || '无'}`),
@@ -520,32 +524,41 @@ window.__ModuleLoader__.load({
     return sessionWorkspace.get(key) || '';
   }
 
+  function agentSessionId(agent) {
+    if (agent?.harness && agent.harness !== 'dsh') return '';
+    return [agent?.session_id, agent?.context?.id, agent?.native_id].find(value => typeof value === 'string' && value.trim() && !value.startsWith('/')) || '';
+  }
   async function openAgentSession(ctx, parentSessionId, agent) {
-    const childId = agent?.native_id || agent?.session_id || agent?.context?.id;
+    const childId = agentSessionId(agent);
     if (!childId) return false;
-    parentSessionId ||= agent?.context?.parent_id || agent?.parent_id;
-    const sessions = ctx?.get?.('sessions') || ctx?.sessions;
-    const workspaces = ctx?.get?.('workspaces') || ctx?.workspaces;
-    const layout = ctx?.get?.('layout') || ctx?.layout;
+    parentSessionId = agent?.context?.parent_id || agent?.parent_id || parentSessionId;
     try {
+      const sessions = ctx?.get?.('sessions') || ctx?.sessions;
+      const workspaces = ctx?.get?.('workspaces') || ctx?.workspaces;
+      const layout = ctx?.get?.('layout') || ctx?.layout;
       if (sessions?.openSubagent) {
         if (typeof sessions.refreshSubagents === 'function' && parentSessionId) {
           try { await sessions.refreshSubagents(parentSessionId); } catch {}
         }
         const retained = sessions.subagentAddress?.(childId);
-        sessions.openSubagent(retained?.parentSessionId === parentSessionId
+        if (!parentSessionId && !retained) return false;
+        const result = await sessions.openSubagent(retained && (!parentSessionId || retained.parentSessionId === parentSessionId)
           ? retained
           : { parentSessionId, childSessionId: childId, mode: 'continuable' });
+        if (result === false || result?.ok === false || result?.isError) return false;
         layout?.selectPanel?.(null);
         return true;
       }
       if (typeof sessions?.open === 'function') {
-        sessions.open(childId);
+        const result = await sessions.open(childId);
+        if (result === false || result?.ok === false || result?.isError) return false;
         layout?.selectPanel?.(null);
         return true;
       }
       if (typeof workspaces?.openSession === 'function') {
-        workspaces.openSession({ parentSessionId, childSessionId: childId, mode: 'continuable' });
+        if (!parentSessionId) return false;
+        const result = await workspaces.openSession({ parentSessionId, childSessionId: childId, mode: 'continuable' });
+        if (result === false || result?.ok === false || result?.isError) return false;
         return true;
       }
     } catch (err) {
@@ -631,31 +644,38 @@ window.__ModuleLoader__.load({
     const dashboardMessage = !cwd ? '请选择工作区，或等待当前聊天关联工作区。'
       : statusInfo.loading ? (sessionKey ? '正在加载当前聊天的运行历史…' : '正在加载所选工作区的运行记录…')
         : statusInfo.errorStatus === 403 ? `无权读取当前工作区：${statusInfo.error || '访问被拒绝'}`
-          : statusInfo.error ? `${sessionKey ? '读取聊天运行历史失败' : '读取工作区运行记录失败'}：${statusInfo.error}`
+          : statusInfo.error && !data ? `${sessionKey ? '读取聊天运行历史失败' : '读取工作区运行记录失败'}：${statusInfo.error}`
             : !data ? (sessionKey ? '当前聊天暂无关联运行记录。' : '所选工作区暂无运行记录。') : null;
     const [olderHistory, setOlderHistory] = React.useState(() => ({ key: selectionKey, runs: [], nextAfter: null, loading: false }));
-    const older = olderHistory.key === selectionKey ? olderHistory : { key: selectionKey, runs: [], nextAfter: statusInfo.history?.next_after ?? null, loading: false };
+    const historyDenied = statusInfo.errorStatus === 403;
+    const historyScope = React.useRef({ key: selectionKey, denied: historyDenied, generation: 0 });
+    if (historyScope.current.key !== selectionKey || historyScope.current.denied !== historyDenied) {
+      historyScope.current = { key: selectionKey, denied: historyDenied, generation: historyScope.current.generation + 1 };
+    }
+    const historyGeneration = historyScope.current.generation;
+    const older = !historyDenied && olderHistory.key === selectionKey && (olderHistory.generation ?? 0) === historyGeneration ? olderHistory : { key: selectionKey, generation: historyGeneration, runs: [], nextAfter: historyDenied ? null : statusInfo.history?.next_after ?? null, loading: false };
     React.useEffect(() => {
-      if (olderHistory.key !== selectionKey) setOlderHistory({ key: selectionKey, runs: [], nextAfter: statusInfo.history?.next_after ?? null, loading: false });
-    }, [selectionKey]);
+      if (historyDenied || olderHistory.key !== selectionKey || (olderHistory.generation ?? 0) !== historyGeneration) setOlderHistory({ key: selectionKey, generation: historyGeneration, runs: [], nextAfter: historyDenied ? null : statusInfo.history?.next_after ?? null, loading: false });
+    }, [selectionKey, historyGeneration, historyDenied]);
     React.useEffect(() => {
-      if (statusInfo.history?.next_after) setOlderHistory(current => current.key === selectionKey ? { ...current, nextAfter: statusInfo.history.next_after } : current);
-    }, [selectionKey, statusInfo.history?.next_after]);
+      if (!historyDenied && statusInfo.history?.next_after) setOlderHistory(current => current.key === selectionKey && (current.generation ?? 0) === historyGeneration ? { ...current, nextAfter: statusInfo.history.next_after } : current);
+    }, [selectionKey, historyGeneration, historyDenied, statusInfo.history?.next_after]);
     const historyRuns = [...new Map([...(statusInfo.runs ?? []), ...older.runs].map(item => [item.run_id, item])).values()];
     const loadOlder = async () => {
-      if (!older.nextAfter || older.loading) return;
-      setOlderHistory(current => ({ ...current, key: selectionKey, loading: true }));
+      if (historyDenied || !older.nextAfter || older.loading) return;
+      setOlderHistory(current => ({ ...current, key: selectionKey, generation: historyGeneration, loading: true }));
       try {
         const page = await statusInfo.loadHistory(older.nextAfter);
+        if (historyScope.current.generation !== historyGeneration || historyScope.current.denied) return;
         const found = page.chat_history;
-        setOlderHistory(current => current.key === selectionKey ? {
+        setOlderHistory(current => current.key === selectionKey && (current.generation ?? 0) === historyGeneration ? {
           ...current,
           runs: [...new Map([...current.runs, ...(found?.rounds ?? []).map(round => round.run)].map(item => [item.run_id, item])).values()],
           nextAfter: found?.next_after ?? null,
           loading: false,
         } : current);
       } catch {
-        setOlderHistory(current => current.key === selectionKey ? { ...current, loading: false } : current);
+        setOlderHistory(current => current.key === selectionKey && (current.generation ?? 0) === historyGeneration ? { ...current, loading: false } : current);
       }
     };
 
@@ -744,7 +764,7 @@ window.__ModuleLoader__.load({
       const roleDesc = ROLES[agent.role]?.name || agent.role || '未知角色';
       const isLive = agent.live === true && !['completed', 'failed', 'cancelled', 'stopped', 'ended_unknown'].includes(agent.state);
       const direction = agent.direction || (typeof agent.task === 'string' && agent.task.includes('#') ? agent.task.split('#')[1] : null);
-      const childId = agent.native_id || agent.session_id || agent.context?.id;
+      const childId = agentSessionId(agent);
       const openSession = () => {
         if (!childId) { setNavigationError('此记录没有真实子代理会话 ID，无法打开聊天。'); return; }
         openAgentSession(ctx, sessionKey, agent).then(opened => setNavigationError(opened ? '' : '未能打开子代理聊天，请确认 DSH 会话仍可用。'));
@@ -765,7 +785,7 @@ window.__ModuleLoader__.load({
         },
         title: '点击直接进入该子 Agent 的独立聊天上下文',
         style: {
-          background: 'var(--dsw-alias-bg-layer-2, rgba(20, 24, 33, 0.85))',
+          background: 'var(--dsw-alias-bg-layer-2, Canvas)',
           border: `1.5px solid ${isLive ? roleMeta.color : roleMeta.border}`,
           borderRadius: 10,
           padding: '12px 14px',
@@ -824,8 +844,8 @@ window.__ModuleLoader__.load({
               style: {
                 fontSize: 11,
                 fontWeight: 600,
-                color: isLive ? '#22c55e' : 'var(--dsw-alias-text-secondary, #94a3b8)',
-                background: isLive ? 'rgba(34, 197, 94, 0.12)' : 'rgba(255, 255, 255, 0.06)',
+                color: isLive ? '#22c55e' : 'var(--dsw-alias-text-secondary, GrayText)',
+                background: isLive ? 'rgba(34, 197, 94, 0.12)' : 'color-mix(in srgb, CanvasText 6%, transparent)',
                 padding: '2px 6px',
                 borderRadius: 4,
               },
@@ -834,10 +854,10 @@ window.__ModuleLoader__.load({
         ),
 
         // 实例信息与进入快捷指示
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)', gap: 6 } },
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)', gap: 6 } },
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
             h('span', null, 'ID:'),
-            h('code', { style: { fontSize: 11, color: 'var(--dsw-alias-brand-primary, #60a5fa)', background: 'rgba(0,0,0,0.3)', padding: '1px 4px', borderRadius: 4 } },
+            h('code', { style: { fontSize: 11, color: 'var(--dsw-alias-brand-primary, #60a5fa)', background: 'color-mix(in srgb, CanvasText 6%, Canvas)', padding: '1px 4px', borderRadius: 4 } },
               (agent.native_id || agent.id || 'agent').slice(0, 14),
             ),
           ),
@@ -853,7 +873,7 @@ window.__ModuleLoader__.load({
         ),
 
         // Token 统计
-        h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 6 } },
+        h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 6 } },
           tokenUsageLabel(agent.usage),
         ),
 
@@ -882,11 +902,11 @@ window.__ModuleLoader__.load({
               marginTop: 6,
               padding: '8px 10px',
               borderRadius: 6,
-              background: 'rgba(0, 0, 0, 0.45)',
+              background: 'color-mix(in srgb, CanvasText 6%, Canvas)',
               fontSize: 11,
               lineHeight: 1.5,
               fontFamily: 'monospace',
-              color: 'var(--dsw-alias-text-primary, #cbd5e1)',
+              color: 'var(--dsw-alias-text-primary, CanvasText)',
               whiteSpace: 'pre-wrap',
               maxHeight: 180,
               overflowY: 'auto',
@@ -909,31 +929,31 @@ window.__ModuleLoader__.load({
         display: 'flex',
         flexDirection: 'column',
         gap: 20,
-        color: 'var(--dsw-alias-text-primary, #e2e8f0)',
-        background: 'var(--dsw-alias-bg-canvas, #0d1117)',
+        color: 'var(--dsw-alias-text-primary, CanvasText)',
+        background: 'var(--dsw-alias-bg-canvas, Canvas)',
       },
     },
       // 顶部导航栏
-      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.08))', paddingBottom: 14 } },
+      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, borderBottom: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, CanvasText 18%, transparent))', paddingBottom: 14 } },
         h('div', null,
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
             h('h2', { style: { margin: 0, fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 } }, '工作流看板'),
             data?.status ? h('span', { style: S.badge(data.status === 'active') }, data.status.toUpperCase()) : null,
           ),
-          h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 8 } },
+          h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, GrayText)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 8 } },
             h('span', null, `工作区: ${cwd || '未定位到当前会话工作区'}`),
             h('span', null, sessionKey ? '当前聊天范围' : '工作区范围'),
             isProjectEnabled ? h('span', { style: { color: '#22c55e', fontSize: 11, background: 'rgba(34,197,94,0.1)', padding: '1px 6px', borderRadius: 4 } }, '已激活') : h('span', { style: { color: '#f59e0b', fontSize: 11, background: 'rgba(245,158,11,0.1)', padding: '1px 6px', borderRadius: 4 } }, '未激活'),
           ),
         ),
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
-          h('div', { style: { display: 'flex', background: 'rgba(255,255,255,0.06)', borderRadius: 6, padding: 2 } },
+          h('div', { style: { display: 'flex', background: 'color-mix(in srgb, CanvasText 6%, transparent)', borderRadius: 6, padding: 2 } },
             h('button', {
               type: 'button',
               style: {
                 border: 'none',
                 background: filterMode === 'all' ? 'var(--dsw-alias-brand-primary, #2563eb)' : 'transparent',
-                color: filterMode === 'all' ? '#fff' : 'var(--dsw-alias-text-secondary, #94a3b8)',
+                color: filterMode === 'all' ? '#fff' : 'var(--dsw-alias-text-secondary, GrayText)',
                 fontSize: 12,
                 padding: '4px 10px',
                 borderRadius: 4,
@@ -946,7 +966,7 @@ window.__ModuleLoader__.load({
               style: {
                 border: 'none',
                 background: filterMode === 'active' ? 'var(--dsw-alias-brand-primary, #2563eb)' : 'transparent',
-                color: filterMode === 'active' ? '#fff' : 'var(--dsw-alias-text-secondary, #94a3b8)',
+                color: filterMode === 'active' ? '#fff' : 'var(--dsw-alias-text-secondary, GrayText)',
                 fontSize: 12,
                 padding: '4px 10px',
                 borderRadius: 4,
@@ -994,7 +1014,7 @@ window.__ModuleLoader__.load({
           h('span', { style: { fontSize: 20 } }, '⚡'),
           h('div', null,
             h('div', { style: { fontSize: 13, fontWeight: 600, color: '#f59e0b' } }, '当前工作区尚未启用 AI Loop 工作流'),
-            h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)', marginTop: 2 } }, '启用后将自动编排独立角色，支持多方向任务动态分解与闭环开发。'),
+            h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, GrayText)', marginTop: 2 } }, '启用后将自动编排独立角色，支持多方向任务动态分解与闭环开发。'),
           ),
         ),
         h('button', {
@@ -1011,7 +1031,7 @@ window.__ModuleLoader__.load({
 
       statusInfo.history?.unbound_count > 0 ? h('div', {
         role: 'note',
-        style: { color: 'var(--dsw-alias-text-secondary, #94a3b8)', fontSize: 11 },
+        style: { color: 'var(--dsw-alias-text-secondary, GrayText)', fontSize: 11 },
       }, `${statusInfo.history.unbound_count} 个旧运行含未绑定当前聊天的活动，已从历史中隐藏。`) : null,
 
       dashboardMessage ? h('div', {
@@ -1025,7 +1045,7 @@ window.__ModuleLoader__.load({
           borderRadius: 8,
           border: `1px solid ${statusInfo.error ? 'rgba(248,113,113,0.35)' : 'rgba(148,163,184,0.2)'}`,
           background: statusInfo.error ? 'rgba(127,29,29,0.18)' : 'rgba(148,163,184,0.08)',
-          color: statusInfo.error ? '#fca5a5' : 'var(--dsw-alias-text-secondary, #94a3b8)',
+          color: statusInfo.error ? '#fca5a5' : 'var(--dsw-alias-text-secondary, GrayText)',
           fontSize: 13,
         },
       },
@@ -1037,8 +1057,10 @@ window.__ModuleLoader__.load({
         }, '重试') : null,
       ) : null,
 
+      statusInfo.error && data ? h('p', { role: 'alert', style: S.subtitle }, `后台刷新失败，保留上次内容：${statusInfo.error}`) : null,
+
       // 与 Codex 一致，以单行概览让任务图成为主要内容。
-      h('p', { style: { margin: 0, color: 'var(--dsw-alias-text-secondary, #94a3b8)', fontSize: 12 } },
+      h('p', { style: { margin: 0, color: 'var(--dsw-alias-text-secondary, GrayText)', fontSize: 12 } },
         `任务完成 ${completedTasksCount}/${tasks.length} · 正在运行 ${activeAgentsCount} · 代理调用 ${agents.length} · ${totalUsageLabel}`,
       ),
 
@@ -1082,7 +1104,7 @@ window.__ModuleLoader__.load({
         };
         const detailAgents = selectedNode?.agents ?? [];
         return h('section', { style: { display: 'grid', gap: theme.space ?? 12, minWidth: 0, color: 'var(--dsw-alias-text-primary, CanvasText)' } },
-          h('p', { style: { margin: 0, color: 'var(--dsw-alias-text-secondary, #94a3b8)', fontSize: 12 } }, '从上到下展示阶段交接与任务依赖；点线仅表示已记录的真实代理调用。代理结束不等于任务通过。'),
+          h('p', { style: { margin: 0, color: 'var(--dsw-alias-text-secondary, GrayText)', fontSize: 12 } }, '从上到下展示阶段交接与任务依赖；点线仅表示已记录的真实代理调用。代理结束不等于任务通过。'),
           h('div', { role: 'toolbar', 'aria-label': '工作流画布控制', style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 } },
             h('button', { type: 'button', style: S.btn(false), 'aria-label': '缩小画布', onClick: () => setScale(zoom - 0.1) }, '缩小'),
             h('span', { 'aria-live': 'polite', style: { minWidth: 48, textAlign: 'center', fontSize: 12 } }, `${Math.round(zoom * 100)}%`),
@@ -1120,39 +1142,39 @@ window.__ModuleLoader__.load({
                       canCollapse ? h('button', { type: 'button', 'aria-label': isCollapsed ? '展开任务阶段' : '折叠任务阶段', style: { ...S.btn(false), padding: '1px 6px', flex: '0 0 auto' }, onClick: event => { event.stopPropagation(); toggleTask(node.taskId); } }, isCollapsed ? '＋' : '−') : null,
                     ),
                     h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-primary, CanvasText)', overflow: 'hidden', textOverflow: 'ellipsis', overflowWrap: 'anywhere' }, title: node.status }, node.status),
-                    h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, node.agents?.length ? `${node.agents.length} 次真实调用 · 选择查看` : node.kind === 'stage' ? '尚无调用' : node.taskId ? `任务 ${node.taskId}` : data?.run_id ?? ''),
+                    h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, node.agents?.length ? `${node.agents.length} 次真实调用 · 选择查看` : node.kind === 'stage' ? '尚无调用' : node.taskId ? `任务 ${node.taskId}` : data?.run_id ?? ''),
                   );
                 }),
               ),
             ),
           ),
-          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '实线：阶段交接', '虚线：任务依赖', '点线：真实调用'),
+          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, '实线：阶段交接', '虚线：任务依赖', '点线：真实调用'),
           selectedNode ? h('section', { className: 'workflow-node-details', 'aria-label': `${selectedNode.label}调用详情`, style: S.dashCard },
             h('strong', { style: { color: roleColor[selectedNode.role] ?? roleColor.main } }, `${selectedNode.label} · ${detailAgents.length} 次真实调用`),
             detailAgents.length ? detailAgents.map((agent, index) => {
               const id = agent.native_id || agent.id || `agent-${index}`;
-              const childId = agent.native_id || agent.session_id || agent.context?.id;
+              const childId = agentSessionId(agent);
               const expanded = expandedAgentId === id;
-              return h('article', { key: id, style: { padding: `${theme.space ?? 12}px 0`, borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.1))' } },
+              return h('article', { key: id, style: { padding: `${theme.space ?? 12}px 0`, borderBottom: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, CanvasText 18%, transparent))' } },
                 h('div', { style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
                   h('strong', null, `${ROLES[agent.role]?.name ?? agent.role ?? '代理'} · ${agentStateLabel(agent.state)}`),
-                  childId ? h('button', { type: 'button', style: S.btn(false), onClick: () => openAgentSession(ctx, sessionKey, agent).then(opened => setNavigationError(opened ? '' : '未能打开子代理聊天，请确认 DSH 会话仍可用。')) }, '进入子代理聊天') : h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, '未记录可导航的聊天标识'),
+                  childId ? h('button', { type: 'button', style: S.btn(false), onClick: () => openAgentSession(ctx, sessionKey, agent).then(opened => setNavigationError(opened ? '' : '未能打开子代理聊天，请确认 DSH 会话仍可用。')) }, '进入子代理聊天') : h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, '未记录可导航的聊天标识'),
                 ),
                 h('p', { style: { margin: '4px 0', fontSize: 12 } }, agent.summary ?? agent.observation?.summary ?? '暂无摘要'),
-                h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, tokenUsageLabel(agent.usage)),
+                h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, tokenUsageLabel(agent.usage)),
                 h('button', { type: 'button', style: { ...S.btn(false), display: 'block', marginTop: 6 }, onClick: () => setExpandedAgentId(expanded ? null : id) }, expanded ? '收起观察详情' : '查看观察详情'),
                 expanded ? h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 180, overflow: 'auto', margin: '6px 0', fontSize: 11 } }, typeof agent.note === 'string' ? agent.note : agent.note ? JSON.stringify(agent.note, null, 2) : agent.observation ? JSON.stringify(agent.observation, null, 2) : '观察数据不可获取。') : null,
               );
-            }) : h('p', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, selectedNode.kind === 'stage' ? '此阶段尚无派发记录。' : '此节点暂无代理调用。'),
+            }) : h('p', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, selectedNode.kind === 'stage' ? '此阶段尚无派发记录。' : '此节点暂无代理调用。'),
           ) : null,
           h('details', { className: 'workflow-all-agents', style: { ...S.dashCard, padding: theme.space ?? 12 } },
             h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, `全部代理调用 (${agents.length})`),
             agents.map((agent, index) => {
               const id = agent.native_id || agent.id || `agent-${index}`;
-              const childId = agent.native_id || agent.session_id || agent.context?.id;
-              return h('article', { key: id, style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(255,255,255,0.1))' } },
+              const childId = agentSessionId(agent);
+              return h('article', { key: id, style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, CanvasText 18%, transparent))' } },
                 h('span', { style: { fontSize: 12 } }, `${ROLES[agent.role]?.name ?? agent.role ?? '代理'} · ${agent.task ?? '运行级'} · ${agentStateLabel(agent.state)} · ${agent.summary ?? '暂无摘要'}`),
-                h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, #94a3b8)' } }, tokenUsageLabel(agent.usage)),
+                h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, tokenUsageLabel(agent.usage)),
                 childId ? h('button', { type: 'button', style: S.btn(false), onClick: () => openAgentSession(ctx, sessionKey, agent).then(opened => setNavigationError(opened ? '' : '未能打开子代理聊天，请确认 DSH 会话仍可用。')) }, '进入聊天') : null,
               );
             }),
@@ -1186,7 +1208,7 @@ window.__ModuleLoader__.load({
     const state = React.useSyncExternalStore(controller.store.subscribe, controller.store.getSnapshot, controller.store.getSnapshot);
     const saved = controller.savedSnapshot?.() ?? state;
     const [page, setPage] = React.useState('settings');
-    return h('section', { style: { fontSize: theme.font, minWidth: 0, height: '100%', overflowY: 'auto', overflowX: 'auto', padding: theme.space } },
+    return h('section', { style: { fontSize: theme.font, minWidth: 0, height: '100%', overflowY: 'auto', overflowX: 'auto', padding: theme.space, color: 'var(--dsw-alias-text-primary, CanvasText)', background: 'var(--dsw-alias-bg-canvas, Canvas)' } },
       h('h2', { style: S.title }, 'AI Loop 工作流'),
       h('label', { style: S.label }, '工作区选择', h('select', { value: path, disabled: state.saving || !ready, style: S.input, onChange: event => changePath(event.target.value) },
         h('option', { value: '' }, '全局默认 · 请选择工作区'),
@@ -1235,8 +1257,8 @@ window.__ModuleLoader__.load({
     return h('div', { style: S.roleCard },
       h('div', { style: S.roleHeader },
         h('div', null,
-          h('div', { style: { fontWeight: 600, fontSize: 13, color: 'var(--dsw-alias-label-primary, inherit)' } }, meta.name),
-          meta.desc ? h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary, #888)' } }, meta.desc) : null,
+          h('div', { style: { fontWeight: 600, fontSize: 13, color: 'var(--dsw-alias-text-primary, CanvasText)' } }, meta.name),
+          meta.desc ? h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, meta.desc) : null,
         ),
         h('button', {
           type: 'button',
@@ -1400,7 +1422,7 @@ window.__ModuleLoader__.load({
           workspaceOptions.map(opt => h('option', { key: opt.path, value: opt.path }, opt.label))),
         ),
       ) : null,
-      path ? h('div', { style: { ...S.row, justifyContent: 'space-between', alignItems: 'center', background: 'var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.2))', padding: '10px 14px', borderRadius: 8, marginTop: 8 } },
+      path ? h('div', { style: { ...S.row, justifyContent: 'space-between', alignItems: 'center', background: 'var(--dsw-alias-bg-layer-2, Canvas)', padding: '10px 14px', borderRadius: 8, marginTop: 8 } },
         h('label', { style: { display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500 } },
           h('input', {
             type: 'checkbox',
@@ -1566,7 +1588,7 @@ window.__ModuleLoader__.load({
     }
 
   }
-  return { inject: ['slots', 'configForms', 'remote', 'remote.session', 'workspaces', 'sessions'], apply, Controller, samePath, rolesValid, projectsValid, requestStatus, tokenUsageLabel, statusMessage, createStatusPollStore, RunDashboard, SidebarDashboard, SidebarTitle, activeActivityCount, useCatalog, RoleCard, Card, ConversationDashboard, sessionCwdOf };
+  return { inject: ['slots', 'configForms', 'remote', 'remote.session', 'workspaces', 'sessions'], apply, Controller, samePath, rolesValid, projectsValid, requestStatus, tokenUsageLabel, statusMessage, createStatusPollStore, openAgentSession, agentSessionId, RunDashboard, SidebarDashboard, SidebarTitle, activeActivityCount, useCatalog, RoleCard, Card, ConversationDashboard, sessionCwdOf };
 })(require, {"accent":"#3b82f6","success":"#22c55e","danger":"#ef4444","warning":"#eab308","radius":10,"space":12,"font":13,"indent":14,"graphNodeWidth":220,"graphNodeHeight":104,"graphGapX":32,"graphGapY":36,"graphRoles":{"planner":"#818cf8","dev":"#34d399","tester":"#fbbf24","reviewer":"#c084fc","scribe":"#60a5fa"}}, function createWorkflowGraph(data, { collapsedTasks = [] } = {}) {
   const run = data?.run ?? {}, tasks = Array.isArray(run.tasks) ? run.tasks : [];
   const agents = Array.isArray(data?.activity?.agents) ? data.activity.agents : [];
