@@ -44,7 +44,7 @@ const toolList = [
   { name: 'ai_loop.settings.apply', title: '应用设置', description: '统一保存工作区开关、已开启角色模型和并发设置；失败时回滚工作区开关。', inputSchema: actionSchema },
   { name: 'ai_loop.settings.discard', title: '放弃未应用草稿', description: '放弃当前范围草稿，重新打开页面后读取最新配置。', inputSchema: actionSchema },
   { name: 'ai_loop.settings.reset_project', title: '恢复项目默认', description: '移除本工具登记的项目模型覆盖并继承全局配置。', inputSchema: actionSchema },
-  { name: DASHBOARD_TOOL, title: 'AI Loop 工作流', description: '打开工作流配置与纵向子代理看板。提供真实 session 可定位聊天所属工作区；不要猜测聊天 ID。打开页面只读，统一保存才写入。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' } }, additionalProperties: false }, outputSchema: { type: 'object', properties: { workspaces: { type: 'array' }, note: { type: 'string' } }, required: ['workspaces', 'note'] }, annotations: { readOnlyHint: true }, _meta: { ui: { resourceUri: DASHBOARD_URI }, 'openai/ui': { entrypoints: [{ type: 'thread' }, { type: 'global' }] } } },
+  { name: DASHBOARD_TOOL, title: 'AI Loop 工作流', description: '打开工作流配置与纵向子代理看板。提供真实 session 可定位聊天所属工作区；不要猜测聊天 ID。打开页面只读，统一保存才写入。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' }, binding: { type: 'string', description: '面板消息给出的定位请求标识，原样回传；同时提供当前聊天的真实 root/session，禁止猜测或复用其他聊天。' } }, additionalProperties: false }, outputSchema: { type: 'object', properties: { workspaces: { type: 'array' }, note: { type: 'string' } }, required: ['workspaces', 'note'] }, annotations: { readOnlyHint: true }, _meta: { ui: { resourceUri: DASHBOARD_URI }, 'openai/ui': { entrypoints: [{ type: 'thread' }, { type: 'global' }] } } },
   { name: 'ai_loop.panel.read', title: '读取工作流面板', description: '按面板实例读取配置和草稿。', inputSchema: { type: 'object', properties: { panel_id: { type: 'string' } }, required: ['panel_id'], additionalProperties: false }, annotations: { readOnlyHint: true } },
   { name: 'ai_loop.panel.update', title: '更新面板草稿', description: '只暂存当前面板的工作区配置。', inputSchema: { type: 'object', properties: { panel_id: { type: 'string' }, set: { type: 'object' } }, required: ['panel_id', 'set'], additionalProperties: false } },
   { name: 'ai_loop.panel.action', title: '保存或放弃面板草稿', description: '明确保存、放弃草稿或恢复继承。', inputSchema: { type: 'object', properties: { panel_id: { type: 'string' }, action: { type: 'string', enum: ['apply', 'discard', 'reset_project'] } }, required: ['panel_id', 'action'], additionalProperties: false } },
@@ -77,6 +77,7 @@ function initializeResult() {
 export function createSettingsProtocol(manager = createSettingsManager(), options = {}) {
   const home = () => options.home || userHome();
   const panels = new Map();
+  const bindings = new Map();
   const panelFor = (id, create) => {
     if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{8,100}$/.test(id)) throw new Error('面板实例标识无效');
     if (!panels.has(id)) {
@@ -160,16 +161,51 @@ export function createSettingsProtocol(manager = createSettingsManager(), option
           return { jsonrpc: '2.0', id, result: toolResult(result) };
         }
         if (name === DASHBOARD_TOOL) {
-          if (Object.keys(args).some(key => !['root', 'session'].includes(key))) throw new Error('看板仅接受 root/session');
+          if (Object.keys(args).some(key => !['root', 'session', 'binding'].includes(key))) throw new Error('看板仅接受 root/session/binding');
+          const binding = args.binding;
+          let bindingEntry;
+          if (binding !== undefined) {
+            if (typeof binding !== 'string' || !/^[A-Za-z0-9_-]{16,160}$/.test(binding)) throw new Error('定位请求标识无效');
+            for (const [key, value] of bindings) if (Date.now() - value.created > 10 * 60 * 1000) bindings.delete(key);
+            if (!bindings.has(binding)) {
+              if (args.root || args.session) throw new Error('定位请求已失效，请重新打开面板');
+              if (bindings.size >= 128) throw new Error('定位请求过多，请稍后重试');
+              bindings.set(binding, { created: Date.now(), context: null });
+            }
+            bindingEntry = bindings.get(binding);
+            bindingEntry.created = Date.now();
+            const stored = bindingEntry.context;
+            if (stored && !args.root && !args.session) Object.assign(args, { root: stored.root, ...(stored.session ? { session: stored.session } : {}) });
+          }
           if (args.session !== undefined && (typeof args.session !== 'string' || !args.session.trim() || args.session.length > 1000)) throw new Error('聊天定位需要真实 session');
           const discovery = readCodexWorkspaces(home());
           const workspaces = discovery.workspaces;
-          const mapped = args.session ? resolveChatWorkspace(home(), args.session) : null;
+          const previous = bindingEntry?.context;
+          const boundWorkspace = previous ? workspaces.find(item => item.id === previous.workspace_id) : null;
+          if (previous && discovery.error && !workspaces.length) throw new Error(discovery.error);
+          if (previous) {
+            const assigned = previous.session ? resolveChatWorkspace(home(), previous.session) : null;
+            if (!boundWorkspace || !(boundWorkspace.roots || [boundWorkspace.root]).includes(previous.root)
+              || assigned && assigned.id !== previous.workspace_id || previous.session_mapped && assigned?.id !== previous.workspace_id) bindingEntry.invalid = true;
+          }
+          if (bindingEntry?.invalid) {
+            const result = { workspaces, context: { root: null, workspace_id: null, session_id: null, binding, binding_state: 'invalid', source: 'unavailable' }, discovery_error: discovery.error, note: '原工作区已删除或归属发生变化，定位已失效，请重新定位或手动选择工作区。' };
+            return { jsonrpc: '2.0', id, result: { ...toolResult(result), _meta: { ui: { resourceUri: DASHBOARD_URI } } } };
+          }
+          const sessionWorkspace = args.session ? resolveChatWorkspace(home(), args.session) : null;
+          const mapped = sessionWorkspace || boundWorkspace;
           const explicitRoot = args.root ? discoveredRoot(args.root) : null;
           if (mapped && explicitRoot && !mapped.roots.includes(explicitRoot)) throw new Error('聊天归属与所选工作区不一致');
-          const workspace = mapped || (explicitRoot ? workspaces.find(item => (item.roots || [item.root]).includes(explicitRoot)) : null);
-          const root = mapped?.root || explicitRoot || null;
-          const result = { workspaces, context: { root, workspace_id: workspace?.id || null, session_id: args.session || null, source: mapped ? 'thread-project-assignment' : explicitRoot ? 'explicit' : 'unavailable' }, discovery_error: discovery.error, note: '选择工作区不会启用工作流；红绿状态以保存结果为准。没有可靠聊天上下文时请手选工作区。代理状态为最后观察。' };
+          const rootMatches = explicitRoot ? workspaces.filter(item => (item.roots || [item.root]).includes(explicitRoot)) : [];
+          if (!mapped && rootMatches.length > 1) throw new Error('根目录属于多个工作区，无法唯一定位；请提供真实聊天 session 或手动选择工作区');
+          const workspace = mapped || rootMatches[0] || null;
+          const root = previous?.root || mapped?.root || explicitRoot || null;
+          if (binding && (args.root || args.session)) {
+            if (!workspace) throw new Error('自动定位需要当前聊天的真实工作区');
+            if (previous && ((previous.session || null) !== (args.session || null) || previous.root !== root || previous.workspace_id !== workspace.id)) throw new Error('定位请求已绑定其他聊天');
+            bindingEntry.context = { root, workspace_id: workspace.id, session_mapped: Boolean(sessionWorkspace) || previous?.session_mapped === true, ...(args.session ? { session: args.session } : {}) };
+          }
+          const result = { workspaces, context: { root, workspace_id: workspace?.id || null, session_id: args.session || null, ...(binding ? { binding } : {}), source: sessionWorkspace ? 'thread-project-assignment' : boundWorkspace ? 'panel-binding' : explicitRoot ? 'explicit' : 'unavailable' }, discovery_error: discovery.error, note: '选择工作区不会启用工作流；红绿状态以保存结果为准。没有可靠聊天上下文时请手选工作区。代理状态为最后观察。' };
           return { jsonrpc: '2.0', id, result: { ...toolResult(result), _meta: { ui: { resourceUri: DASHBOARD_URI } } } };
         }
         if (['ai_loop.dashboard.runs', 'ai_loop.dashboard.history'].includes(name) && args.workspace_id !== undefined) {

@@ -585,3 +585,186 @@ test('旧保存成功或失败结束时，新定位失败的面板都能恢复�
     assert.equal(f.element('workspace').disabled, false, outcome + '：必须能手选恢复');
   }
 });
+
+
+test('侧栏定位请求按实例回传真实工作区，拒绝未知请求、串聊及过期归属', async t => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-binding-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const home = path.join(base, 'home'), a = path.join(base, 'a'), b = path.join(base, 'b');
+  for (const root of [home, a, b]) fs.mkdirSync(root);
+  const file = path.join(home, '.codex-global-state.json');
+  const host = { 'local-projects': { a: { rootPaths: [a] }, b: { rootPaths: [b] } }, 'thread-project-assignments': { chat: { projectKind: 'local', projectId: 'a' } } };
+  fs.writeFileSync(file, JSON.stringify(host));
+  const protocol = createSettingsProtocol({}, { home });
+  const call = async args => (await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: DASHBOARD_TOOL, arguments: args } })).result;
+  const one = 'panel-one-request-0001', two = 'panel-two-request-0002';
+  assert.equal((await call({ binding: one, root: a })).isError, true);
+  assert.equal((await call({ binding: one })).structuredContent.context.root, null);
+  await call({ binding: two });
+  assert.equal((await call({ binding: one, session: 'chat', root: b })).isError, true);
+  const bound = await call({ binding: one, session: 'chat', root: a });
+  assert.equal(bound.structuredContent.context.binding, one);
+  assert.equal((await call({ binding: one })).structuredContent.context.workspace_id, 'a');
+  assert.equal((await call({ binding: two })).structuredContent.context.workspace_id, null);
+  assert.equal((await call({ binding: one, root: b })).isError, true);
+  assert.equal((await call({ binding: two, root: b })).structuredContent.context.session_id, null);
+  assert.equal((await call({ binding: two })).structuredContent.context.root, b);
+  host['local-projects'] = {}; fs.writeFileSync(file, JSON.stringify(host));
+  assert.equal((await call({ binding: one })).structuredContent.context.binding_state, 'invalid');
+});
+
+test('空入口通过当前聊天消息请求定位，轮询回传同时定位配置和看板', async () => {
+  const f = graphHarness({ run: { run_id: 'binding', tasks: [] } });
+  const rows = [{ id: 'a', root: '/a', roots: ['/a'], enabled: true }];
+  const requests = [], messages = [];
+  let binding, bound = false;
+  f.context.invoke = async (name, args) => {
+    requests.push({ name, args: JSON.parse(JSON.stringify(args)) });
+    if (name === DASHBOARD_TOOL) { binding = args.binding; return { workspaces: rows, context: { binding, root: bound ? '/a' : null, workspace_id: bound ? 'a' : null, session_id: bound ? 'chat-a' : null } }; }
+    if (name.startsWith('ai_loop.panel.')) return { values: {}, schema: { properties: {} } };
+    return { runs: [], rounds: [] };
+  };
+  f.context.send = async (method, args) => messages.push({ method, args: JSON.parse(JSON.stringify(args)) });
+  vm.runInContext('call=invoke;request=send;bridgeConnected=true;', f.context);
+  await vm.runInContext('locateChat()', f.context);
+  assert.equal(messages.length, 1); assert.equal(messages[0].method, 'ui/message');
+  assert.ok(messages[0].args.content[0].text.includes(binding));
+  await vm.runInContext('locateChat()', f.context); assert.equal(messages.length, 1, '不重复发送');
+  bound = true; await vm.runInContext('discover()', f.context);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.element('workspace').value, 'a'); assert.equal(vm.runInContext('chat.id', f.context), 'chat-a');
+  assert.ok(requests.some(row => row.name === 'ai_loop.panel.update' && row.args.set.workspace_id === 'a'));
+  assert.ok(requests.some(row => row.name === 'ai_loop.dashboard.history' && row.args.session === 'chat-a'));
+});
+
+test('手选工作区取消在途定位，迟到的绑定通知不能覆盖手选', async () => {
+  const f = graphHarness({ run: { run_id: 'manual', tasks: [] } });
+  const rows = [{ id: 'a', root: '/a', roots: ['/a'] }, { id: 'b', root: '/b', roots: ['/b'] }];
+  f.context.invoke = async (name, args) => name === DASHBOARD_TOOL ? { workspaces: rows, context: { binding: args.binding } } : { values: {}, schema: { properties: {} }, runs: [] };
+  f.context.send = async () => ({});
+  vm.runInContext('call=invoke;request=send;bridgeConnected=true;', f.context);
+  await vm.runInContext('locateChat()', f.context);
+  const binding = vm.runInContext('entryInput.binding', f.context);
+  f.element('workspace').value = 'b'; await f.element('workspace').listeners.change();
+  f.context.oldResult = { workspaces: rows, context: { binding, root: '/a', workspace_id: 'a', session_id: 'chat-a' } };
+  vm.runInContext('acceptInitial(oldResult,true)', f.context);
+  f.context.oldInput = { binding, root: '/a', session: 'chat-a' };
+  await vm.runInContext('acceptToolInput(oldInput)', f.context);
+  f.context.oldResult = { workspaces: rows, context: { binding } };
+  vm.runInContext('acceptInitial(oldResult,true)', f.context);
+  await vm.runInContext('discover()', f.context);
+  assert.equal(f.element('workspace').value, 'b'); assert.equal(vm.runInContext('chat', f.context), null);
+});
+
+
+test('定位消息被拒绝和等待超时均提示手选，拒收迟到绑定', async () => {
+  for (const mode of ['rejected', 'timeout']) {
+    const f = graphHarness({ run: { run_id: 'failure', tasks: [] } });
+    f.context.invoke = async (name, args) => name === DASHBOARD_TOOL ? { workspaces: [], context: { binding: args.binding } } : { values: {}, schema: { properties: {} } };
+    f.context.send = async () => mode === 'rejected' ? { isError: true } : {};
+    vm.runInContext('call=invoke;request=send;bridgeConnected=true;', f.context);
+    await vm.runInContext('locateChat()', f.context);
+    if (mode === 'timeout') { vm.runInContext('locationStarted=Date.now()-120001', f.context); await vm.runInContext('discover()', f.context); }
+    assert.match(f.element('message').textContent, /手动选择工作区/);
+    assert.equal(f.element('workspace').disabled, false);
+    assert.equal(vm.runInContext('locating', f.context), false);
+  }
+});
+
+
+test('共享根目录按真实工作区ID定位，缺少ID时不猜测', async () => {
+  const f = graphHarness({ run: { run_id: 'shared-root', tasks: [] } });
+  f.context.invoke = async () => ({ values: {}, schema: { properties: {} }, runs: [] });
+  vm.runInContext('call=invoke;', f.context);
+  const rows = [{ id: 'a', root: '/shared', roots: ['/shared'], enabled: true }, { id: 'b', root: '/shared', roots: ['/shared'], enabled: false }];
+  f.context.initial = { workspaces: rows, context: { root: '/shared', workspace_id: 'b', session_id: 'chat-b' } };
+  vm.runInContext('acceptInitial(initial,true)', f.context);
+  assert.equal(f.element('workspace').value, 'b');
+  f.context.initial.context = { root: '/shared', workspace_id: null, session_id: null };
+  vm.runInContext('acceptInitial(initial,true)', f.context);
+  assert.equal(f.element('workspace').value, '');
+});
+
+test('服务端对共享根目录拒绝自动猜测，有真实聊天归属才定位', async t => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-shared-bind-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const home = path.join(base, 'home'), root = path.join(base, 'shared'); fs.mkdirSync(home); fs.mkdirSync(root);
+  fs.writeFileSync(path.join(home, '.codex-global-state.json'), JSON.stringify({ 'local-projects': { a: { rootPaths: [root] }, b: { rootPaths: [root] } }, 'thread-project-assignments': { chat: { projectKind: 'local', projectId: 'b' } } }));
+  const protocol = createSettingsProtocol({}, { home });
+  const call = async args => (await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: DASHBOARD_TOOL, arguments: args } })).result;
+  const binding = 'shared-binding-0001'; await call({ binding });
+  const failed = await call({ binding, root }); assert.equal(failed.isError, true); assert.match(failed.content[0].text, /多个工作区/);
+  assert.equal((await call({ binding })).structuredContent.context.workspace_id, null);
+  assert.equal((await call({ binding, session: 'chat', root })).structuredContent.context.workspace_id, 'b');
+});
+
+test('绑定成功后刷新继续携带请求标识并同步启用状态和工作区删除', async () => {
+  const f = graphHarness({ run: { run_id: 'bound-refresh', tasks: [] } });
+  let enabled = true, deleted = false; const seen = [];
+  f.context.invoke = async (name, args) => {
+    if (name === DASHBOARD_TOOL) {
+      seen.push(JSON.parse(JSON.stringify(args)));
+      return { workspaces: deleted ? [] : [{ id: 'a', root: '/a', roots: ['/a'], enabled }], context: { binding: args.binding, root: deleted ? null : '/a', workspace_id: deleted ? null : 'a', session_id: deleted ? null : 'chat-a' } };
+    }
+    return { values: {}, schema: { properties: {} }, runs: [], rounds: [] };
+  };
+  f.context.send = async () => ({});
+  vm.runInContext('call=invoke;request=send;bridgeConnected=true;', f.context);
+  await vm.runInContext('locateChat()', f.context);
+  const binding = seen[0].binding;
+  enabled = false; await vm.runInContext('discover()', f.context);
+  assert.equal(seen.at(-1).binding, binding);
+  assert.equal(vm.runInContext('workspaceRows[0].enabled', f.context), false);
+  deleted = true; await vm.runInContext('discover()', f.context);
+  assert.equal(f.element('workspace').value, ''); assert.equal(vm.runInContext('chat', f.context), null);
+});
+
+
+test('真实协议与面板联合处理删除、同路径替换和根成员变化，旧定位不得复活', async t => {
+  for (const mode of ['deleted', 'replaced', 'members', 'assignment']) {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-bound-identity-'));
+    t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+    const home = path.join(base, 'home'), a = path.join(base, 'a'), b = path.join(base, 'b');
+    for (const root of [home, a, b]) fs.mkdirSync(root);
+    const file = path.join(home, '.codex-global-state.json');
+    const state = { 'local-projects': { a: { rootPaths: [a] }, b: { rootPaths: [b] } }, 'thread-project-assignments': { chat: { projectKind: 'local', projectId: 'a' } } };
+    fs.writeFileSync(file, JSON.stringify(state));
+    const protocol = createSettingsProtocol({}, { home });
+    const f = graphHarness({ run: { run_id: mode, tasks: [] } });
+    let binding;
+    const rawCall = async args => (await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: DASHBOARD_TOOL, arguments: args } })).result;
+    f.context.invoke = async (name, args) => {
+      if (name === DASHBOARD_TOOL) {
+        binding = args.binding || binding;
+        const result = await rawCall(args);
+        if (result.isError) throw Error(result.content[0].text);
+        return result.structuredContent;
+      }
+      return { values: {}, schema: { properties: {} }, runs: [], rounds: [] };
+    };
+    f.context.send = async () => ({});
+    vm.runInContext('call=invoke;request=send;bridgeConnected=true;', f.context);
+    await vm.runInContext('locateChat()', f.context);
+    await rawCall({ binding, root: a, ...(mode === 'assignment' ? { session: 'chat' } : {}) });
+    await vm.runInContext('discover()', f.context);
+    assert.equal(f.element('workspace').value, 'a');
+    if (mode === 'deleted') delete state['local-projects'].a;
+    if (mode === 'replaced') { delete state['local-projects'].a; state['local-projects'].replacement = { rootPaths: [a] }; }
+    if (mode === 'members') state['local-projects'].a.rootPaths = [b];
+    if (mode === 'assignment') state['thread-project-assignments'].chat.projectId = 'b';
+    fs.writeFileSync(file, JSON.stringify(state));
+    await vm.runInContext('discover()', f.context);
+    assert.equal(f.element('workspace').value, '', mode);
+    assert.equal(vm.runInContext('chat', f.context), null);
+    assert.equal(vm.runInContext('settingsData', f.context), null);
+    assert.equal(f.element('save').disabled, true);
+    assert.equal(f.element('workspace').disabled, false);
+    assert.match(f.element('message').textContent, /定位已失效/);
+    assert.equal(vm.runInContext('workspaceRows.some(row=>row.id==="replacement")', f.context), mode === 'replaced');
+    state['local-projects'].a = { rootPaths: [a] }; fs.writeFileSync(file, JSON.stringify(state));
+    assert.equal((await rawCall({ binding, root: a })).structuredContent.context.binding_state, 'invalid', '失效请求不能恢复或转绑');
+    f.element('workspace').value = 'b'; await f.element('workspace').listeners.change();
+    await vm.runInContext('discover()', f.context);
+    assert.equal(f.element('workspace').value, 'b', '失效后可手选且后台刷新保留选择');
+  }
+});

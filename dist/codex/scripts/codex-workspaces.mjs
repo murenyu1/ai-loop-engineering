@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { listWorkspaces, workspaceHash } from './workspaces.mjs';
+import { sortWorkspaces } from './workspace-recency.mjs';
 
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const identity = root => process.platform === 'win32' ? root.toLowerCase() : root;
@@ -78,7 +79,7 @@ export function readCodexWorkspaces(home) {
       const memberships = new Map();
       for (const workspace of workspaces) for (const root of workspace.roots) memberships.set(identity(root), [...(memberships.get(identity(root)) || []), workspace.id]);
       for (const workspace of workspaces) workspace.shared_roots = workspace.roots.filter(root => (memberships.get(identity(root)) || []).length > 1);
-      return { workspaces, error: settings.conflicts.length ? `${error}${error ? ' ' : ''}部分旧工作区启用状态冲突，保存新工作区选择后可解决。` : error, mode: 'workspace-id' };
+      return { workspaces: sortWorkspaces(home, state, workspaces), error: settings.conflicts.length ? `${error}${error ? ' ' : ''}部分旧工作区启用状态冲突，保存新工作区选择后可解决。` : error, mode: 'workspace-id' };
     } catch (cause) {
       error = `无法读取 Codex 工作区列表：${cause.message}。`;
       return { workspaces: [], error, mode: 'workspace-id' };
@@ -97,7 +98,7 @@ export function readCodexWorkspaces(home) {
       mode = 'legacy-root';
     } catch (cause) { error = `无法读取 Codex 工作区列表：${cause.message}。`; }
   }
-  return { workspaces, error, mode };
+  return { workspaces: sortWorkspaces(home, state || {}, workspaces), error, mode };
 }
 
 function workspaceRecord(home, id) {

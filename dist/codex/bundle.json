@@ -75,7 +75,7 @@
     },
     {
       "path": "scripts/codex-workspaces.mjs",
-      "hash": "294d55ef3440a5f66a2899f72c83bc6bc658efff1c8e73679feeca80ab3bd3c2"
+      "hash": "1363b2beee67c3f56ec7050f90377b8d754c21a1ace7eafc4e7a31b57d3a7dc7"
     },
     {
       "path": "scripts/dashboard.mjs",
@@ -159,11 +159,11 @@
     },
     {
       "path": "scripts/settings-server.mjs",
-      "hash": "3929a0659f60df0e14fd300beaf11fe08be6507e3c80f771cc835a76a820e0e1"
+      "hash": "c384f8b92368bf79c9011f39356852f79b634dcd1bba6f0512660e067e60a5a3"
     },
     {
       "path": "scripts/source.mjs",
-      "hash": "24a298438e311973a5264f3d19fc2244d293546e06bc2cb86e734c046e3f8846"
+      "hash": "df951fa42ca50332474f275fc791db307d8607dbc1482c7546d9358e5156439d"
     },
     {
       "path": "scripts/toml.mjs",
@@ -180,6 +180,10 @@
     {
       "path": "scripts/workflow-graph.mjs",
       "hash": "39817f8ee72806f84abddd7dd46e0c6b317174864f7f5fe12cc03d57d2ecdee9"
+    },
+    {
+      "path": "scripts/workspace-recency.mjs",
+      "hash": "9a38f5bde6135175acb6d04e03873ed9d89a1f79be2e4778b77fc0d3cb9faf3d"
     },
     {
       "path": "scripts/workspaces.mjs",
@@ -207,7 +211,7 @@
     },
     {
       "path": "ui/agent-dashboard.html",
-      "hash": "f98369f25ecf96f007e141c4a684bc19702badc57b8253ddaac7756cf050a19e"
+      "hash": "853195dde440a3a4159ab29e8ce97562b6e596d04a97a1e953b29d8446c837e9"
     },
     {
       "path": "WORKFLOW.md",

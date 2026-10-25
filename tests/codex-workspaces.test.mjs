@@ -9,6 +9,41 @@ import { createSettingsManager } from '../codex/scripts/native-settings.mjs';
 import { startupContext } from '../codex/scripts/session-start.mjs';
 import { resolveWorkspaceProfile, configureWorkspaceProfile, configureProfile, resetWorkspaceProfile, resolveProfile } from '../codex/scripts/profiles.mjs';
 import { balanced, disabledProfile, routeHash } from '../scripts/routing.mjs';
+import { createRequire } from 'node:module';
+
+test('启用优先，各组按真实聊天最近活动排序且读取不写宿主状态', t => {
+  let DatabaseSync;
+  try { ({ DatabaseSync } = createRequire(import.meta.url)('node:sqlite')); }
+  catch { t.skip('当前Node没有内置只读SQLite支持'); return; }
+  const f = fixture(t);
+  const c = path.join(f.parent, 'c'), d = path.join(f.parent, 'd');
+  fs.mkdirSync(c); fs.mkdirSync(d);
+  f.save({ 'project-order': ['b', 'a', 'd', 'c'], 'local-projects': {
+    a: { rootPaths: [f.a], updatedAt: 999999 }, b: { rootPaths: [f.b] }, c: { rootPaths: [c] }, d: { rootPaths: [d] },
+  }, 'thread-project-assignments': { moved: { projectKind: 'local', projectId: 'b' }, remote: { projectKind: 'remote', projectId: 'a' } } });
+  registerWorkspace(f.home, f.a); registerWorkspace(f.home, f.b);
+  const db = new DatabaseSync(path.join(f.home, 'state_5.sqlite'));
+  db.exec('CREATE TABLE threads (id TEXT, cwd TEXT, updated_at INTEGER, recency_at_ms INTEGER, archived INTEGER, has_user_event INTEGER)');
+  const insert = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?)');
+  insert.run('a', f.a, 10, null, 0, 1); insert.run('b', f.b, 20, null, 0, 1);
+  insert.run('c', c, 40, null, 0, 1); insert.run('d', d, 30, null, 0, 1);
+  insert.run('archived', f.a, 9999, null, 1, 1); insert.run('agent', f.a, 8888, null, 0, 0);
+  insert.run('remote', f.a, 7777, null, 0, 1);
+  insert.run('moved', f.a, 50, 60000, 0, 1); db.close();
+  const before = fs.readFileSync(f.stateFile);
+  assert.deepEqual(readCodexWorkspaces(f.home).workspaces.map(row => [row.id, row.last_used_at]), [['b', 60000], ['a', 10000], ['c', 40000], ['d', 30000]]);
+  assert.deepEqual(fs.readFileSync(f.stateFile), before);
+});
+
+test('无最近使用数据或数据库损坏时仍启用优先，组内保持宿主稳定顺序', t => {
+  const f = fixture(t);
+  f.save({ 'project-order': ['b', 'a'], 'local-projects': { a: { rootPaths: [f.a], updatedAt: 99999 }, b: { rootPaths: [f.b] } } });
+  registerWorkspace(f.home, f.a);
+  for (const broken of [false, true]) {
+    if (broken) fs.writeFileSync(path.join(f.home, 'state_5.sqlite'), 'broken');
+    assert.deepEqual(readCodexWorkspaces(f.home).workspaces.map(row => [row.id, row.last_used_at]), [['a', null], ['b', null]]);
+  }
+});
 
 function fixture(t) {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-picker-'));
