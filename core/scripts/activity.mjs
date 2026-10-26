@@ -3,23 +3,26 @@ import { status } from './loop.mjs';
 import { executionEvidence } from './execution.mjs';
 import { ROLE_NAMES, roleEnabled, rolesStatus } from './roles.mjs';
 import { assert, rootPath, safePath, validId, jsonFile, writeJson, locked, args, allowArgs, mainModule, printResult } from './lib.mjs';
+import { resolveRunBase, runPaths } from './storage.mjs';
 
 const terminal = new Set(['completed', 'failed', 'stopped']);
 const states = ['requested', 'running', 'waiting', 'stop_requested', 'unknown', ...terminal];
 const text = value => typeof value === 'string' && value.trim() && value.length <= 1000;
 const validDirection = value => value === undefined || value === null || typeof value === 'string' && value.length <= 64 && !/[\u0000-\u001f\u007f]/.test(value);
-export function dispatchCheck(project, run, taskId, role, attempt) {
-  const root = rootPath(project), current = status(root, validId(run));
+export function dispatchCheck(project, run, taskId, role, attempt, options = {}) {
+  const root = rootPath(project), current = status(root, validId(run), options);
   assert(current.status === 'active', '运行已关闭或停止，不能派发');
   assert(ROLE_NAMES.includes(role), '未知子代理角色');
-  if (taskId === 'run' && !current.tasks.some(item => item.id === taskId)) assert(['planner', 'scribe'].includes(role), '运行级只允许 planner 或 scribe');
+  const hasFormalRunTask = current.tasks.some(item => item.id === 'run');
+  if (taskId === 'run' && !hasFormalRunTask) assert(['planner', 'scribe'].includes(role), '运行级只允许 planner 或 scribe');
+  else if (taskId !== 'run') assert(!['planner', 'scribe'].includes(role), `${role} 只能使用 run 级共享身份，不能挂到正式任务`);
   assert(typeof taskId === 'string' && !taskId.includes('#'), '任务必须使用正式 task id；方向标签不能替代或拆分任务');
   const formalTask = current.tasks.find(item => item.id === taskId);
   const task = formalTask ?? (taskId === 'run' && ['planner', 'scribe'].includes(role) ? { id: 'run', phase: 'developing', managed_execution: false }
     : taskId === 'final' && ['tester', 'reviewer'].includes(role) && current.tasks.every(item => item.phase === 'done') ? { id: 'final', phase: role === 'reviewer' ? 'reviewing' : 'verifying', managed_execution: true, attempts: { tester: current.event_seq, reviewer: current.event_seq } }
       : null);
   assert(task, '任务不属于当前运行');
-  const spec = jsonFile(safePath(root, `.ai-loop/runs/${run}/spec.json`));
+  const spec = jsonFile(runPaths(root, run, options.project_path).spec);
   if (spec.workflow) assert(spec.workflow.nodes.some(node => node.task === taskId && node.role === role), '任务图未声明此 task+role 派发节点');
   if (spec.role_policy) assert(roleEnabled(spec.role_policy[role]), `角色 ${role} 已关闭，禁止派发`);
   const savedPolicy = rolesStatus(root);
@@ -29,35 +32,36 @@ export function dispatchCheck(project, run, taskId, role, attempt) {
   if ((task.managed_execution || spec.execution_evidence) && ['tester', 'reviewer'].includes(role)) assert(Number.isInteger(attempt) && attempt === task.attempts?.[role], '派发 attempt 缺失或已过期');
   return { run_id: run, task_id: taskId, role, attempt: attempt ?? null, task, execution_evidence: current.execution_evidence };
 }
-function read(root, run) {
-  const file = safePath(root, `.ai-loop/runs/${validId(run)}/activity.json`);
+function read(root, run, projectPath) {
+  const file = safePath(runPaths(root, run, projectPath).directory, 'activity.json');
   const data = fs.existsSync(file) ? jsonFile(file) : { schema_version: 2, agents: [] };
   assert(data.schema_version === 2 && Array.isArray(data.agents), '代理观察格式无效');
   return { file, data };
 }
-function legacyAgents(root, run) {
-  const file = safePath(root, `.ai-loop/runs/${validId(run)}/agents.json`);
+function legacyAgents(root, run, projectPath) {
+  const file = safePath(runPaths(root, run, projectPath).directory, 'agents.json');
   const data = fs.existsSync(file) ? jsonFile(file) : { schema_version: 1, agents: [] };
   assert(data.schema_version === 1 && Array.isArray(data.agents), '旧代理台账格式无效');
   return data.agents;
 }
-export function recordActivity(project, run, input) {
+export function recordActivity(project, run, input, options = {}) {
   const root = rootPath(project);
   assert(input && Object.keys(input).every(key => ['id', 'task', 'direction', 'role', 'attempt', 'harness', 'native_id', 'session_id', 'state', 'requested', 'observed_model', 'observed_effort', 'usage', 'source', 'summary', 'context', 'revision', 'evidence'].includes(key)), '代理观察字段无效');
   assert(validDirection(input.direction), 'direction 只能是最多 64 字符的展示标签');
   validId(input.id);
   assert(states.includes(input.state) && text(input.summary), '代理状态或摘要无效');
-  return locked(root, `run-${validId(run)}`, () => {
-    const current = status(root, run);
-    const { file, data } = read(root, run);
+  const base = resolveRunBase(root, run, options.project_path);
+  return locked(base, `run-${validId(run)}`, () => {
+    const current = status(root, run, options);
+    const { file, data } = read(root, run, options.project_path);
     let item = data.agents.find(row => row.id === input.id);
     assert(current.status === 'active' || item && ['stop_requested', 'stopped', 'failed', 'completed'].includes(input.state), '已关闭运行只能确认已有执行者停止或终态');
     const at = new Date().toISOString();
     if (!item) {
       assert(input.state === 'requested', '首次观察须为 requested');
-      dispatchCheck(root, run, input.task, input.role, input.attempt);
+      dispatchCheck(root, run, input.task, input.role, input.attempt, options);
       assert(text(input.harness), '须提供宿主名称');
-      assert(![...data.agents, ...legacyAgents(root, run)].some(row => row.task === input.task && row.role === input.role && !terminal.has(row.state)), '同一正式任务同角色已有未确认停止的执行者');
+      assert(![...data.agents, ...legacyAgents(root, run, options.project_path)].some(row => row.task === input.task && row.role === input.role && !terminal.has(row.state)), '同一正式任务同角色已有未确认停止的执行者');
       item = { id: input.id, run_id: run, task: input.task, direction: input.direction ?? null, role: input.role, attempt: input.attempt ?? null, harness: input.harness, state: 'requested', native_id: null, requested: input.requested ?? null, started_at: at, history: [] };
       data.agents.push(item);
     } else {
@@ -96,24 +100,24 @@ export function recordActivity(project, run, input) {
     return { ...item, history: undefined, live: false, effective_model: item.observed_model ?? 'unverified' };
   });
 }
-export function activityStatus(project, run) {
+export function activityStatus(project, run, options = {}) {
   const root = rootPath(project);
-  status(root, run);
-  const { data } = read(root, run);
+  status(root, run, options);
+  const { data } = read(root, run, options.project_path);
   const known = new Set(data.agents.map(row => row.native_id).filter(Boolean));
-  const agents = [...data.agents, ...legacyAgents(root, run).filter(row => !row.native_id || !known.has(row.native_id))].map(({ history, observations, ...row }) => ({ ...row, observation: history?.at(-1) ?? observations?.at(-1) ?? null, live: false, stale: !terminal.has(row.state) && (!row.updated_at || Date.now() - Date.parse(row.updated_at) > 60000), usage: row.usage ?? null, effective_model: row.observed_model ?? 'unverified' }));
+  const agents = [...data.agents, ...legacyAgents(root, run, options.project_path).filter(row => !row.native_id || !known.has(row.native_id))].map(({ history, observations, ...row }) => ({ ...row, observation: history?.at(-1) ?? observations?.at(-1) ?? null, live: false, stale: !terminal.has(row.state) && (!row.updated_at || Date.now() - Date.parse(row.updated_at) > 60000), usage: row.usage ?? null, effective_model: row.observed_model ?? 'unverified' }));
   return { schema_version: 2, run_id: run, agents, note: '仅最后观察，不是实时运行保证。completed 不代表任务 PASS；usage 缺失表示不可获取。' };
 }
 export function cli(argv) {
   const options = args(argv);
-  allowArgs(options, ['project', 'run', 'task', 'role', 'attempt', 'input', 'help']);
+  allowArgs(options, ['project', 'run', 'project-path', 'task', 'role', 'attempt', 'input', 'help']);
   const [command] = options._;
   if (options.help || !command) return { usage: 'activity.mjs status|record|check --project ROOT --run ID [--input JSON | --task ID --role dev --attempt N]' };
   assert(options._.length === 1, '只能指定一个命令');
-  if (command === 'status') return activityStatus(options.project, options.run);
-  if (command === 'record') return recordActivity(options.project, options.run, jsonFile(safePath(rootPath(options.project), options.input)));
+  if (command === 'status') return activityStatus(options.project, options.run, { project_path: options['project-path'] });
+  if (command === 'record') return recordActivity(options.project, options.run, jsonFile(safePath(rootPath(options.project), options.input)), { project_path: options['project-path'] });
   assert(command === 'check', '未知观察命令');
   assert(roleEnabled(rolesStatus(options.project).roles[options.role]), '通用工作流角色默认关闭；请先显式启用');
-  return dispatchCheck(options.project, options.run, options.task, options.role, options.attempt === undefined ? undefined : Number(options.attempt));
+  return dispatchCheck(options.project, options.run, options.task, options.role, options.attempt === undefined ? undefined : Number(options.attempt), { project_path: options['project-path'] });
 }
 if (mainModule(import.meta.url)) printResult(() => cli(process.argv.slice(2)));

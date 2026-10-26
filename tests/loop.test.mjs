@@ -14,7 +14,8 @@ function fixture(t, overrides = {}) {
   if (overrides.project_path && overrides.project_path !== '.') fs.mkdirSync(path.join(root, overrides.project_path), { recursive: true });
   const spec = { goal: '完成行为', tasks: [{ id: 'task1', title: '实现', acceptance: ['行为成立'], review: 'self', checks: [{ id: 'test', command: '真实验证命令' }] }], ...overrides };
   const run = create(root, spec, 'run1').run_id;
-  fs.writeFileSync(path.join(root, `.ai-loop/runs/${run}/reports/test.log`), '实际工具输出');
+  const runDir = overrides.project_path && overrides.project_path !== '.' ? path.join(root, overrides.project_path, `.ai-loop/runs/${run}`) : path.join(root, `.ai-loop/runs/${run}`);
+  fs.writeFileSync(path.join(runDir, 'reports/test.log'), '实际工具输出');
   return { root, run, spec };
 }
 

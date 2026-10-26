@@ -1,24 +1,68 @@
 ---
 name: ai-loop
-description: 在已启用项目中使用 AI Loop 工作流开发、测试、独立评审、记录和恢复任务。
+description: 在已启用的项目中使用 AI Loop 工作流进行任务规划、开发、测试验证、独立评审、记录与跨会话恢复。
 ---
 
-# DSH AI Loop 工作流
+# DSH AI Loop 工作流规范
 
-原生派发登记流程：先 ai_loop_prepare 取得当前主会话一次性凭据，将返回输入补充 revision，经原生工具用 activity record 保存；再将返回 id 作为 ai_loop_delegate.execution。凭据在启动前消费，插件重载后失效，旧 requested 不能重派。启动失败/中断须先核对原生执行者，不能自动删除登记。
+本技能用于在 DeepSeek Harness (DSH) 环境中执行结构化、自包含的 AI Loop 工程开发。
+共享核心目录：`{{CORE}}`（为插件资源，非目标项目；目标项目运行数据持久化于项目本地的 `.ai-loop/` 目录中）。
 
-4.6.0：主/叶角色分开，叶角色只执行已分配任务，不再派发。lite 或用户要求单代理时主代理执行；standard/full 只派发已开启角色，缺少独立 reviewer 时待复核。新证据运行在派发前经原生工具 activity record 登记 requested（含当前 attempt、revision），将其 id 作为 ai_loop_delegate.execution。返回 childId 后调用 ai_loop_observe，保存真实返回到 reports/ 内，通过原生写入/脚本同步 running、context、completed 和 evidence，报告携带 execution_id。插件宿主不直接写项目；未登记/未知终态不能视为完成，冷恢复先核对原生运行时，不删除旧记录重派。整体评审用 task=final、attempt=当前核心 event_seq。
+## 核心安全与执行准则
 
-复杂任务可由一个 `run` 级 planner 提出拆分建议，由主代理审定正式任务并统一派发；简单任务直接由主代理计划。`run` 级 task 只派发 planner/scribe，`final` 只派发整体 tester/reviewer。批准 spec 可选 `workflow.nodes/edges` 描述无环流程分支与汇合，供看板呈现；它不代替 depends_on、阶段状态、当前 revision 或证据门禁。多个方向使用独立正式 task 和互斥范围；验证与评审在写入收敛后按快照顺序进行。scribe 默认每个 run 共用，在阶段成果、阻塞和交付时批量记录。只有匹配的原生父子上下文观察能形成真实调用连线。
+1. **用户与环境限制优先**：命中配置 `deny` 立即停止，严禁切换工具、代理或更改权限绕行。
+2. **多文件变更预先确认**：涉及 3 个及以上文件改动时，必须先给出中文实施方案，获得用户明确确认后再编码；已批准且范围未变的任务不重复确认。
+3. **设置修改限制**：严禁擅自修改 `settings.json`；如需修改必须事先向用户说明具体内容并获许可。
+4. **Git 与记录分工**：
+   - Git 负责源码版本管理、分支与代码提交；
+   - AI Loop 负责执行状态、意图、架构决策依据、未决问题与独立验证证据链；严禁未经授权擅自提交代码。
+5. **项目物理隔离存储**：
+   - 单项目运行（指定子项目路径 `project_path` 且非根目录）的数据保存在子项目本地 `<project>/.ai-loop/`；
+   - 跨项目或根目录运行保存在工作区根目录 `.ai-loop/`；
+   - 恢复与状态查询统一支持 `--project-path` 筛选。
 
-项目根仍取会话工作区；子项目归属用 spec.project_path，快照默认覆盖该子目录，必要共享依赖用 snapshot_paths。恢复可用 --project-path 筛选，记录保持集中于工作区 .ai-loop/runs/，不额外开启子目录工作区。
+## 会话启动与前运行规划
 
-共享核心目录：`{{CORE}}`。它是插件资源，不是目标项目。项目根目录取 DSH 会话原始工作区，只在 `.ai-loop/` 保存项目运行数据。安装插件不会自动启用任意项目；总开关与精确路径项目开关均须启用。
+1. **项目启动核验**：首次处理项目请求时，调用 `node "{{CORE}}/scripts/memory.mjs" bootstrap --project ROOT --intent new|continue|inspect` 读取项目长期记忆与运行状态。
+   - `new`：明确的新需求，启动前运行规划；
+   - `continue`：延续既有活跃运行（用户明确指定优先，唯一活跃自动定位，多候选请用户选择）；
+   - `inspect`：只读了解现状与架构，不启动开发流程。
+2. **前运行轻量规划 (Pre-run Planning)**：
+   - 复杂或多模块任务在正式冻结运行前，先梳理出任务分解、互斥文件范围（`in_scope`/`out_of_scope`）、依赖拓扑（`depends_on`）、验收标准（`acceptance`）与自动化检查命令（`checks`）；
+   - 方案草案向用户呈现并获得确认后，再调用 `loop.mjs create` 创建正式运行，避免生成无效废弃运行。
 
-1. 项目规则、权限和用户要求优先。命中 deny 立即停止，不切换工具、代理、权限或平台绕过；修改 settings.json 前取得具体许可。已有方案确认不重复询问。
-2. 先读共享核心 `WORKFLOW.md`、`MEMORY.md` 和当前阶段角色，按阶段读取。区分明确新需求、继续既有任务和只读检查，不能发现唯一任务就擅自执行。
-3. 通过 DSH 原生 read、write、edit、pwsh/bash 等工具读取与更新项目资料、运行核心脚本，保留其审批与沙箱。核心命令为 `node "{{CORE}}/scripts/memory.mjs" bootstrap --project ROOT --intent new|continue|inspect`。索引缺失时按 MEMORY.md 和脚本帮助在已授权范围初始化资料；不复制工作流资源或改项目根规范。不要调用 Codex 专属 plugin.mjs、settings MCP 或 CLI。
-4. 恢复只读取必要 state/session/checkpoint、未关闭工作单元和游标之后事件；核对文件与验证的适用性，保留中断记录。重要工作单元按 `loop.mjs progress` 保存 planned 与 done/blocked，阶段结束保存交接。
-5. standard/full 且当前任务已授权子代理时使用 `ai_loop_delegate`，角色是 planner、dev、tester、reviewer、scribe。必须从当前状态读取并传入精确 `run` 和 `task`：普通阶段使用正式 task id；run 级 planner/scribe 使用 `task: "run"`；整体 tester/reviewer 使用 `task: "final"`。tester/reviewer 传入该任务当前 attempt，final 取核心 event_seq，run 级 planner/scribe 传入 `0`。核心会拒绝非 active 运行、阶段不符、批次过期和同任务同角色的在途重复派发。只有已在 DSH 模型设置开启的角色能派发。工具使用 DSH 原生 spawn 创建独立上下文；任务需完整自包含，包含文件范围、授权、验收要求和关键路径。独立评审不能用主代理自检冒充。工具返回真实 childId 后，主代理须通过工作流授权的原生记录机制写入 `activity`（初始 `requested`，再按运行时观察更新），不得由插件宿主 fs 直接写项目；旧的非终态观察会阻止再次派发，即使观察已过期也先核对原生状态。lite 或用户要求单代理时直接执行并如实标记。
-6. 原生结果自动回传；用 DSH 原生 send_message/list_agents 等可用控制工具协作。遵守插件项目并发与 DSH 原生容量上限。角色子代理不得继续派发；其原生审批策略为 never，遇到需要审批的操作交回主代理，不能另起宿主进程绕过。
-7. 需要调整开关、角色模型或并发时加载 ai-loop-models 技能。未知模型、provider、强度必须说明错误，不静默替换。运行时只报告实际可获取的模型和验证结果，无法获取 token 数值就明确标记不可用。
+## 角色分工与执行模式
+
+- **分级模式**：
+  - `lite`：简单低风险任务，由主代理单代理闭环完成方案、实现与自检；
+  - `standard`：普通功能开发，包含计划、开发、测试与评审；
+  - `full`：关键核心或高风险任务，必须通过独立的自动化测试验证与独立评审（`independent`）。
+- **角色定位**：
+  - `planner`（计划）：运行级角色，输出方案草案与 DAG 任务拆分；
+  - `dev`（开发）：任务级角色，遵循最小改动原则，互斥文件范围的任务可并行开发；完成写入后调用 `finish --task ID` 汇聚；
+  - `tester`（测试）：任务级角色，在代码快照（`revision`）上执行真实命令并沉淀日志于 `reports/`；
+  - `reviewer`（评审）：任务级角色，对代码快照及测试证据进行真实缺陷与风险审查；
+  - `scribe`（记录）：运行级共享角色（`task: "run"`），在阶段收敛、交付或会话中断前增量保存长期知识与交接状态。
+
+## DSH 原生子代理派发流程
+
+在 `standard`/`full` 模式下派发已在 DSH 插件设置中开启的角色子代理时，严格遵循以下四步闭环：
+
+```
+[1. ai_loop_prepare] ──> 获取一次性凭据及 requested 结构
+        │
+        ▼
+[2. 原生工具记录]   ──> 将 requested 补充当前 revision，调用 activity.mjs record 保存
+        │
+        ▼
+[3. ai_loop_delegate] ─> 传入 execution 参数，DSH spawn 启动独立子代理
+        │
+        ▼
+[4. ai_loop_observe]  ─> 读取真实观察，落盘到 reports/ 并通过 activity.mjs 同步 running/终态
+```
+
+- **参数约束**：`run` 与 `task` 必须严格匹配；普通阶段传正式 task id；`run` 级 planner/scribe 传 `task: "run"`；整体验收传 `task: "final"`。
+- **批次与凭据**：tester/reviewer 必须传入当前任务的整数 `attempt`（final 传核心 `event_seq`）；凭据一次性有效，不可跨会话复用。
+- **叶节点约束**：子代理为叶节点，DSH 原生审批策略为 never，受阻操作由子代理报告回传主代理，严禁子代理再次派发。
+- **独立性底线**：独立评审报告必须携带 `execution_id`；若缺少原生执行条件，如实标记为待复核或自检（`self`），严禁口头扮演或冒充独立通过。
+- **持续交接**：在工作单元完成、会话中断、更换 Harness 或上下文达到 80% 时，立即生成 `checkpoint.json`，确保无缝续接。

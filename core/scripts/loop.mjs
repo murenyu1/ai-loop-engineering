@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { VERSION, BUNDLE, assert, validId, inside, rootPath, safePath, jsonFile, atomicWrite, writeJson, locked, args, allowArgs, mainModule, printResult } from './lib.mjs';
 import { validateRoles } from './roles.mjs';
 import { checkExecution } from './execution.mjs';
+import { discoverRecordBases, resolveRunBase, runPaths, runPathsAt, newRunBase, registerProjectBase } from './storage.mjs';
 
 const now = () => new Date().toISOString();
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
@@ -11,6 +12,26 @@ const scopePath = value => value.replace(/\/+$/, '').toLowerCase();
 const validRelativeScope = value => nonempty(value) && !path.isAbsolute(value) && !/^[a-z]:\//i.test(value) && !value.includes('\\') && !value.replace(/\/+$/, '').split('/').some(part => !part || part === '.' || part === '..');
 const validRevision = value => value?.algorithm === 'sha256' && typeof value.digest === 'string' && /^[a-f0-9]{64}$/.test(value.digest) && Number.isInteger(value.files) && value.files >= 0;
 const sameRevision = (a, b) => a?.algorithm === 'sha256' && b?.algorithm === 'sha256' && a.digest === b.digest && a.files === b.files;
+
+function analyzeWorkflow(tasks, workflow) {
+  const result = { warnings: [], conflicts: [] };
+  if (!workflow) return result;
+  const definitions = new Map(tasks.map(task => [task.id, task]));
+  const nodes = new Map(workflow.nodes.map(node => [node.id, node]));
+  const reaches = (start, target, seen = new Set()) => {
+    if (start === target) return true;
+    if (seen.has(start)) return false;
+    seen.add(start);
+    return (definitions.get(start)?.depends_on ?? []).some(id => reaches(id, target, seen));
+  };
+  for (const link of workflow.edges) {
+    const from = nodes.get(link.from), to = nodes.get(link.to);
+    if (!definitions.has(from?.task) || !definitions.has(to?.task)) continue;
+    if (reaches(from.task, to.task)) result.conflicts.push(`流程边 ${from.task} → ${to.task} 与 depends_on 反向`);
+    else if (!reaches(to.task, from.task)) result.warnings.push(`流程边 ${from.task} → ${to.task} 未声明 depends_on，仅用于展示，不形成执行门禁`);
+  }
+  return result;
+}
 
 export function validateSpec(input) {
   assert(input && nonempty(input.goal), '运行须有明确 goal');
@@ -71,7 +92,7 @@ export function validateSpec(input) {
       assert(['planner', 'dev', 'tester', 'reviewer', 'scribe'].includes(node.role), 'workflow node role 无效');
       if (node.task === 'run') assert(['planner', 'scribe'].includes(node.role), 'run 级节点只允许 planner 或 scribe');
       else if (node.task === 'final') assert(['tester', 'reviewer'].includes(node.role), 'final 节点只允许 tester 或 reviewer');
-      else assert(node.role !== 'scribe', 'scribe 使用 run 级节点共享记录');
+      else assert(!['planner', 'scribe'].includes(node.role), 'planner 只负责前运行规划，scribe 使用 run 级共享节点');
       const binding = `${node.task}:${node.role}`; assert(!bindings.has(binding), 'workflow 的 task+role 绑定重复'); bindings.add(binding);
       if (node.label !== undefined) assert(nonempty(node.label) && node.label.length <= 120, 'workflow node label 无效');
     }
@@ -85,6 +106,8 @@ export function validateSpec(input) {
     const checkGraph = id => { assert(!stack.has(id), 'workflow 拓扑包含循环'); if (seen.has(id)) return; stack.add(id); for (const to of adjacency.get(id)) checkGraph(to); stack.delete(id); seen.add(id); };
     for (const id of nodeIds) checkGraph(id);
     workflow = { nodes: value.nodes.map(({ id, task, role, label }) => ({ id, task, role, ...(label === undefined ? {} : { label }) })), edges: value.edges.map(({ from, to }) => ({ from, to })) };
+    const semantics = analyzeWorkflow(input.tasks, workflow);
+    assert(semantics.conflicts.length === 0, semantics.conflicts.join('；'));
   }
   const maxFixes = input.max_fixes ?? 3;
   assert(Number.isInteger(maxFixes) && maxFixes >= 0 && maxFixes <= 3, 'max_fixes 须为 0–3，不允许静默放宽上限');
@@ -122,12 +145,27 @@ export function snapshot(project, ignore = [], bundle = BUNDLE, scopes) {
     }
   }
   const realBundle = fs.realpathSync(bundle);
-  if (inside(root, realBundle) && realBundle !== root) excluded.push(path.relative(root, realBundle).split(path.sep).join('/'));
-  const excludedPath = relative => excluded.some(prefix => relative === prefix || relative.startsWith(`${prefix}/`));
+  const includeBundle = scopes?.some(scope => {
+    const target = safePath(root, scope.replace(/\/+$/, ''));
+    return target === realBundle || inside(realBundle, target);
+  });
+  if (!includeBundle && inside(root, realBundle) && realBundle !== root) excluded.push(path.relative(root, realBundle).split(path.sep).join('/'));
+  const normalizePath = value => process.platform === 'win32' ? value.toLowerCase() : value;
+  const excludedPath = relative => {
+    const normRel = normalizePath(relative);
+    return excluded.some(prefix => {
+      const normPre = normalizePath(prefix);
+      return normRel === normPre || normRel.startsWith(`${normPre}/`);
+    });
+  };
   const hash = crypto.createHash('sha256');
   if (scopes) {
     assert(Array.isArray(scopes) && scopes.length && scopes.every(validRelativeScope), '快照范围无效');
-    for (const scope of scopes) assert(fs.existsSync(safePath(root, scope.replace(/\/+$/, ''))), '快照范围不存在：' + scope);
+    for (const scope of scopes) {
+      const prefix = scope.replace(/\/+$/, '');
+      assert(fs.existsSync(safePath(root, prefix)), '快照范围不存在：' + scope);
+      for (const metadata of ['.git', '.ai-loop']) if (fs.existsSync(safePath(root, `${prefix}/${metadata}`))) excluded.push(`${prefix}/${metadata}`);
+    }
     hash.update(JSON.stringify({ snapshot_paths: scopes }));
   }
   const normalizeScope = value => process.platform === 'win32' ? value.toLowerCase() : value;
@@ -161,10 +199,8 @@ export function snapshot(project, ignore = [], bundle = BUNDLE, scopes) {
   return { algorithm: 'sha256', digest: hash.digest('hex'), files: count };
 }
 
-function paths(root, run) {
-  validId(run);
-  const directory = safePath(root, `.ai-loop/runs/${run}`);
-  return { directory, state: safePath(root, `.ai-loop/runs/${run}/state.json`), spec: safePath(root, `.ai-loop/runs/${run}/spec.json`), events: safePath(root, `.ai-loop/runs/${run}/events.jsonl`), mailbox: safePath(root, `.ai-loop/runs/${run}/mailbox`) };
+export function paths(root, run, projectPath) {
+  return runPaths(root, run, projectPath);
 }
 function versionParts(value) {
   if (typeof value !== 'string' || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(value)) return null;
@@ -176,8 +212,8 @@ function compareVersions(left, right) {
   for (let index = 0; index < 3; index++) if (a[index] !== b[index]) return a[index] - b[index];
   return 0;
 }
-function load(root, run) {
-  const files = paths(root, run);
+function load(root, run, projectPath) {
+  const files = paths(root, run, projectPath);
   const state = jsonFile(files.state);
   assert([1, 2, 3, 4].includes(state.schema_version) && state.run_id === run && Array.isArray(state.tasks), '运行状态格式错误');
   const versionOrder = compareVersions(state.version, VERSION);
@@ -218,7 +254,7 @@ function summary(state, definitions = [], workflow = null) {
     const closedReason = task.phase === 'pending' && state.status !== 'active' ? `运行状态为 ${state.status}` : blockedReason;
     return { id: task.id, title: task.title, owner: definition.owner, in_scope: definition.in_scope, out_of_scope: definition.out_of_scope, managed_execution: definition.managed_execution === true, attempts: task.attempts || null, dependencies, ready, blocked_reason: closedReason, phase: task.phase, fixes: task.fixes, review: task.review, verification: task.verification, assessment: task.assessment, reason: task.reason };
   });
-  return { run_id: state.run_id, goal: state.goal, status: state.status, stop_reason: state.stop_reason, event_seq: state.event_seq, schema_version: state.schema_version, project_path: state.project_path ?? '.', snapshot_paths: state.snapshot_paths ?? null, workflow, execution_evidence: state.schema_version === 4 ? 'required-for-independent' : 'legacy-unverified', tasks };
+  return { run_id: state.run_id, goal: state.goal, status: state.status, stop_reason: state.stop_reason, event_seq: state.event_seq, schema_version: state.schema_version, project_path: state.project_path ?? '.', snapshot_paths: state.snapshot_paths ?? null, storage_path: state.storage_path ?? '.', workflow, workflow_warnings: state.workflow_warnings ?? [], execution_evidence: state.schema_version === 4 ? 'required-for-independent' : 'legacy-unverified', tasks };
 }
 function persist(root, files, state, type, detail) {
   state.updated_at = now();
@@ -229,7 +265,8 @@ function persist(root, files, state, type, detail) {
   writeJson(files.state, state);
 }
 function mutable(root, run, action) {
-  return locked(root, `run-${validId(run)}`, () => {
+  const base = resolveRunBase(root, run);
+  return locked(base, `run-${validId(run)}`, () => {
     const loaded = load(root, run);
     assert(loaded.state.status === 'active', '运行已完成或已停止；不能继续修改状态');
     assert([2, 3, 4].includes(loaded.state.schema_version) || compareVersions(loaded.state.version, '4.4.0') < 0 &&
@@ -245,7 +282,8 @@ function mutable(root, run, action) {
 export function migrate(project, run, confirmNoActiveExecutors = false) {
   const root = rootPath(project);
   assert(confirmNoActiveExecutors === true, '迁移前必须确认没有仍在写入的旧执行者；传入 true 后重试');
-  return locked(root, `run-${validId(run)}`, () => {
+  const base = resolveRunBase(root, run);
+  return locked(base, `run-${validId(run)}`, () => {
     const { files, state, spec } = load(root, run);
     assert(state.schema_version === 1, '仅 schema 1 运行需要迁移');
     const originalEvents = fs.readFileSync(files.events, 'utf8');
@@ -303,7 +341,7 @@ function validateReport(report, expectedRevision) {
 }
 function saveReport(root, files, state, report) {
   const name = `${report.task_id || 'final'}-${report.role}-${state.event_seq + 1}-${crypto.randomUUID().slice(0, 8)}.json`;
-  const target = safePath(root, `.ai-loop/runs/${state.run_id}/reports/${name}`);
+  const target = safePath(files.directory, `reports/${name}`);
   writeJson(target, report);
   return `reports/${name}`;
 }
@@ -314,21 +352,23 @@ export function create(project, input, requestedId) {
   if (spec.project_path && spec.project_path !== '.') assert(fs.statSync(safePath(root, spec.project_path)).isDirectory(), '子项目目录不存在');
   if (spec.project_path && spec.project_path !== '.' && !spec.snapshot_paths) spec.snapshot_paths = [spec.project_path];
   const run = validId(requestedId || `run-${crypto.randomUUID()}`);
-  return locked(root, 'runs', () => {
-    const files = paths(root, run);
-    assert(!fs.existsSync(files.directory), '运行编号已存在，不能覆盖或重置');
+  const base = newRunBase(root, spec);
+  return locked(base, 'runs', () => {
+    const resolved = resolveRunBase(root, run, spec.project_path ?? '.', { create: true, spec });
+    const files = runPathsAt(resolved, run);
     const revision = snapshot(root, spec.ignore_paths, BUNDLE, spec.snapshot_paths);
-    fs.mkdirSync(safePath(root, `.ai-loop/runs/${run}/reports`), { recursive: true });
-    fs.mkdirSync(safePath(root, `.ai-loop/runs/${run}/mailbox`), { recursive: true });
+    registerProjectBase(root, spec.project_path ?? '.');
+    fs.mkdirSync(safePath(files.directory, 'reports'), { recursive: true });
+    fs.mkdirSync(files.mailbox, { recursive: true });
     const state = { schema_version: spec.execution_evidence || spec.project_path !== undefined || spec.snapshot_paths ? 4 : spec.role_policy ? 3 : 2, version: VERSION, run_id: run, goal: spec.goal, status: 'active', created_at: now(), updated_at: now(), event_seq: 0,
-      ...(spec.project_path !== undefined ? { project_path: spec.project_path } : {}), ...(spec.snapshot_paths ? { snapshot_paths: spec.snapshot_paths } : {}),
-      spec_hash: crypto.createHash('sha256').update(JSON.stringify(spec)).digest('hex'), max_fixes: spec.max_fixes, base_revision: revision,
+      ...(spec.project_path !== undefined ? { project_path: spec.project_path } : {}), ...(spec.snapshot_paths ? { snapshot_paths: spec.snapshot_paths } : {}), storage_path: path.relative(root, resolved).split(path.sep).join('/') || '.',
+      spec_hash: crypto.createHash('sha256').update(JSON.stringify(spec)).digest('hex'), max_fixes: spec.max_fixes, base_revision: revision, workflow_warnings: analyzeWorkflow(spec.tasks, spec.workflow).warnings,
       tasks: spec.tasks.map(task => ({ id: task.id, title: task.title, review: task.review, phase: 'pending', fixes: 0, verification: null, assessment: null, reason: null })) };
     writeJson(files.spec, spec);
     writeJson(files.state, state);
     atomicWrite(files.events, '');
-    atomicWrite(safePath(root, `.ai-loop/runs/${run}/plan.md`), `# ${spec.goal}\n\n本文件记录方案；执行状态以 state.json 为准。创建运行前由 AI 核对用户批准范围。\n\n${spec.tasks.map(task => `## ${task.id}：${task.title}\n\n- 验收：${task.acceptance.join('；')}\n- 依赖：${(task.depends_on || []).join(', ') || '无'}\n- 评审：${task.review}\n- 检查：${task.checks.map(check => check.id).join(', ')}\n`).join('\n')}`);
-    atomicWrite(safePath(root, `.ai-loop/runs/${run}/session.md`), '# 会话交接\n\n- 用户意图：见 spec.json 的 goal\n- 当前进度：运行 status 命令获取，不在此复制计数\n- 已确认决策：由 AI 按需补充\n- 未决问题：无\n- 下一步：开始首个无依赖任务\n');
+    atomicWrite(safePath(files.directory, 'plan.md'), `# ${spec.goal}\n\n本文件记录方案；执行状态以 state.json 为准。创建运行前由 AI 核对用户批准范围。\n\n${spec.tasks.map(task => `## ${task.id}：${task.title}\n\n- 验收：${task.acceptance.join('；')}\n- 依赖：${(task.depends_on || []).join(', ') || '无'}\n- 评审：${task.review}\n- 检查：${task.checks.map(check => check.id).join(', ')}\n`).join('\n')}`);
+    atomicWrite(safePath(files.directory, 'session.md'), '# 会话交接\n\n- 用户意图：见 spec.json 的 goal\n- 当前进度：运行 status 命令获取，不在此复制计数\n- 已确认决策：由 AI 按需补充\n- 未决问题：无\n- 下一步：开始首个无依赖任务\n');
     persist(root, files, state, 'created', { revision });
     return summary(state, spec.tasks, spec.workflow ?? null);
   });
@@ -567,18 +607,18 @@ export function events(project, run, after = 0, limit = 50) {
 export function listRuns(project, options = {}) {
   const root = rootPath(project);
   if (options.project_path !== undefined) assert(options.project_path === '.' || validRelativeScope(options.project_path), '子项目筛选路径无效');
-  const runsDir = safePath(root, '.ai-loop/runs');
-  if (!fs.existsSync(runsDir)) return [];
-  const entries = fs.readdirSync(runsDir).sort();
   const list = [];
-  for (const entry of entries) {
-    const stateFile = path.join(runsDir, entry, 'state.json');
-    if (fs.existsSync(stateFile)) {
+  for (const base of discoverRecordBases(root)) {
+    const runsDir = safePath(base, '.ai-loop/runs');
+    if (!fs.existsSync(runsDir)) continue;
+    for (const entry of fs.readdirSync(runsDir).sort()) {
+      const stateFile = safePath(base, `.ai-loop/runs/${entry}/state.json`);
+      if (!fs.existsSync(stateFile)) continue;
       try {
         const state = jsonFile(stateFile);
-        list.push({ run_id: entry, status: state.status, goal: state.goal, updated_at: state.updated_at, project_path: state.project_path ?? '.', snapshot_paths: state.snapshot_paths ?? null });
+        list.push({ run_id: entry, status: state.status, goal: state.goal, updated_at: state.updated_at, created_at: state.created_at, project_path: state.project_path ?? '.', snapshot_paths: state.snapshot_paths ?? null, storage_path: path.relative(root, base).split(path.sep).join('/') || '.' });
       } catch {
-        list.push({ run_id: entry, status: 'unknown' });
+        list.push({ run_id: entry, status: 'unknown', storage_path: path.relative(root, base).split(path.sep).join('/') || '.' });
       }
     }
   }
@@ -587,26 +627,26 @@ export function listRuns(project, options = {}) {
   return list.filter(item => typeof item.project_path === 'string' && sameProjectPath(item.project_path, options.project_path));
 }
 
-export function status(project, run) {
+export function status(project, run, options = {}) {
   const root = rootPath(project);
   if (!run) {
-    const runs = listRuns(project);
+    const runs = listRuns(project, options);
     const active = runs.filter(r => r.status === 'active');
     if (active.length === 1) {
       run = active[0].run_id;
     } else if (active.length === 0 && runs.length === 1) {
       run = runs[0].run_id;
     } else {
-      const candidates = (active.length ? active : runs).map(r => r.run_id).join(', ');
-      assert(false, candidates ? `缺少 --run 参数，可选的运行编号：${candidates}` : '未找到任何运行记录，请先使用 create 命令创建运行');
+      const candidates = (active.length ? active : runs).map(r => `${r.project_path ?? '.'}:${r.run_id}`).join(', ');
+      assert(false, candidates ? `缺少 --run 参数，可选的项目与运行编号：${candidates}` : '未找到任何运行记录，请先使用 create 命令创建运行');
     }
   }
-  const loaded = load(root, run);
+  const loaded = load(root, run, options.project_path);
   return summary(loaded.state, loaded.spec.tasks, loaded.spec.workflow ?? null);
 }
 export function cli(argv) {
   const options = args(argv);
-  allowArgs(options, ['project', 'run', 'task', 'phase', 'input', 'reason', 'after', 'limit', 'role', 'after-id', 'confirm-no-active-executors', 'help']);
+  allowArgs(options, ['project', 'run', 'project-path', 'task', 'phase', 'input', 'reason', 'after', 'limit', 'role', 'after-id', 'confirm-no-active-executors', 'help']);
   const [command] = options._;
   assert(options._.length <= 1, '只能指定一个命令');
   if (options.help || !command) return { commands: 'create / begin / finish / snapshot / record / fix / resume / stop / migrate / status / event / events / progress / complete / mail / inbox', usage: 'node scripts/loop.mjs COMMAND --project ROOT [--run ID] [--task ID] [--input FILE]' };
@@ -620,7 +660,7 @@ export function cli(argv) {
   if (command === 'finish') return finish(options.project, options.run, options.task);
   if (command === 'snapshot') {
     const root = rootPath(options.project);
-    const spec = options.run ? load(root, options.run).spec : {};
+    const spec = options.run ? load(root, options.run, options['project-path']).spec : {};
     return snapshot(root, spec.ignore_paths || [], BUNDLE, spec.snapshot_paths);
   }
   if (command === 'record') return record(options.project, options.run, input());
@@ -628,7 +668,7 @@ export function cli(argv) {
   if (command === 'resume') return resume(options.project, options.run, options.task, options.reason);
   if (command === 'stop') return stop(options.project, options.run, options.reason);
   if (command === 'migrate') return migrate(options.project, options.run, options['confirm-no-active-executors'] === true);
-  if (command === 'status') return status(options.project, options.run);
+  if (command === 'status') return status(options.project, options.run, { project_path: options['project-path'] });
   if (command === 'event') return event(options.project, options.run, input());
   if (command === 'progress') return progress(options.project, options.run, input());
   if (command === 'events') return events(options.project, options.run, Number(options.after || 0), Number(options.limit || 50));

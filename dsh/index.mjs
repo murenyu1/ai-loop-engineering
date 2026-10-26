@@ -294,7 +294,8 @@ export function apply(ctx, config) {
     name: 'ai_loop_status',
     description: '只读查看当前项目的 AI Loop 运行状态、DAG 任务执行进度或可选运行列表。无需审批与执行 bash，直接返回结构化状态。',
     parameters: {
-      project: { type: 'string', description: '项目根目录。默认为当前工作区。' },
+      project: { type: 'string', description: '工作区根目录。默认为当前会话工作区。' },
+      project_path: { type: 'string', description: '可选的子项目相对路径（例如 ai-loop-engineering），用于在多项目工作区中精确筛选子项目本地运行。' },
       run: { type: 'string', description: '运行编号（run_id）。若省略，自动推断当前活跃的唯一运行或返回运行列表。' }
     },
     output: {
@@ -311,17 +312,18 @@ export function apply(ctx, config) {
         if (!settings.enabled) throw new Error('此项目未启用 AI Loop，不能读取其运行状态。');
         const loopUrl = pathToFileURL(path.join(coreRoot, 'scripts', 'loop.mjs')).href;
         const loopMod = await import(loopUrl);
+        const listOpts = args.project_path ? { project_path: args.project_path } : {};
         if (!args.run) {
-          const runs = loopMod.listRuns(root);
+          const runs = loopMod.listRuns(root, listOpts);
           const active = runs.filter(r => r.status === 'active');
           if (active.length === 1) {
-            return JSON.stringify(loopMod.status(root, active[0].run_id), null, 2);
+            return JSON.stringify(loopMod.status(root, active[0].run_id, listOpts), null, 2);
           } else if (active.length === 0 && runs.length === 1) {
-            return JSON.stringify(loopMod.status(root, runs[0].run_id), null, 2);
+            return JSON.stringify(loopMod.status(root, runs[0].run_id, listOpts), null, 2);
           }
           return JSON.stringify({ runs, message: active.length > 1 ? '存在多个活跃运行，请指定 run 参数。' : '当前无唯一运行，请指定 run 参数。' }, null, 2);
         }
-        return JSON.stringify(loopMod.status(root, args.run), null, 2);
+        return JSON.stringify(loopMod.status(root, args.run, listOpts), null, 2);
       } catch (error) {
         return JSON.stringify({ error: error instanceof Error ? error.message : String(error) }, null, 2);
       }

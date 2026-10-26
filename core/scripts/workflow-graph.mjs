@@ -148,8 +148,9 @@ export function createWorkflowGraph(data, { collapsedTasks = [] } = {}) {
       }
       if (collapsed.has(task.id)) return;
       let previous = taskNode;
-      for (let index = 0; index < ['planner', 'dev', 'tester', 'reviewer'].length; index++) {
-        const role = ['planner', 'dev', 'tester', 'reviewer'][index];
+      const taskRoles = task.id === 'run' ? ['planner', 'dev', 'tester', 'reviewer'] : ['dev', 'tester', 'reviewer'];
+      for (let index = 0; index < taskRoles.length; index++) {
+        const role = taskRoles[index];
         const id = `stage:${task.id}:${role}`;
         const evidence = agents.filter(agent => agent.task === task.id && agent.role === role).sort((a, b) => (a.attempt ?? -1) - (b.attempt ?? -1) || String(a.started_at ?? '').localeCompare(String(b.started_at ?? '')));
         add({ id, kind: 'stage', taskId: task.id, role, label: labels[role], status: stageStatus(task, role), x, y: y + (index + 1) * step, agents: evidence });
