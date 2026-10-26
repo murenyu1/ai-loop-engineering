@@ -2,11 +2,11 @@
 
 工作区定位有明确边界：DSH 的侧栏宿主直接提供 sessionId/cwd；Codex 静态线程入口按官方规范使用空参数 `{}`，没有通用的当前聊天 ID 接口。标准工具通知带真实 root/session 时，两页共用该归属；没有这些数据时只能手选工作区，不能以最近工作区、插件目录或其他聊天缓存替代。SessionStart 注入的是模型上下文，并不等于侧栏 iframe 自动获得相同数据。
 
-本地候选未发布。原生角色及技能保留 Codex 调度方式，新独立评审要求关联真实调用证据；看板显示子项目归属。下文 4.5.0 下载为历史版本。
+4.7.0 同步全局草稿保存、周期状态读取与同名项目运行定位修复。原生角色及技能保留 Codex 调度方式，新独立评审要求关联真实调用证据；看板显示子项目归属。下文链接为 4.7.0 发行包。
 
-# AI Loop Codex 插件 4.5.0
+# AI Loop Codex 插件 4.7.0
 
-本插件包与通用工作流、DSH 插件统一收录在 [v4.5.0 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.5.0)：[下载 Codex 插件](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.5.0/ai-loop-codex-4.5.0.zip)；完整性校验使用该 Release 的 [SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.5.0/SHA256SUMS)。4.4.3 及更早下载仍作为历史版本保留。插件预检使用 `node PLUGIN/scripts/plugin.mjs doctor --project ROOT`；兼容 `doctor.mjs` 也会识别插件项目。配置检查、原生执行、实际模型和界面分别验收。
+本插件包与通用工作流、DSH 插件统一收录在 [v4.7.0 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.7.0)：[下载 Codex 插件](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.0/ai-loop-codex-4.7.0.zip)；完整性校验使用该 Release 的 [SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.0/SHA256SUMS)。4.4.3 及更早下载仍作为历史版本保留。插件预检使用 `node PLUGIN/scripts/plugin.mjs doctor --project ROOT`；兼容 `doctor.mjs` 也会识别插件项目。配置检查、原生执行、实际模型和界面分别验收。
 
 在 Codex 插件详情页直接管理 AI Loop 子代理模型和工作区，并在不同本地项目使用同一套开发闭环、分页记忆与中断恢复流程。插件包包含运行所需核心，无需另装通用工作流。
 

@@ -423,7 +423,7 @@ function graphHarness(data) {
     if (!elements.has(id)) elements.set(id, { value:'', innerHTML:'', textContent:'', dataset:{}, listeners:{}, addEventListener(name, fn) { this.listeners[name]=fn; }, setAttribute(){} });
     return elements.get(id);
   };
-  const key=JSON.stringify([data.root??'',data.run.run_id]);
+  const key=JSON.stringify([data.root??'',data.run.project_path??'.',data.run.run_id]);
   const port={scrollLeft:0,scrollTop:0,clientWidth:320,clientHeight:400};
   const section={dataset:{graphKey:key},innerHTML:'',querySelector:selector=>selector==='.graph-port'?port:null};
   const context=vm.createContext({window:{parent:{postMessage(){}},addEventListener(){}},document:{getElementById:element,querySelectorAll:selector=>selector==='[data-graph-key]'?[section]:[],addEventListener(){}},setTimeout,clearTimeout,queueMicrotask});
@@ -714,4 +714,12 @@ test('真实数据协议与面板联合处理删除、同路径替换和归属�
     await vm.runInContext('discover()', f.context);
     assert.equal(f.element('workspace').value, 'b');
   }
+});
+
+
+test('不同子项目的同名运行不共享缩放折叠或选中状态',()=>{
+  const f=graphHarness({root:'/root',run:{run_id:'same',project_path:'one',tasks:[]},activity:{agents:[]}});
+  vm.runInContext("graphState(graphKey(data)).zoom=.6;graphState(graphKey(data)).selected='one-node';data.run.project_path='two'",f.context);
+  assert.equal(f.state().zoom,1);assert.equal(f.state().selected,null);
+  vm.runInContext("data.run.project_path='one'",f.context);assert.equal(f.state().zoom,.6);assert.equal(f.state().selected,'one-node');
 });

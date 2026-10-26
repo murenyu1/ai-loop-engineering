@@ -301,12 +301,20 @@ window.__ModuleLoader__.load({
     },
   };
 
-  async function requestStatus(fetcher, path, run, sessionId, signal, page = {}) {
+  const runIdentity = run => JSON.stringify([run?.project_path ?? '.', run?.run_id ?? '']);
+  const runSelection = value => {
+    if (!value) return null;
+    try { const [project_path, run_id] = JSON.parse(value); return typeof run_id === 'string' && run_id ? { project_path, run_id } : null; } catch { return null; }
+  };
+
+  async function requestStatus(fetcher, path, run, sessionId, signal, page = {}, projectPath) {
     const base = typeof document !== 'undefined' && document.baseURI ? document.baseURI : 'http://dsh.internal/';
     const url = new URL('/plugins/ai-loop-engineering/state', base);
     if (path) url.searchParams.set('project', path);
     if (sessionId) url.searchParams.set('session', sessionId);
     if (run) url.searchParams.set('run', run);
+    if (projectPath) url.searchParams.set('project_path', projectPath);
+    if (page.project_path) url.searchParams.set('project_path', page.project_path);
     if (page.after) url.searchParams.set('after', page.after);
     if (page.limit) url.searchParams.set('limit', String(page.limit));
     const response = await fetcher(url.href, { method: 'GET', cache: 'no-store', credentials: 'same-origin', signal });
@@ -336,7 +344,7 @@ window.__ModuleLoader__.load({
 
   function createStatusPollStore(fetcher = globalThis.fetch, host = globalThis) {
     const entries = new Map();
-    const keyOf = params => JSON.stringify([params.sessionId || '', params.path || '', params.run || '']);
+    const keyOf = params => JSON.stringify([params.sessionId || '', params.path || '', params.project_path || '', params.run || '']);
     const visible = () => !host.document || host.document.visibilityState !== 'hidden';
     const notify = entry => entry.listeners.forEach(listener => listener());
     const clearTimer = entry => { if (entry.timer !== undefined) host.clearTimeout(entry.timer); entry.timer = undefined; };
@@ -352,7 +360,7 @@ window.__ModuleLoader__.load({
       entry.state = { ...entry.state, loading: !entry.loaded, refreshing: Boolean(entry.loaded), error: null };
       notify(entry);
       try {
-        const data = await requestStatus(fetcher, params.path, params.run, params.sessionId, abort.signal);
+        const data = await requestStatus(fetcher, params.path, params.run, params.sessionId, abort.signal, {}, params.project_path);
         if (entry.abort !== abort) return;
         entry.loaded = true;
         entry.state = { loading: false, refreshing: false, data: data.run_id ? data : null, history: data.chat_history ?? null, runs: Array.isArray(data.runs) ? data.runs : [], error: null, errorStatus: null };
@@ -401,14 +409,14 @@ window.__ModuleLoader__.load({
       const entry = entries.get(keyOf(params));
       if (entry && !entry.abort) poll(entry, params);
     };
-    const loadHistory = (params, after) => requestStatus(fetcher, params.path, '', params.sessionId, undefined, { after, limit: 20 });
+    const loadHistory = (params, after) => requestStatus(fetcher, params.path, '', params.sessionId, undefined, { after, limit: 20, project_path: params.project_path });
     return { get, subscribe, refresh, loadHistory };
   }
 
   const statusPollStore = createStatusPollStore((...args) => globalThis.fetch(...args));
-  function useStatus(path, run, sessionId) {
-    const params = { path, run, sessionId };
-    const key = JSON.stringify([sessionId || '', path || '', run || '']);
+  function useStatus(path, run, sessionId, project_path) {
+    const params = { path, run, sessionId, project_path };
+    const key = JSON.stringify([sessionId || '', path || '', project_path || '', run || '']);
     const [snapshot, setSnapshot] = React.useState({ key, ...statusPollStore.get(params) });
     React.useEffect(() => {
       setSnapshot({ key, ...statusPollStore.get(params) });
@@ -422,11 +430,12 @@ window.__ModuleLoader__.load({
   function RunDashboard({ path, ctx, projects = [], onProjectChange, sessionId }) {
     const selectionKey = JSON.stringify([sessionId || '', path || '']);
     const [selection, setSelection] = React.useState({ key: selectionKey, run: '' });
-    const run = selection.key === selectionKey ? selection.run : '';
+    const selected = selection.key === selectionKey ? runSelection(selection.run) : null;
+    const run = selected?.run_id ?? '';
     React.useEffect(() => {
       if (selection.key !== selectionKey) setSelection({ key: selectionKey, run: '' });
     }, [selectionKey]);
-    const runInfo = useStatus(path, run, sessionId);
+    const runInfo = useStatus(path, run, sessionId, selected?.project_path);
     const data = runInfo.data;
     React.useEffect(() => {
       if (!path && data?.project_root && projects.some(row => samePath(row.path, data.project_root))) onProjectChange?.(data.project_root);
@@ -448,7 +457,7 @@ window.__ModuleLoader__.load({
       ),
       h('div', { style: { display: 'grid', gap: 10 } },
         projects.length ? h('label', { style: S.label }, '工作区', h('select', { value: path, style: S.input, onChange: event => onProjectChange?.(event.target.value) }, h('option', { value: '' }, '请选择工作区'), projects.map(row => h('option', { key: row.path, value: row.path }, row.path)))) : null,
-        runInfo.runs.length ? h('label', { style: S.label }, '选择运行', h('select', { value: run, style: S.input, onChange: event => setSelection({ key: selectionKey, run: event.target.value }) }, h('option', { value: '' }, '请选择运行'), runInfo.runs.map(row => h('option', { key: row.run_id, value: row.run_id }, `${row.project_path || "."} / ${row.run_id} · ${row.status || '未知'} · ${row.goal || ''}`)))) : null,
+        runInfo.runs.length ? h('label', { style: S.label }, '选择运行', h('select', { value: selected ? runIdentity(selected) : '', style: S.input, onChange: event => setSelection({ key: selectionKey, run: event.target.value }) }, h('option', { value: '' }, '请选择运行'), runInfo.runs.map(row => h('option', { key: runIdentity(row), value: runIdentity(row) }, `${row.project_path || "."} / ${row.run_id} · ${row.status || '未知'} · ${row.goal || ''}`)))) : null,
       ),
       !path ? h('div', { role: 'status', style: { color: 'var(--dsw-alias-text-secondary, GrayText)', fontSize: 13, padding: '12px 0' } }, '请选择一个已启用的工作区。') : runInfo.loading || !data ? h('div', {
         role: runInfo.loading ? 'status' : runInfo.error ? 'alert' : 'status',
@@ -634,48 +643,50 @@ window.__ModuleLoader__.load({
 
     const selectionKey = JSON.stringify([sessionKey, cwd]);
     const [selection, setSelection] = React.useState({ key: selectionKey, run: '' });
-    const run = selection.key === selectionKey ? selection.run : '';
+    const selected = selection.key === selectionKey ? runSelection(selection.run) : null;
+    const run = selected?.run_id ?? '';
+    const historyKey = JSON.stringify([selectionKey, selected?.project_path || '']);
     React.useEffect(() => {
       if (selection.key !== selectionKey) setSelection({ key: selectionKey, run: '' });
     }, [selectionKey]);
 
-    const statusInfo = useStatus(cwd, run, sessionKey);
+    const statusInfo = useStatus(cwd, run, sessionKey, selected?.project_path);
     const data = statusInfo.data;
     const dashboardMessage = !cwd ? '请选择工作区，或等待当前聊天关联工作区。'
       : statusInfo.loading ? (sessionKey ? '正在加载当前聊天的运行历史…' : '正在加载所选工作区的运行记录…')
         : statusInfo.errorStatus === 403 ? `无权读取当前工作区：${statusInfo.error || '访问被拒绝'}`
           : statusInfo.error && !data ? `${sessionKey ? '读取聊天运行历史失败' : '读取工作区运行记录失败'}：${statusInfo.error}`
             : !data ? (sessionKey ? '当前聊天暂无关联运行记录。' : '所选工作区暂无运行记录。') : null;
-    const [olderHistory, setOlderHistory] = React.useState(() => ({ key: selectionKey, runs: [], nextAfter: null, loading: false }));
+    const [olderHistory, setOlderHistory] = React.useState(() => ({ key: historyKey, runs: [], nextAfter: null, loading: false }));
     const historyDenied = statusInfo.errorStatus === 403;
-    const historyScope = React.useRef({ key: selectionKey, denied: historyDenied, generation: 0 });
-    if (historyScope.current.key !== selectionKey || historyScope.current.denied !== historyDenied) {
-      historyScope.current = { key: selectionKey, denied: historyDenied, generation: historyScope.current.generation + 1 };
+    const historyScope = React.useRef({ key: historyKey, denied: historyDenied, generation: 0 });
+    if (historyScope.current.key !== historyKey || historyScope.current.denied !== historyDenied) {
+      historyScope.current = { key: historyKey, denied: historyDenied, generation: historyScope.current.generation + 1 };
     }
     const historyGeneration = historyScope.current.generation;
-    const older = !historyDenied && olderHistory.key === selectionKey && (olderHistory.generation ?? 0) === historyGeneration ? olderHistory : { key: selectionKey, generation: historyGeneration, runs: [], nextAfter: historyDenied ? null : statusInfo.history?.next_after ?? null, loading: false };
+    const older = !historyDenied && olderHistory.key === historyKey && (olderHistory.generation ?? 0) === historyGeneration ? olderHistory : { key: historyKey, generation: historyGeneration, runs: [], nextAfter: historyDenied ? null : statusInfo.history?.next_after ?? null, loading: false };
     React.useEffect(() => {
-      if (historyDenied || olderHistory.key !== selectionKey || (olderHistory.generation ?? 0) !== historyGeneration) setOlderHistory({ key: selectionKey, generation: historyGeneration, runs: [], nextAfter: historyDenied ? null : statusInfo.history?.next_after ?? null, loading: false });
-    }, [selectionKey, historyGeneration, historyDenied]);
+      if (historyDenied || olderHistory.key !== historyKey || (olderHistory.generation ?? 0) !== historyGeneration) setOlderHistory({ key: historyKey, generation: historyGeneration, runs: [], nextAfter: historyDenied ? null : statusInfo.history?.next_after ?? null, loading: false });
+    }, [historyKey, historyGeneration, historyDenied]);
     React.useEffect(() => {
-      if (!historyDenied && statusInfo.history?.next_after) setOlderHistory(current => current.key === selectionKey && (current.generation ?? 0) === historyGeneration ? { ...current, nextAfter: statusInfo.history.next_after } : current);
-    }, [selectionKey, historyGeneration, historyDenied, statusInfo.history?.next_after]);
-    const historyRuns = [...new Map([...(statusInfo.runs ?? []), ...older.runs].map(item => [item.run_id, item])).values()];
+      if (!historyDenied && statusInfo.history?.next_after) setOlderHistory(current => current.key === historyKey && (current.generation ?? 0) === historyGeneration ? { ...current, nextAfter: statusInfo.history.next_after } : current);
+    }, [historyKey, historyGeneration, historyDenied, statusInfo.history?.next_after]);
+    const historyRuns = [...new Map([...(statusInfo.runs ?? []), ...older.runs].map(item => [runIdentity(item), item])).values()];
     const loadOlder = async () => {
       if (historyDenied || !older.nextAfter || older.loading) return;
-      setOlderHistory(current => ({ ...current, key: selectionKey, generation: historyGeneration, loading: true }));
+      setOlderHistory(current => ({ ...current, key: historyKey, generation: historyGeneration, loading: true }));
       try {
         const page = await statusInfo.loadHistory(older.nextAfter);
         if (historyScope.current.generation !== historyGeneration || historyScope.current.denied) return;
         const found = page.chat_history;
-        setOlderHistory(current => current.key === selectionKey && (current.generation ?? 0) === historyGeneration ? {
+        setOlderHistory(current => current.key === historyKey && (current.generation ?? 0) === historyGeneration ? {
           ...current,
-          runs: [...new Map([...current.runs, ...(found?.rounds ?? []).map(round => round.run)].map(item => [item.run_id, item])).values()],
+          runs: [...new Map([...current.runs, ...(found?.rounds ?? []).map(round => round.run)].map(item => [runIdentity(item), item])).values()],
           nextAfter: found?.next_after ?? null,
           loading: false,
         } : current);
       } catch {
-        setOlderHistory(current => current.key === selectionKey && (current.generation ?? 0) === historyGeneration ? { ...current, loading: false } : current);
+        setOlderHistory(current => current.key === historyKey && (current.generation ?? 0) === historyGeneration ? { ...current, loading: false } : current);
       }
     };
 
@@ -716,7 +727,7 @@ window.__ModuleLoader__.load({
     };
 
     // 组织一轮轮的任务与挂载的子 agent
-    const roundIndex = Math.max(0, historyRuns.findIndex(round => round.run_id === data?.run_id));
+    const roundIndex = Math.max(0, historyRuns.findIndex(round => runIdentity(round) === runIdentity({ project_path: data?.project_path, run_id: data?.run_id })));
     const taskGroups = React.useMemo(() => {
       const groups = [];
       const assignedAgentIds = new Set();
@@ -982,7 +993,7 @@ window.__ModuleLoader__.load({
             onChange: e => setSelection({ key: selectionKey, run: e.target.value }),
           },
             h('option', { value: '' }, sessionKey ? '选择当前聊天轮次' : '选择工作区运行'),
-            historyRuns.map((r, index) => h('option', { key: r.run_id, value: r.run_id }, `第 ${index + 1} 轮 · ${r.run_id} · ${r.status || '未知'}`)),
+            historyRuns.map((r, index) => h('option', { key: runIdentity(r), value: runIdentity(r) }, `第 ${index + 1} 轮 · ${r.project_path || '.'} / ${r.run_id} · ${r.status || '未知'}`)),
           ) : null,
           older.nextAfter ? h('button', { type: 'button', style: S.btn(false), disabled: older.loading, onClick: loadOlder }, older.loading ? '正在加载历史…' : '加载更早运行') : null,
           h('button', {
@@ -1737,8 +1748,9 @@ window.__ModuleLoader__.load({
       }
       if (collapsed.has(task.id)) return;
       let previous = taskNode;
-      for (let index = 0; index < ['planner', 'dev', 'tester', 'reviewer'].length; index++) {
-        const role = ['planner', 'dev', 'tester', 'reviewer'][index];
+      const taskRoles = task.id === 'run' ? ['planner', 'dev', 'tester', 'reviewer'] : ['dev', 'tester', 'reviewer'];
+      for (let index = 0; index < taskRoles.length; index++) {
+        const role = taskRoles[index];
         const id = `stage:${task.id}:${role}`;
         const evidence = agents.filter(agent => agent.task === task.id && agent.role === role).sort((a, b) => (a.attempt ?? -1) - (b.attempt ?? -1) || String(a.started_at ?? '').localeCompare(String(b.started_at ?? '')));
         add({ id, kind: 'stage', taskId: task.id, role, label: labels[role], status: stageStatus(task, role), x, y: y + (index + 1) * step, agents: evidence });

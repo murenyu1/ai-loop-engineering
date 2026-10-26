@@ -11,7 +11,7 @@ import { ROLES, balanced, roleEnabled, validateProfile, agentPath, nativeAgent, 
 
 const START = '<!-- ai-loop:start -->';
 const END = '<!-- ai-loop:end -->';
-export const REQUIRED_FILES = ['SETUP.md', 'WORKFLOW.md', 'MEMORY.md', ...['planner', 'dev', 'tester', 'reviewer', 'scribe'].map(role => `agents/loop-${role}.md`), ...['install.mjs', 'loop.mjs', 'lib.mjs', 'source.mjs', 'executable.mjs', 'adapters.mjs', 'toml.mjs', 'codex-models.mjs', 'routing.mjs', 'models.mjs', 'profiles.mjs', 'agents.mjs', 'doctor.mjs', 'memory.mjs', 'memory-store.mjs', 'roles.mjs', 'activity.mjs', 'dashboard.mjs', 'execution.mjs', 'windows.mjs', 'README.md'].map(file => `scripts/${file}`), 'templates/memory-index.md', 'templates/routing.md'];
+export const REQUIRED_FILES = ['SETUP.md', 'WORKFLOW.md', 'MEMORY.md', ...['planner', 'dev', 'tester', 'reviewer', 'scribe'].map(role => `agents/loop-${role}.md`), ...['install.mjs', 'loop.mjs', 'storage.mjs', 'lib.mjs', 'source.mjs', 'executable.mjs', 'adapters.mjs', 'toml.mjs', 'codex-models.mjs', 'routing.mjs', 'models.mjs', 'profiles.mjs', 'agents.mjs', 'doctor.mjs', 'memory.mjs', 'memory-store.mjs', 'roles.mjs', 'activity.mjs', 'dashboard.mjs', 'execution.mjs', 'windows.mjs', 'README.md'].map(file => `scripts/${file}`), 'templates/memory-index.md', 'templates/routing.md'];
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const wrapped = text => `${START}\n${text}\n${END}`;
 

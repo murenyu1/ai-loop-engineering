@@ -1,12 +1,19 @@
-4.6.0 多项目工作区以工作区保存 .ai-loop/runs；run 的 project_path 表示子项目归属，snapshot_paths 表示含共享依赖的证据范围。bootstrap --project-path 精确筛选；不自动移动历史记录。旧运行 legacy-unverified 不能视为已补原生验收。
-
 # 项目知识与会话恢复
 
-本协议用于跨会话、跨 harness 的项目记忆。所有工具共享项目 `.ai-loop/memory/` 和 `.ai-loop/runs/`；使用当前平台部署或已启用插件中的脚本，不复制知识库，不改根规范。插件模式不要求每项目安装核心。
+本协议规范跨会话、跨 Harness 的持久化项目记忆与恢复。
+所有工具统一依据核心存储层（`storage.mjs`）管理项目知识库（`.ai-loop/memory/`）与运行记录（`.ai-loop/runs/`）。
 
-若项目使用 Git 且忽略 `.ai-loop/`，跨克隆协作还需在项目已有开发文档目录维护可提交的交接摘要，包含基准提交、批准范围、改动、验证边界与下一步。只同步经核对的必要事实，不复制本机配置、凭据和日志全文；摘要不替代运行状态，不证明远端或安装版已更新。未使用 Git 的项目不因此被要求建仓库。
+## 存储架构与多项目物理隔离
 
-使用新版本 developed 阶段或 managed_execution 契约前，应统一升级参与写入同一运行的核心与插件；新版可读旧记录，旧版不能被假定可读新阶段。源码更新不会自动升级本机已安装插件，遇未知阶段停止并升级，不手改状态降级。
+- **单项目隔离**：指定了明确子项目路径（`project_path` 且非根目录）的运行，其运行状态、事件日志、证据报告与知识库直接存放于子项目本地的 `<project>/.ai-loop/` 下，实现物理隔离，避免多项目互相踩踏；
+- **根项目与跨项目**：跨多个子项目的综合运行或无子项目边界的根运行，存放于工作区根目录 `.ai-loop/`；
+- **自动索引与精确筛选**：存储层通过 `.ai-loop/storage-index.json` 自动维护多存储基准目录索引；`bootstrap` 与 `listRuns` 支持 `--project-path` 精确筛选，杜绝跨项目混淆；
+- **Git 与记忆的分工与互补**：
+  - **Git**：负责源代码管理、版本追溯、分支流转与代码差异审计；
+  - **Memory / Scribe**：负责记录用户意图、架构决策依据、被否决路线、未决问题、当前会话交接快照与验证证据指针；
+  - 即使未提交代码或跨不同的开发环境，只要读取 `.ai-loop/runs/<run_id>/checkpoint.json`，可恢复已经保存的开发上下文，再核对实际源码和执行状态后续接。若项目使用 Git 且在 `.gitignore` 中排除了 `.ai-loop/`，跨团队协作时可按需在开发文档中沉淀可提交的交接总结（包含基准 commit、改动文件、验证范围与下一步）。
+
+使用新版本 `developed` 阶段或 `managed_execution` 契约前，应统一升级参与写入同一运行的核心与插件；新版可向下兼容读取旧记录，旧版不能假定可读新阶段。源码更新不会自动升级本机已安装插件，遇未知阶段停止并升级，不手改状态降级。
 
 ## 新会话启动
 
@@ -37,6 +44,7 @@
 
 ## 更新与交接时机
 
+- 每个主代理执行轮次结束前：用 memory checkpoint 原子保存本轮交接及实际消费游标；不依赖中断预告。scribe 未开启或不可用时主代理履行，禁止把尚未落盘内容说成可恢复。
 - 重要需求、约束、决策得到确认后：立即追加简短 requirement / decision / rejected 等运行事件，保存结论和原因，不等聊天结束才补记。用户明确要求保存的项目知识也应及时保存。
 - 每个有意义的开发单元开始前用 loop progress 保存 planned（任务、目标、预期文件），完成后立即保存 done/blocked。阶段 checkpoint 批量整理语义；不用每个工具调用都写记录。突然中断恢复仅覆盖已经落盘的资料。
 - 阶段产生有意义的结果、阻塞或交付后：按需用记录角色批量整理新增事件，更新知识和交接。
@@ -52,7 +60,7 @@
 
 - `read`：按 entry ID 或分页读取完整条目正文（支持 `--id ID` 或 `--path PATH`，单次最多 8000 字符，可传 `--offset` / `--limit` 分页）。
 - `save`：增量合并知识条目。输入 JSON 包含 `{ base_revision, entries: [{ id, title, content, scope, status, source }] }`，并发时比对 expected_hash。
-- `checkpoint`：保存会话交接状态。输入 JSON 包含 `{ base_cursor, session: { intent, decisions, questions, next_steps, changes: [{ path, symbols, reason, read_first }] } }`。
+- `checkpoint`：保存会话交接状态。输入 JSON 包含 `{ base_cursor, expected_session_hash, event_cursor, intent, constraints, decisions, open_questions, next_steps, references, changes: [{ path, symbols, reason, read_first }] }`。
 - catalog.json 保存短目录与 revision，schema 2 的结构化知识按不可变 data 分片保存；Markdown 是阅读视图。schema 1 仍可读，更新时迁移并保留旧目录备份。save 根据已读取的 base_revision 和 expected_hash 增量合并条目，不默认删除旧条目；改动正文前留 history 备份。未索引旧资料需要先读、保留有效内容，再显式 import_existing。
 - checkpoint.json 保存实际消费的 event_cursor、交接结构和 session_hash。checkpoint 根据 base_cursor 和 expected_session_hash 合并；旧 session 留 handoffs 备份。可分批处理事件，但游标落后仍标 events-pending，不能称交接完整。
 - session.md 保存用户意图、约束、决策原因、未决问题、下一步和必要文件指针，不复制权威计数。changes 固定记录本阶段改动文件、symbols、reason、read_first；保存文件 hash，删除文件用 deleted:true。按符号定位优先于不稳定的行号，不复制整段源码。旧交接缺字段仍可读，新交接应补齐。state.json 始终是执行状态源；complete/stopped 的交接可归档整理，但状态不会重开。

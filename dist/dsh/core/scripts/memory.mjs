@@ -3,8 +3,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { BUNDLE, resourceRelative, assert, validId, rootPath, safePath, jsonFile, atomicWrite, locked, args, allowArgs, mainModule, printResult } from './lib.mjs';
-import { status, events } from './loop.mjs';
+import { status, events, listRuns } from './loop.mjs';
 import { loadCatalog, encodeCatalog, pagedView, verifyPages } from './memory-store.mjs';
+import { resolveRunBase, runPaths, relativeRunPath, projectBase } from './storage.mjs';
 
 const NAMES = ['index', 'architecture', 'decisions', 'lessons'];
 const STATES = ['confirmed', 'observed', 'unverified', 'superseded'];
@@ -70,8 +71,8 @@ function validateSource(root, source, observe = true) {
   }
   if (source.type === 'event') {
     validId(source.run); assert(Number.isInteger(source.seq) && source.seq > 0, '事件来源编号无效');
-    if (observe) assert(events(root, source.run, source.seq - 1, 1).events[0]?.seq === source.seq, '知识来源事件不存在');
-    return { type: 'event', run: source.run, seq: source.seq };
+    if (observe) assert(events(root, source.run, source.seq - 1, 1, { project_path: source.project_path }).events[0]?.seq === source.seq, '知识来源事件不存在');
+    return { type: 'event', run: source.run, seq: source.seq, ...(source.project_path !== undefined ? { project_path: source.project_path } : {}) };
   }
   if (source.type === 'user') return { type: 'user', text: text(source.text, '已记录用户原意', 1000) };
   assert(source.type === 'url' && typeof source.url === 'string' && source.url.length <= 2048, '未知知识来源类型');
@@ -198,8 +199,8 @@ function uncachedSourceIssue(root, source) {
     return digest === null ? { type: 'missing-reference', path: source.path } : digest !== source.hash ? { type: 'changed-reference', path: source.path } : null;
   }
   if (source.type === 'event') {
-    if (!fs.existsSync(safePath(root, '.ai-loop/runs/' + source.run + '/state.json'))) return { type: 'missing-event-run', run: source.run };
-    const selected = events(root, source.run, source.seq - 1, 1).events[0];
+    if (!listRuns(root, { project_path: source.project_path }).some(run => run.run_id === source.run)) return { type: 'missing-event-run', run: source.run };
+    const selected = events(root, source.run, source.seq - 1, 1, { project_path: source.project_path }).events[0];
     return selected?.seq === source.seq ? null : { type: 'missing-event', run: source.run, seq: source.seq };
   }
   return null;
@@ -235,18 +236,21 @@ function list(value, name, max = 30) {
   assert(Array.isArray(value) && value.length <= max && value.every(item => nonempty(item) && item.length <= 2000), `${name} 须为最多 ${max} 条非空短文本`);
   return value;
 }
-function runState(root, run) {
-  const state = status(root, run);
+function runState(root, run, projectPath) {
+  const options = projectPath !== undefined ? { project_path: projectPath } : {};
+  const state = status(root, run, options);
   assert(['active', 'complete', 'stopped'].includes(state.status) && Number.isInteger(state.event_seq) && state.event_seq >= 0, '运行状态字段无效');
-  const lines = fs.readFileSync(safePath(root, '.ai-loop/runs/' + run + '/events.jsonl'), 'utf8').trim().split('\n').filter(Boolean);
+  const files = runPaths(root, run, projectPath);
+  const lines = fs.readFileSync(files.events, 'utf8').trim().split('\n').filter(Boolean);
   const last = lines.length ? JSON.parse(lines.at(-1)) : null;
   assert((last?.seq || 0) === state.event_seq, '运行状态与事件不一致，停止并人工恢复');
   return state;
 }
 function checkpointInfo(root, state) {
-  const prefix = `.ai-loop/runs/${state.run_id}`;
-  const session = file(root, prefix + '/session.md');
-  const item = file(root, prefix + '/checkpoint.json');
+  const relSession = relativeRunPath(root, state.run_id, 'session.md', state.project_path);
+  const relCheckpoint = relativeRunPath(root, state.run_id, 'checkpoint.json', state.project_path);
+  const session = file(root, relSession);
+  const item = file(root, relCheckpoint);
   const issues = [];
   if (session.content === null) issues.push({ type: 'missing-session' });
   let cursor = 0;
@@ -273,9 +277,9 @@ function checkpointInfo(root, state) {
   }
   return { status: issues.length ? 'needs-check' : 'ready', path: session.path, expected_hash: session.hash, event_cursor: cursor, event_head: state.event_seq, issues };
 }
-function renderSession(run, input) {
+function renderSession(run, input, statePath = `.ai-loop/runs/${run}/state.json`) {
   const section = (title, values) => `\n## ${title}\n\n${values.length ? values.map(value => '- ' + value).join('\n') : '- 无已记录内容'}\n`;
-  return `# 会话交接：${run}\n\n用户意图：${input.intent}\n\n当前阶段、计数、停止原因与验证状态以 .ai-loop/runs/${run}/state.json 为准。\n本交接记录到事件 ${input.event_cursor}；读取后续事件，不复制全量日志。\n` + section('仍有效的约束', input.constraints) + section('已确认决策与原因', input.decisions) + section('未决问题', input.open_questions) + section('下一步', input.next_steps) + section('本阶段改动与优先读取位置', (input.changes || []).map(change => `${change.path}；符号：${change.symbols.join('、') || '无具名符号'}；原因：${change.reason}；先读：${change.read_first}${change.deleted ? '（已删除）' : ''}`)) + section('关键资料（相对项目根）', input.references);
+  return `# 会话交接：${run}\n\n用户意图：${input.intent}\n\n当前阶段、计数、停止原因与验证状态以 ${statePath} 为准。\n本交接记录到事件 ${input.event_cursor}；读取后续事件，不复制全量日志。\n` + section('仍有效的约束', input.constraints) + section('已确认决策与原因', input.decisions) + section('未决问题', input.open_questions) + section('下一步', input.next_steps) + section('本阶段改动与优先读取位置', (input.changes || []).map(change => `${change.path}；符号：${change.symbols.join('、') || '无具名符号'}；原因：${change.reason}；先读：${change.read_first}${change.deleted ? '（已删除）' : ''}`)) + section('关键资料（相对项目根）', input.references);
 }
 export function changeContext(project, changes = []) {
   const root = rootPath(project);
@@ -292,10 +296,11 @@ export function changeContext(project, changes = []) {
     return { path: change.path, symbols: change.symbols, reason: change.reason, read_first: change.read_first, deleted: change.deleted === true, hash };
   });
 }
-export function checkpoint(project, run, input) {
+export function checkpoint(project, run, input, options = {}) {
   const root = rootPath(project); validId(run);
-  return locked(root, 'run-' + run, () => {
-    const state = runState(root, run);
+  const base = resolveRunBase(root, run, options.project_path);
+  return locked(base, 'run-' + run, () => {
+    const state = runState(root, run, options.project_path);
     const info = checkpointInfo(root, state);
     assert(input && input.expected_session_hash === info.expected_hash && input.base_cursor === info.event_cursor, '交接已变化；先读取当前正文、hash 与 event_cursor 再合并');
     assert(Number.isInteger(input.event_cursor) && input.event_cursor >= info.event_cursor && input.event_cursor <= state.event_seq, '交接游标不能回退或越过实际事件');
@@ -305,17 +310,17 @@ export function checkpoint(project, run, input) {
     assert(Array.isArray(input.references) && input.references.length <= 30 && new Set(input.references).size === input.references.length, '关键资料引用无效或重复');
     for (const relative of input.references) assert(fileHash(root, relative), '交接引用文件不存在：' + relative);
     const changesContext = changeContext(root, input.changes);
-    let content = renderSession(run, { ...input, changes: changesContext });
+    const prefix = path.relative(root, runPaths(root, run, options.project_path).directory).split(path.sep).join('/');
+    let content = renderSession(run, { ...input, changes: changesContext }, prefix + '/state.json');
     const details = [], staged = [];
     if (content.length > 12000) {
-      details.push(...pagedView(content, `.ai-loop/runs/${run}/handoff-pages`, 10000, (relative, part) => {
+      details.push(...pagedView(content, `${prefix}/handoff-pages`, 10000, (relative, part) => {
         const item = file(root, relative);
         assert(item.content === null || item.content === part, '交接不可变分页被修改：' + relative);
         if (item.content === null) staged.push({ ...item, updated: part });
       }));
       content = `# 会话交接：${run}\n\n用户意图：${input.intent}\n\n完整交接共 ${details.length} 页，全部约束、决策与改动均保留。继续执行前，先读取 checkpoint.json 中 details 指向的交接正文，并按任务定位必要部分。不能把此导航当作完整交接。\n\n下一步：\n${input.next_steps.slice(0, 3).map(item => '- ' + cut(item, 600)).join('\n')}\n\n${details.slice(0, 12).map((page, index) => `- 第 ${index + 1} 页：${page.path}`).join('\n')}\n`;
     }
-    const prefix = `.ai-loop/runs/${run}`;
     const session = file(root, prefix + '/session.md');
     const metadata = file(root, prefix + '/checkpoint.json');
     const desired = { schema_version: 1, run_id: run, event_cursor: input.event_cursor, intent: input.intent, constraints: input.constraints, decisions: input.decisions, open_questions: input.open_questions, next_steps: input.next_steps, references: input.references, changes: changesContext, details, session_hash: hash(content) };
@@ -333,12 +338,13 @@ export function checkpoint(project, run, input) {
     return { status: input.event_cursor < state.event_seq ? 'events-pending' : 'saved', run_id: run, event_cursor: input.event_cursor, event_head: state.event_seq, history: changes.filter(item => item.path.includes('/handoffs/')).map(item => item.path) };
   });
 }
-function compactRun(root, run) {
-  const state = runState(root, run);
+function compactRun(root, run, projectPath) {
+  const state = runState(root, run, projectPath);
   const blocked = state.tasks.some(task => task.phase === 'blocked');
   const checkpoint = checkpointInfo(root, state);
   const boundedCheckpoint = { ...checkpoint, issue_count: checkpoint.issues.length, issues: checkpoint.issues.slice(0, 5) };
-  const recent = fs.readFileSync(safePath(root, `.ai-loop/runs/${run}/events.jsonl`), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+  const files = runPaths(root, run, projectPath);
+  const recent = fs.readFileSync(files.events, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
   const units = new Map();
   for (const event of recent) if (event.type === 'progress') units.set(event.unit, event);
   const open = [...units.values()].filter(unit => unit.stage === 'planned');
@@ -360,35 +366,42 @@ export function bootstrap(project, options = {}) {
   assert(intent !== 'new' || !options.run, '新需求不能指定旧运行作为恢复目标');
   const limit = options.limit ?? 10;
   assert(Number.isInteger(limit) && limit > 0 && limit <= 30, '启动分页 limit 须为 1–30');
-  if (options.after) validId(options.after);
+  let afterKey = null;
+  if (options.after) {
+    if (options.after.startsWith('v2:')) {
+      try { afterKey = JSON.parse(Buffer.from(options.after.slice(3), 'base64url').toString()); } catch { throw new Error('启动游标无效'); }
+      assert(afterKey && typeof afterKey.run_id === 'string' && typeof afterKey.project_path === 'string', '启动游标无效'); validId(afterKey.run_id);
+    } else validId(options.after);
+  }
   if (options.run) validId(options.run);
-  const directory = safePath(root, '.ai-loop/runs');
-  const ids = fs.existsSync(directory) ? fs.readdirSync(directory).sort() : [];
-  assert(ids.length <= 10000, '运行目录超过 10000 项；先明确归档方案');
+  const allRuns = listRuns(root, { project_path: options.project_path });
+  assert(allRuns.length <= 10000, '运行目录超过 10000 项；先明确归档方案');
   const runs = [];
-  for (const id of ids) {
-    validId(id);
-    assert(fs.statSync(safePath(root, '.ai-loop/runs/' + id)).isDirectory(), '运行条目不是目录：' + id);
-    const state = status(root, id);
-    assert(['active', 'complete', 'stopped'].includes(state.status), '运行状态字段无效');
-    if (state.status === 'active' && (options.project_path === undefined || sameProjectPath(state.project_path ?? '.', options.project_path))) runs.push(compactRun(root, id));
+  for (const item of allRuns) {
+    if (item.status === 'active') {
+      runs.push(compactRun(root, item.run_id, item.project_path));
+    }
   }
   let selected = null;
   if (options.run) {
-    const candidate = compactRun(root, options.run);
+    const candidate = compactRun(root, options.run, options.project_path);
     assert(options.project_path === undefined || sameProjectPath(candidate.project_path, options.project_path), '指定运行不属于筛选子项目');
     selected = { run_id: candidate.run_id, action: candidate.continuation === 'closed' ? 'do-not-resume' : candidate.continuation === 'resolve-blocker' ? 'resolve-blocker' : candidate.checkpoint.status === 'ready' ? 'check-project-before-continuing' : 'refresh-handoff-before-continuing', run: candidate };
   } else if (intent === 'continue' && runs.length === 1) {
     const candidate = runs[0];
     selected = { run_id: candidate.run_id, action: candidate.continuation === 'resolve-blocker' ? 'resolve-blocker' : candidate.checkpoint.status === 'ready' ? 'check-project-before-continuing' : 'refresh-handoff-before-continuing' };
   }
-  const listed = runs.filter(run => run.run_id !== options.run && (!options.after || run.run_id > options.after));
+  const key = run => JSON.stringify([run.run_id, run.project_path ?? '.']);
+  runs.sort((a,b) => key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
+  const listed = runs.filter(run => !(options.run && run.run_id === options.run && (options.project_path === undefined || sameProjectPath(run.project_path, options.project_path))) && (!options.after || (afterKey ? key(run) > key(afterKey) : run.run_id > options.after)));
+  const duplicateIds = new Set(runs.filter((run,index) => runs.some((other,j) => j !== index && run.run_id === other.run_id)).map(run => run.run_id));
   const visible = listed.slice(0, limit);
   const remaining = listed.length > visible.length;
-  const memory = inspect(root);
+  const memoryBase = options.project_path && options.project_path !== '.' ? projectBase(root, options.project_path) : root;
+  const memory = inspect(fs.existsSync(safePath(memoryBase, '.ai-loop/memory')) ? memoryBase : root);
   // 启动输出只给短状态和路径，不把知识正文、已完成历史或报告回灌给模型。
   const memorySummary = { status: memory.status, revision: memory.revision, index: memory.index, documents: memory.documents.map(document => ({ name: document.name, path: document.path, indexed: document.indexed, issue_count: document.issues.length, issues: document.issues.slice(0, 5) })) };
-  return { intent, memory: memorySummary, active_count: runs.length, runs: visible, selected, needs_choice: !options.run && intent === 'continue' && runs.length > 1, next_after: remaining ? visible.at(-1)?.run_id : null, snapshot_status: 'unchecked', warning: '启动仅发现记录，不自动执行、恢复或证明代码与证据有效；知识记录不代替项目规则和权限。' };
+  return { intent, memory: memorySummary, active_count: runs.length, runs: visible, selected, needs_choice: !options.run && intent === 'continue' && runs.length > 1, next_after: remaining ? (duplicateIds.has(visible.at(-1).run_id) ? 'v2:' + Buffer.from(JSON.stringify({run_id:visible.at(-1).run_id,project_path:visible.at(-1).project_path})).toString('base64url') : visible.at(-1).run_id) : null, snapshot_status: 'unchecked', warning: '启动仅发现记录，不自动执行、恢复或证明代码与证据有效；知识记录不代替项目规则和权限。' };
 }
 export function search(project, query, limit = 8, after) {
   const root = rootPath(project); text(query, '检索词', 200);
@@ -429,9 +442,9 @@ export function search(project, query, limit = 8, after) {
   return { query, matches, truncated, next_after: truncated && matches.length ? `${matches.at(-1).document}:${matches.at(-1).id}` : null, warning: '摘要可能截断，重要约束用 read --document NAME --entry ID 核对；来源可能过期，使用前运行 inspect 并核对实际资料。' };
 }
 export function readHandoff(project, run, options = {}) {
-  const root = rootPath(project), state = runState(root, validId(run)), info = checkpointInfo(root, state);
+  const root = rootPath(project), state = runState(root, validId(run), options.project_path ?? options['project-path']), info = checkpointInfo(root, state);
   assert(!info.issues.some(item => ['missing-session', 'edited-session', 'missing-page', 'edited-page'].includes(item.type)), '交接正文缺失或被修改，先合并');
-  const target = safePath(root, `.ai-loop/runs/${run}/checkpoint.json`);
+  const target = safePath(runPaths(root, run, options.project_path ?? options['project-path']).directory, 'checkpoint.json');
   const metadata = fs.existsSync(target) ? jsonFile(target) : null;
   const pages = metadata?.details || [];
   const page = Number(options.page || 1), offset = Number(options.offset || 0), count = pages.length || 1;
@@ -472,7 +485,7 @@ export function cli(argv) {
   if (command === 'bootstrap') return bootstrap(options.project, { intent: options.intent, run: options.run, after: options.after, project_path: options['project-path'], ...(options.limit !== undefined ? { limit: Number(options.limit) } : {}) });
   if (command === 'inspect') return inspect(options.project);
   if (command === 'save') return save(options.project, input());
-  if (command === 'checkpoint') return checkpoint(options.project, options.run, input());
+  if (command === 'checkpoint') return checkpoint(options.project, options.run, input(), { project_path: options['project-path'] });
   if (command === 'search') return search(options.project, options.query, options.limit === undefined ? 8 : Number(options.limit), options.after);
   throw new Error('未知记忆命令，请查看 --help');
 }

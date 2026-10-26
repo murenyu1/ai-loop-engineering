@@ -1,6 +1,6 @@
-# AI Loop 通用工作流 4.6.0 候选
+# AI Loop 通用工作流 4.7.0
 
-本候选提供共享流程、状态/记忆工具及独立包中的项目安装适配器，尚未发布或安装。原生角色配置、实际调用、有效模型和 UI 必须分别验收。
+本版本提供共享流程、状态/记忆工具及独立包中的项目安装适配器，安装状态以用户本机为准。原生角色配置、实际调用、有效模型和 UI 必须分别验收。
 
 ## 安装与 harness 识别
 
@@ -27,4 +27,4 @@ node ai-loop-engineering/scripts/install.mjs --project PROJECT --harness codex
 
 项目资料写入目标 .ai-loop/。新独立评审运行自动使用 schema 4；报告必须关联本批次 completed 原生观察、不同父子上下文、代码快照和原生证据。整体评审另有 final 执行记录。详见 scripts/README.md。
 
-多项目工作区创建运行声明 project_path 和必要 snapshot_paths，记录仍集中于工作区 .ai-loop/runs/。用 memory.mjs bootstrap --project ROOT --project-path 子目录 --intent continue 筛选。共享依赖须显式纳入快照，旧记录不自动移动。
+多项目工作区创建运行声明 project_path 和必要 snapshot_paths，单项目记录保存在子项目 .ai-loop/runs/，跨项目记录保存在工作区根；旧记录保持原位置。用 memory.mjs bootstrap --project ROOT --project-path 子目录 --intent continue 筛选。共享依赖须显式纳入快照，旧记录不自动移动。

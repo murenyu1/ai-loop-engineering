@@ -208,13 +208,16 @@ test('DSH status bridge uses same-origin fetch, encodes paths, preserves errors 
   assert.equal(request.options.method, 'GET');
   assert.equal(request.url.pathname, '/plugins/ai-loop-engineering/state');
   assert.equal(result.runs.length, 2);
+  let scoped;
+  await plugin.requestStatus(async url => { scoped = new URL(url); return { ok: true, status: 200, json: async () => ({ runs: [] }) }; }, 'D:\\Projects\\x', '', '', undefined, {}, 'apps/ledger');
+  assert.equal(scoped.searchParams.get('project_path'), 'apps/ledger');
   await assert.rejects(plugin.requestStatus(async () => ({ ok: false, status: 403, json: async () => ({ error: '工作区未启用' }) }), 'D:\\Projects\\x'), error => error.message === '工作区未启用' && error.status === 403);
   await assert.rejects(plugin.requestStatus(async () => { throw new Error('network down'); }, 'D:\\Projects\\x'), /network down/);
 });
 
 test('两个看板订阅同一 session/project/run 时共享一次状态请求', async () => {
   const pending = [];
-  const store = plugin.createStatusPollStore((url, options) => new Promise(resolve => pending.push({ url: new URL(url), options, resolve })), {});
+  const store = plugin.createStatusPollStore((url, options) => new Promise(resolve => pending.push({ url: new URL(url), options, resolve })), { setTimeout: () => 1, clearTimeout: () => {} });
   const params = { sessionId: 's1', path: '/project', run: 'r1' };
   const first = store.subscribe(params, () => {});
   const second = store.subscribe(params, () => {});
@@ -226,6 +229,24 @@ test('两个看板订阅同一 session/project/run 时共享一次状态请求',
   assert.equal(pending[0].options.signal.aborted, false);
   second();
   assert.equal(pending[0].options.signal.aborted, true);
+});
+
+test('同名 run 在不同 project_path 下使用独立轮询身份和请求参数', async () => {
+  const pending = [];
+  const store = plugin.createStatusPollStore((url, options) => new Promise(resolve => pending.push({ url: new URL(url), options, resolve })), { setTimeout: () => 1, clearTimeout: () => {} });
+  const one = { sessionId: 's1', path: '/workspace', project_path: 'apps/one', run: 'same-run' };
+  const two = { sessionId: 's1', path: '/workspace', project_path: 'apps/two', run: 'same-run' };
+  const offOne = store.subscribe(one, () => {});
+  const offTwo = store.subscribe(two, () => {});
+  assert.equal(pending.length, 2);
+  assert.equal(pending[0].url.searchParams.get('project_path'), 'apps/one');
+  assert.equal(pending[1].url.searchParams.get('project_path'), 'apps/two');
+  pending[0].resolve({ ok: true, json: async () => ({ project_path: 'apps/one', run_id: 'same-run' }) });
+  pending[1].resolve({ ok: true, json: async () => ({ project_path: 'apps/two', run_id: 'same-run' }) });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(store.get(one).data.project_path, 'apps/one');
+  assert.equal(store.get(two).data.project_path, 'apps/two');
+  offOne(); offTwo();
 });
 
 test('聊天看板按 opaque 游标请求更早历史页并保留会话与工作区绑定', async () => {
@@ -444,7 +465,7 @@ test('看板切换会话或工作区时清空运行选择并隔离旧响应', as
     let tree = render(props);
     const runSelect = flatten(tree).find(node => node?.type === 'select');
     assert.ok(runSelect);
-    runSelect.props.onChange({ target: { value: 'run-old' } });
+    runSelect.props.onChange({ target: { value: JSON.stringify(['.', 'run-old']) } });
     render(props);
     assert.equal(pending.at(-1).url.searchParams.get('run'), 'run-old');
 

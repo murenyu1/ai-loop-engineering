@@ -3,6 +3,56 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { panelHost } from './support/panel-host.mjs';
 import { DASHBOARD_READ_TOOL, DASHBOARD_TOOL } from '../codex/scripts/settings-server.mjs';
+import { create, begin } from '../scripts/loop.mjs';
+import { recordActivity } from '../scripts/activity.mjs';
+
+test('无工作区的全局草稿可保存，项目草稿仍要求选择工作区', async t => {
+  const host = await panelHost(t); await host.open(); await host.flush();
+  const panel = host.panels[0];
+  panel.element('settings').listeners.get('change')({ target: { dataset: { field: 'concurrency' }, value: '4' } });
+  await host.flush();
+  assert.equal(panel.element('workspace').value, '');
+  assert.equal(panel.element('save').disabled, false);
+  await panel.element('save').listeners.get('click')(); await host.flush();
+  assert.equal(panel.element('save').disabled, true);
+  panel.eval("renderSettings({dirty:true,values:{scope:'project'},schema:{properties:{}}})");
+  assert.equal(panel.element('save').disabled, true);
+  assert.equal(host.messages.length, 0);
+});
+
+test('同一聊天轮询读取最新任务状态且保留草稿与视图状态', async t => {
+  const host = await panelHost(t); await host.open({ root: host.root, session: 'chat' }); await host.flush();
+  const panel = host.panels[0];
+  panel.element('settings').listeners.get('change')({ target: { dataset: { field: 'concurrency' }, value: '4' } }); await host.flush();
+  panel.eval("graphState('sample').zoom=.7;graphState('sample').selected='node'");
+  const before = host.calls.filter(c => c.name === 'ai_loop.dashboard.history').length;
+  for (const tick of panel.intervals.values()) tick(); await host.flush();
+  assert.equal(host.calls.filter(c => c.name === 'ai_loop.dashboard.history').length, before + 1);
+  assert.equal(panel.element('dirty').textContent, '有未保存修改');
+  assert.equal(panel.eval("graphState('sample').zoom"), .7);
+  assert.equal(panel.eval("graphState('sample').selected"), 'node');
+  assert.equal(panel.element('run').value, '@history');
+  assert.equal(host.renders, 1); assert.equal(host.messages.length, 0);
+});
+
+test('Codex面板同名子项目运行可分别选中并读取状态', async t => {
+  const host = await panelHost(t);
+  for (const project_path of ['one', 'two']) {
+    fs.mkdirSync(host.root + '/' + project_path);
+    create(host.root, { goal: project_path, project_path, tasks: [{ id: 't', title: '任务', review: 'none', acceptance: ['隔离'], checks: [{ id: 'c', command: 'fixture' }] }] }, 'same');
+    begin(host.root, 'same', 't', 'development', { project_path });
+    recordActivity(host.root, 'same', { id: 'dev', task: 't', role: 'dev', harness: 'codex', state: 'requested', context: { mode: 'independent', id: project_path, parent_id: 'chat' }, summary: project_path }, { project_path });
+  }
+  await host.open({ root: host.root, session: 'chat' }); await host.flush();
+  const panel = host.panels[0];
+  assert.match(panel.element('run').innerHTML, /one/); assert.match(panel.element('run').innerHTML, /two/);
+  for (const project_path of ['one', 'two']) {
+    panel.element('run').value = JSON.stringify([host.root, 'same', project_path]);
+    await panel.element('run').listeners.get('change')(); await host.flush();
+    assert.equal(panel.eval('payload.run.project_path'), project_path);
+  }
+  assert.equal(host.messages.length, 0);
+});
 
 test('标准宿主不注入 window.openai，arguments 通知仍定位设置与看板且不发消息', async t => {
   const host = await panelHost(t, { standard: true });

@@ -140,7 +140,7 @@ function fixture(settings = config(), { managedExecution = false } = {}) {
   }
   apply(ctx, settings);
   const parent = { id: 'parent', session: { header: { cwd: project } }, options: { provider: 'parent-provider', model: 'parent-model', reasoningEffort: 'low' } };
-  return { ctx, skills, contexts, tools, calls, pending, preflights, routes, connection, parent, project, run: (role = 'reviewer', extra = {}, attempt = 0, task = 'task1') => tools[0].execute({ role, run: 'dispatch-run', task, attempt, description: '审查改动', prompt: '审查 src/main.mjs 正确性。' }, { agent: parent, signal: signal(), ...extra }) };
+  return { ctx, skills, contexts, tools, calls, pending, preflights, routes, connection, parent, project, run: (role = 'reviewer', extra = {}, attempt = 0, task = 'task1', project_path = '.') => tools.find(tool => tool.name === 'ai_loop_delegate').execute({ role, run: 'dispatch-run', task, attempt, project_path, description: '审查改动', prompt: '审查 src/main.mjs 正确性。' }, { agent: parent, signal: signal(), ...extra }) };
 }
 
 test('DSH 技能与动态上下文仅提供必要恢复入口，不写入项目', () => {
@@ -189,6 +189,169 @@ test('状态路由以公开 sessions.get 会话 cwd 为权威，不接受工作�
   assert.equal(res.status, 400);
   await f.routes[0].handler({ method: 'GET', url: `/plugins/ai-loop-engineering/state?session=unknown&project=${encodeURIComponent(f.project)}` }, res);
   assert.equal(res.status, 400);
+});
+
+test('ai_loop_plan 在没有正式运行时启动原生 planner，并只授权写入独立计划目录', async t => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-dsh-plan-'));
+  t.after(() => fs.rmSync(project, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(project, 'packages/ledger'), { recursive: true });
+  const f = fixture(config({ roles: { planner: { provider: 'planner-provider', model: 'planner-model' }, reviewer: { provider: 'parent-provider', model: 'parent-model' } }, projects: [{ path: project, enabled: true }] }));
+  const plan = f.tools.find(tool => tool.name === 'ai_loop_plan');
+  assert.ok(plan);
+  const observation = JSON.parse(await plan.execute({ description: '重构账本', request: '分析目标、拆分互斥任务并给出验收。', project_path: 'packages/ledger' }, { agent: f.parent, signal: signal() }));
+  assert.match(observation.plan_id, /^plan-/);
+  assert.equal(observation.run_id, undefined);
+  assert.equal(observation.native_id, 'child-1');
+  assert.equal(observation.project_path, 'packages/ledger');
+  assert.equal(observation.plan_file, `.ai-loop/plans/${observation.plan_id}/plan.json`);
+  assert.equal(f.calls[0].request.cwd, path.join(project, 'packages/ledger'));
+  assert.match(f.calls[0].request.prompt[0].text, /禁止创建正式 run\/task，禁止执行检查、命令或源码修改/);
+  assert.deepEqual(f.preflights.at(-1), { provider: 'planner-provider', model: 'planner-model' });
+  f.pending[0].resolve({ stopReason: 'completed', response: { text: '计划已写入 plan.json' } });
+  await new Promise(resolve => setImmediate(resolve));
+  const observe = f.tools.find(tool => tool.name === 'ai_loop_observe');
+  const completed = JSON.parse(await observe.execute({ plan_id: observation.plan_id, project_path: 'packages/ledger' }, { agent: f.parent }));
+  assert.equal(completed.state, 'completed');
+  assert.equal(completed.evidence.native_id, 'child-1');
+  assert.equal(completed.evidence.native_result.response.text, '计划已写入 plan.json');
+  const failedStart = JSON.parse(await plan.execute({ description: '另一份计划', request: '梳理目标。', project_path: 'packages/ledger' }, { agent: f.parent, signal: signal() }));
+  f.pending[1].reject(new Error('planner 原生调用失败'));
+  await new Promise(resolve => setImmediate(resolve));
+  const failed = JSON.parse(await observe.execute({ plan_id: failedStart.plan_id, project_path: 'packages/ledger' }, { agent: f.parent }));
+  assert.equal(failed.state, 'failed');
+  assert.equal(failed.evidence.native_result.message, 'planner 原生调用失败');
+  const stoppedStart = JSON.parse(await plan.execute({ description: '取消的计划', request: '准备后取消。', project_path: 'packages/ledger' }, { agent: f.parent, signal: signal() }));
+  f.pending[2].resolve({ stopReason: 'cancelled', response: { text: 'planner 已取消' } });
+  await new Promise(resolve => setImmediate(resolve));
+  const stopped = JSON.parse(await observe.execute({ plan_id: stoppedStart.plan_id, project_path: 'packages/ledger' }, { agent: f.parent }));
+  assert.equal(stopped.state, 'stopped');
+  assert.equal(stopped.evidence.native_result.response.text, 'planner 已取消');
+  assert.deepEqual(loop.listRuns(project), []);
+  assert.equal(fs.existsSync(path.join(project, '.ai-loop')), false);
+});
+
+test('同名子项目运行使用独立幂等身份、启动锁与观察边界', async t => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-dsh-project-boundary-'));
+  t.after(() => fs.rmSync(project, { recursive: true, force: true }));
+  for (const scope of ['apps/one', 'apps/two']) {
+    fs.mkdirSync(path.join(project, scope), { recursive: true });
+    loop.create(project, { project_path: scope, goal: '项目隔离', tasks: [{ id: 'task1', title: '实现', acceptance: ['完成'], review: 'none', checks: [{ id: 'c', command: 'node --version' }] }] }, 'dispatch-run');
+    const stateFile = path.join(project, scope, '.ai-loop', 'runs', 'dispatch-run', 'state.json');
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    state.tasks[0].phase = 'reviewing';
+    fs.writeFileSync(stateFile, JSON.stringify(state));
+  }
+  const f = fixture(config({ projects: [{ path: project, enabled: true }] }));
+  const prepare = f.tools.find(tool => tool.name === 'ai_loop_prepare');
+  const delegate = f.tools.find(tool => tool.name === 'ai_loop_delegate');
+  for (const scope of ['apps/one', 'apps/two']) {
+    const ticket = JSON.parse(await prepare.execute({ run: 'dispatch-run', task: 'task1', role: 'reviewer', attempt: 0, project_path: scope }, { agent: f.parent }));
+    recordActivity(project, 'dispatch-run', ticket, { project_path: scope });
+    await delegate.execute({ role: 'reviewer', run: 'dispatch-run', task: 'task1', attempt: 0, project_path: scope, execution: ticket.id, description: '审查', prompt: '检查隔离。' }, { agent: f.parent, signal: signal() });
+  }
+  assert.equal(f.calls.length, 2);
+  const observe = f.tools.find(tool => tool.name === 'ai_loop_observe');
+  const first = JSON.parse(await observe.execute({ run: 'dispatch-run', project_path: 'apps/one', native_id: 'child-1' }, { agent: f.parent }));
+  const second = JSON.parse(await observe.execute({ run: 'dispatch-run', project_path: 'apps/two', native_id: 'child-2' }, { agent: f.parent }));
+  assert.equal(first.project_path, 'apps/one');
+  assert.equal(second.project_path, 'apps/two');
+  await assert.rejects(observe.execute({ run: 'dispatch-run', project_path: 'apps/two', native_id: 'child-1' }, { agent: f.parent }), /没有此会话和项目边界/);
+  f.pending.forEach(item => item.resolve({ stopReason: 'completed' }));
+});
+
+test('ai_loop_status 与 Web 状态路由按 project_path 筛选并拒绝越界路径', async t => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-dsh-status-scope-'));
+  t.after(() => fs.rmSync(project, { recursive: true, force: true }));
+  for (const scope of ['packages/a', 'packages/b']) {
+    fs.mkdirSync(path.join(project, scope), { recursive: true });
+    loop.create(project, { project_path: scope, goal: scope, tasks: [{ id: 'task1', title: '任务', acceptance: ['完成'], review: 'none', checks: [{ id: 'c', command: 'node --version' }] }] }, 'same-run');
+  }
+  const f = fixture(config({ projects: [{ path: project, enabled: true }] }));
+  const status = f.tools.find(tool => tool.name === 'ai_loop_status');
+  const scoped = JSON.parse(await status.execute({ project_path: 'packages/a' }, { agent: f.parent, signal: signal() }));
+  assert.equal(scoped.project_path, 'packages/a');
+  assert.equal(scoped.goal, 'packages/a');
+  const invalid = JSON.parse(await status.execute({ project_path: '../outside' }, { agent: f.parent, signal: signal() }));
+  assert.match(invalid.error, /不能越出工作区/);
+  const response = { status: 0, body: '', writeHead(code) { this.status = code; }, end(body) { this.body = body; } };
+  await f.routes[0].handler({ method: 'GET', url: `/plugins/ai-loop-engineering/state?project=${encodeURIComponent(project)}&project_path=packages%2Fa` }, response);
+  assert.equal(response.status, 200);
+  const web = JSON.parse(response.body);
+  assert.equal(web.project_path, 'packages/a');
+  assert.deepEqual(web.runs.map(run => run.project_path), ['packages/a']);
+});
+
+test('同一父聊天的同名项目运行在实时与完成状态中保持隔离', async t => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-dsh-live-scope-'));
+  t.after(() => fs.rmSync(project, { recursive: true, force: true }));
+  for (const scope of ['one', 'two']) {
+    fs.mkdirSync(path.join(project, scope), { recursive: true });
+    loop.create(project, { project_path: scope, goal: `目标 ${scope}`, tasks: [{ id: 'task1', title: '检查', acceptance: ['完成'], review: 'none', checks: [{ id: 'c', command: 'fixture' }] }] }, 'same-run');
+    loop.begin(project, 'same-run', 'task1', 'development', { project_path: scope });
+  }
+  const f = fixture(config({ maxConcurrent: 2, roles: { dev: { provider: 'provider', model: 'model' } }, projects: [{ path: project, enabled: true }] }));
+  f.parent.id = 'session-1';
+  f.ctx.sessions.get = id => ['session-1', 'session-2'].includes(id) ? { header: { cwd: project } } : undefined;
+  const prepare = f.tools.find(tool => tool.name === 'ai_loop_prepare');
+  const delegate = f.tools.find(tool => tool.name === 'ai_loop_delegate');
+  for (const [index, scope] of ['one', 'two'].entries()) {
+    const ticket = JSON.parse(await prepare.execute({ run: 'same-run', task: 'task1', role: 'dev', attempt: 0, project_path: scope }, { agent: f.parent }));
+    const requested = { ...ticket, ...(scope === 'one' ? { context: { mode: 'independent', id: `pending-${scope}`, parent_id: 'session-1' } } : {}), summary: '原生派发前登记' };
+    recordActivity(project, 'same-run', requested, { project_path: scope });
+    await delegate.execute({ role: 'dev', run: 'same-run', task: 'task1', attempt: 0, project_path: scope, execution: ticket.id, description: '隔离测试', prompt: '完成指定项目检查。' }, { agent: f.parent, signal: signal() });
+    assert.equal(f.pending[index] !== undefined, true);
+  }
+  const call = async query => {
+    const res = { status: 0, body: '', writeHead(code) { this.status = code; }, end(body) { this.body = JSON.parse(body); } };
+    await f.routes[0].handler({ method: 'GET', url: `/plugins/ai-loop-engineering/state?session=session-1${query}` }, res);
+    return res;
+  };
+  let res = await call('');
+  assert.equal(res.status, 200);
+  let byScope = new Map(res.body.chat_history.rounds.map(round => [round.run.project_path, round.activity.agents.filter(agent => agent.native_id).map(agent => agent.native_id)]));
+  assert.deepEqual(byScope.get('one'), ['child-1']);
+  assert.deepEqual(byScope.get('two'), ['child-2']);
+  res = await call('&project_path=one');
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.chat_history.rounds.map(round => round.run.project_path), ['one']);
+  f.pending.forEach(item => item.resolve({ stopReason: 'completed', output: '检查完成' }));
+  await new Promise(resolve => setImmediate(resolve));
+  res = await call('');
+  byScope = new Map(res.body.chat_history.rounds.map(round => [round.run.project_path, round.activity.agents.filter(agent => agent.native_id).map(agent => ({ id: agent.native_id, state: agent.state }))]));
+  assert.deepEqual(byScope.get('one'), [{ id: 'child-1', state: 'completed' }]);
+  assert.deepEqual(byScope.get('two'), [{ id: 'child-2', state: 'completed' }]);
+  res = { status: 0, body: '', writeHead(code) { this.status = code; }, end(body) { this.body = JSON.parse(body); } };
+  await f.routes[0].handler({ method: 'GET', url: '/plugins/ai-loop-engineering/state?session=session-2' }, res);
+  assert.deepEqual(res.body.runs, []);
+});
+
+test('唯一同聊天候选按自身 project_path 读取同名运行，缺轮补读也使用观察项目范围', async t => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-dsh-unique-scope-'));
+  t.after(() => fs.rmSync(project, { recursive: true, force: true }));
+  for (const scope of ['one', 'two']) {
+    fs.mkdirSync(path.join(project, scope), { recursive: true });
+    loop.create(project, { project_path: scope, goal: `目标 ${scope}`, tasks: [{ id: 'task1', title: '检查', acceptance: ['完成'], review: 'none', checks: [{ id: 'c', command: 'fixture' }] }] }, 'same-run');
+    loop.begin(project, 'same-run', 'task1', 'development', { project_path: scope });
+  }
+  const f = fixture(config({ roles: { dev: { provider: 'provider', model: 'model' } }, projects: [{ path: project, enabled: true }] }));
+  f.ctx.sessions.get = id => ['session-one', 'session-two'].includes(id) ? { header: { cwd: project } } : undefined;
+  for (const [scope, parentId] of [['one', 'session-one'], ['two', 'session-two']]) {
+    const context = { mode: 'independent', id: `child-${scope}`, parent_id: parentId };
+    recordActivity(project, 'same-run', { id: `agent-${scope}`, project_path: scope, task: 'task1', role: 'dev', attempt: 0, harness: 'dsh', state: 'requested', summary: '登记', context }, { project_path: scope });
+    recordActivity(project, 'same-run', { id: `agent-${scope}`, project_path: scope, state: 'running', native_id: `child-${scope}`, summary: '运行中' }, { project_path: scope });
+  }
+  const response = { status: 0, body: '', writeHead(code) { this.status = code; }, end(body) { this.body = JSON.parse(body); } };
+  await f.routes[0].handler({ method: 'GET', url: '/plugins/ai-loop-engineering/state?session=session-one' }, response);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.run_id, 'same-run', JSON.stringify(response.body));
+  assert.equal(response.body.project_path, 'one');
+  assert.deepEqual(response.body.activity.agents.map(agent => agent.native_id), ['child-one']);
+  const scoped = { status: 0, body: '', writeHead(code) { this.status = code; }, end(body) { this.body = JSON.parse(body); } };
+  await f.routes[0].handler({ method: 'GET', url: '/plugins/ai-loop-engineering/state?session=session-two&project_path=two' }, scoped);
+  assert.equal(scoped.status, 200);
+  assert.equal(scoped.body.run_id, 'same-run');
+  assert.equal(scoped.body.project_path, 'two');
+  assert.deepEqual(scoped.body.activity.agents.map(agent => agent.native_id), ['child-two']);
 });
 
 test('共享聊天历史按父会话服务端隔离，旧未绑定观察仅计数且游标分页稳定', t => {
@@ -356,7 +519,7 @@ test('DSH 插件重载后仍以核心非终态代理观察阻止重复派发', a
 test('DSH 方向标签不能拆分 task 或绕过同一正式任务的执行锁', async () => {
   const f = fixture();
   await f.run();
-  const execute = (task, direction) => f.tools[0].execute({ role: 'reviewer', run: 'dispatch-run', task, direction, attempt: 0, description: '第二个方向', prompt: '检查方向' }, { agent: f.parent, signal: signal() });
+  const execute = (task, direction) => f.tools.find(tool => tool.name === 'ai_loop_delegate').execute({ role: 'reviewer', run: 'dispatch-run', task, direction, attempt: 0, description: '第二个方向', prompt: '检查方向' }, { agent: f.parent, signal: signal() });
   await assert.rejects(execute('task1', 'backend'), /更换 direction 或 attempt/);
   await assert.rejects(execute('task1#backend', undefined), /正式 task id/);
   await assert.rejects(execute('task2', 'x'.repeat(65)), /最多 64 字符/);
@@ -453,14 +616,15 @@ test('DSH 新运行启动前须持久登记；原生观察可通过获准工具�
   const f = fixture(config({ projects: [{ path: project, enabled: true }] }));
   const args = { role: 'reviewer', run: 'dispatch-run', task: 'task1', attempt: 1, execution: 'exec1', description: '审查', prompt: '独立审查' };
   const exec = { agent: f.parent, signal: signal() };
-  await assert.rejects(f.tools[0].execute(args, exec), /先通过原生工具登记/); assert.equal(f.calls.length, 0);
+  const delegate = f.tools.find(tool => tool.name === 'ai_loop_delegate');
+  await assert.rejects(delegate.execute(args, exec), /先通过原生工具登记/); assert.equal(f.calls.length, 0);
   const prepare = f.tools.find(tool => tool.name === 'ai_loop_prepare');
   const ticket = JSON.parse(await prepare.execute({ run: 'dispatch-run', task: 'task1', role: 'reviewer', attempt: 1 }, exec));
   args.execution = ticket.id;
   recordActivity(project, 'dispatch-run', { ...ticket, revision: loop.snapshot(project) });
-  await f.tools[0].execute(args, exec);
+  await delegate.execute(args, exec);
   const reloaded = fixture(config({ projects: [{ path: project, enabled: true }] }));
-  await assert.rejects(reloaded.tools[0].execute(args, { agent: reloaded.parent, signal: signal() }), /凭据缺失、过期/);
+  await assert.rejects(reloaded.tools.find(tool => tool.name === 'ai_loop_delegate').execute(args, { agent: reloaded.parent, signal: signal() }), /凭据缺失、过期/);
   assert.equal(reloaded.calls.length, 0);
   const observe = f.tools.find(tool => tool.name === 'ai_loop_observe');
   let observation = JSON.parse(await observe.execute({ run: 'dispatch-run', native_id: 'child-1' }, exec));

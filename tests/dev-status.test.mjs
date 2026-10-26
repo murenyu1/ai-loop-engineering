@@ -30,6 +30,7 @@ test('Git 概览只读取本地引用并保留含空格的改动路径', t => {
 test('发行清单包括共享交接，二进制 Git 属性不会转换安装包', () => {
   const files = publishFiles().map(item => item.path);
   assert.ok(files.includes('docs/development/README.md'));
+  assert.ok(files.includes('package.json'));
   assert.ok(files.includes('docs/development/workflow-sync.md'));
   assert.ok(!files.some(file => file.startsWith('.ai-loop/') || file.startsWith('.codex/')));
   const attributes = execFileSync('git', ['check-attr', 'text', '--', 'downloads/package.zip', 'downloads/package.tgz'], { encoding: 'utf8', windowsHide: true });

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {safePath} from './lib.mjs';
-const common = new Set(['lib','loop','memory','memory-store','roles','activity','execution','dashboard','ui-theme','workflow-graph']);
+const common = new Set(['storage','lib','loop','memory','memory-store','roles','activity','execution','dashboard','ui-theme','workflow-graph']);
 const codex = new Set(['profiles','plugin','plugin-models','install-plugin','windows','codex-workspaces','workspace-recency','native-settings','settings-server','native-models','workspaces','session-start','executable']);
 const legacy = new Set(['install','models','routing','agents','doctor','adapters','toml','codex-models']);
 export function sourceRelative(root, relative) {

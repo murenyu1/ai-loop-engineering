@@ -14,8 +14,10 @@ function fixture(t, extra = {}) {
   fs.writeFileSync(path.join(root, 'one/code.txt'), 'one'); fs.writeFileSync(path.join(root, 'two/code.txt'), 'two');
   loop.create(root, { goal: '原生证据', tasks: [{ id: 't1', title: '独立评审', acceptance: ['证据绑定'], review: 'independent', checks: [{ id: 'c1', command: 'fixture-check' }] }], ...extra }, 'r1');
   const revision = () => loop.cli(['snapshot', '--project', root, '--run', 'r1']);
-  const log = '.ai-loop/runs/r1/reports/native.json';
-  fs.writeFileSync(path.join(root, log), '{"native_id":"child"}');
+  const runDir = loop.paths(root, 'r1', extra.project_path).directory;
+  const log = path.relative(root, path.join(runDir, 'reports/native.json')).split(path.sep).join('/');
+  fs.mkdirSync(path.join(runDir, 'reports'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'reports/native.json'), '{"native_id":"child"}');
   const verify = { role: 'tester', task_id: 't1', status: 'PASS', attempt: 1, execution: 'self', revision: revision(), checks: [{ id: 'c1', command: 'fixture-check', exit_code: 0, environment: 'fixture', log: 'reports/native.json' }], issues: [] };
   loop.begin(root, 'r1', 't1', 'development'); loop.begin(root, 'r1', 't1', 'verification'); loop.record(root, 'r1', verify); loop.begin(root, 'r1', 't1', 'review');
   const report = { role: 'reviewer', task_id: 't1', status: 'APPROVED', attempt: 1, execution: 'independent', execution_id: 'exec1', revision: revision(), findings: [], issues: [] };

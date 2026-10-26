@@ -52,7 +52,7 @@ const toolList = [
   { name: 'ai_loop.panel.update', title: '更新面板草稿', description: '只暂存当前面板的工作区配置。', inputSchema: { type: 'object', properties: { panel_id: { type: 'string' }, set: { type: 'object' } }, required: ['panel_id', 'set'], additionalProperties: false } },
   { name: 'ai_loop.panel.action', title: '保存或放弃面板草稿', description: '明确保存、放弃草稿或恢复继承。', inputSchema: { type: 'object', properties: { panel_id: { type: 'string' }, action: { type: 'string', enum: ['apply', 'discard', 'reset_project'] } }, required: ['panel_id', 'action'], additionalProperties: false } },
   { name: 'ai_loop.dashboard.runs', title: '读取工作区运行列表', description: '读取工作区运行；提供 session 时仅列出该聊天的运行。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' } }, required: ['root'], additionalProperties: false }, annotations: { readOnlyHint: true } },
-  { name: 'ai_loop.dashboard.status', title: '读取运行代理状态', description: '读取最后一次子代理观察及任务证据，不代表实时状态。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, run: { type: 'string' }, session: { type: 'string' } }, required: ['root', 'run'], additionalProperties: false }, annotations: { readOnlyHint: true } },
+  { name: 'ai_loop.dashboard.status', title: '读取运行代理状态', description: '读取最后一次子代理观察及任务证据，不代表实时状态。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, run: { type: 'string' }, project_path: { type: 'string' }, session: { type: 'string' } }, required: ['root', 'run'], additionalProperties: false }, annotations: { readOnlyHint: true } },
   { name: 'ai_loop.dashboard.history', title: '读取当前聊天历次任务', description: '按真实父聊天 ID 筛选历次运行，未知归属的旧记录单独计数，不混入当前聊天。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' }, after: { type: 'string' } }, required: ['root', 'session'], additionalProperties: false }, annotations: { readOnlyHint: true } },
 ];
 for (const name of ['ai_loop.dashboard.runs', 'ai_loop.dashboard.history']) {
@@ -237,7 +237,7 @@ export function createSettingsProtocol(manager = createSettingsManager(), option
               after = page.next_after;
             } while (after);
           }
-          const key = round => JSON.stringify([round.run.created_at || '', round.root, round.run.run_id]);
+          const key = round => JSON.stringify([round.run.created_at || '', round.root, round.run.project_path, round.run.run_id]);
           rounds.sort((a, b) => key(a) < key(b) ? 1 : key(a) > key(b) ? -1 : 0);
           let start = 0;
           if (args.after !== undefined) {
@@ -258,14 +258,15 @@ export function createSettingsProtocol(manager = createSettingsManager(), option
           return { jsonrpc: '2.0', id, result: toolResult({ root, runs: args.session === undefined ? listRuns(root) : sessionRuns(root, args.session).map(item => item.run) }) };
         }
         if (name === 'ai_loop.dashboard.status') {
-          if (typeof args.root !== 'string' || typeof args.run !== 'string' || Object.keys(args).some(key => !['root', 'run', 'session'].includes(key))) throw new Error('status 需要 root 和 run');
+          if (typeof args.root !== 'string' || typeof args.run !== 'string' || Object.keys(args).some(key => !['root', 'run', 'session', 'project_path'].includes(key))) throw new Error('status 需要 root 和 run');
           const root = discoveredRoot(args.root), run = validId(args.run);
-          const bound = args.session === undefined ? null : sessionRuns(root, args.session).find(item => item.run.run_id === run);
+          const bound = args.session === undefined ? null : sessionRuns(root, args.session).find(item => item.run.run_id === run && (args.project_path === undefined || item.run.project_path === args.project_path));
           if (args.session !== undefined && !bound) throw new Error('此运行不属于当前聊天');
-          const current = status(root, run);
+          const scope = { project_path: args.project_path };
+          const current = status(root, run, scope);
           const profile = resolveProfile(root, { home: home() }).profile || disabledProfile('codex');
           const roles = Object.fromEntries(Object.entries(profile.roles).map(([role, value]) => [role, { enabled: roleEnabled(value), model: value.model }]));
-          return { jsonrpc: '2.0', id, result: toolResult({ root, run: current, roles, activity: bound?.activity ?? activityStatus(root, run), events: events(root, run, Math.max(0, current.event_seq - 100), 100).events }) };
+          return { jsonrpc: '2.0', id, result: toolResult({ root, run: current, roles, activity: bound?.activity ?? activityStatus(root, run, scope), events: events(root, run, Math.max(0, current.event_seq - 100), 100, scope).events }) };
         }
         if (name === 'ai_loop.dashboard.history') {
           if (typeof args.session !== 'string' || !args.session.trim() || args.session.length > 1000 || Object.keys(args).some(key => !['root', 'session', 'after'].includes(key))) throw new Error('history 需要真实 root/session 与可选 after');

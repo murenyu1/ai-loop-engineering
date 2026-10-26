@@ -1,35 +1,70 @@
 ---
 name: ai-loop
-description: 用户要求使用 AI Loop 工作流开发、验证、评审、记录或继续项目任务时使用；项目存在 .ai-loop 记录且本次请求与其有关时恢复必要上下文。普通问答不启动开发，明确的新需求不擅自恢复旧任务。
+description: 在 Codex 环境中使用 AI Loop 工作流进行任务规划、代码开发、自动化验证、独立评审、阶段记录与跨会话恢复。
 ---
 
-# AI Loop 项目工作流
+# Codex AI Loop 工作流规范
 
-4.6.0：先读 ROUTING.md 并执行插件 doctor；dispatch=blocked 停止派发，不能换角色/CLI 绕过。新独立运行先用 activity.mjs 登记 requested，使用当前会话原生工具选择已开启且已发现的 loop-*；记录真实 native_id、父子上下文和当前 attempt/revision，保存实际工具返回至本运行 reports/，同步 running/completed 与 evidence。报告 execution_id 必须关联该记录，最终整体评审另用 final。缺少工具、发现、执行结果或证据必须明确待复核，不能把角色文件或口头扮演视为调用。用主代理原生工具保存记录，不让独立 reviewer 自行修改项目。
+本技能用于在 Codex 宿主中执行规范化、结构化的 AI Loop 软件工程任务。
+通用工作流逻辑、存储抽象与角色模板从插件目录统一复用，目标项目本地仅持久化 `.ai-loop/` 运行数据。
 
-工作区含子项目时，在 spec 中声明 project_path、必要 snapshot_paths，以工作区集中记录并按子项目筛选恢复；不要把配置目标切到未启用子目录。
+## 核心安全准则
 
-插件根目录是本 SKILL.md 上两级目录。脚本、角色、协议都从插件根读取，不复制进目标项目。目标项目必须依据当前工作区和用户请求确认，不能把插件根或源包当成目标。项目内只保存 `.ai-loop/` 运行资料。
+1. **宿主规则优先**：命中配置 `deny` 立即停止，严禁更换工具、子代理或切换权限模式绕行。
+2. **多文件确认机制**：涉及 3 个及以上文件改动时，必须先给出中文实施方案，获得用户明确确认后再编码；已批准方案在范围未变时不重复确认。
+3. **设置保护**：严禁私自修改 `settings.json`；如需变更必须事先向用户说明具体内容并获许可。
+4. **Git 与记录分工**：
+   - Git 负责源码版本管理、分支与代码提交；
+   - AI Loop 负责执行状态、意图、架构决策依据、未决问题与独立验证证据链；严禁未经授权擅自提交代码。
+5. **项目物理隔离存储**：
+   - 单项目运行（指定子项目路径 `project_path` 且非根目录）的数据保存在子项目本地 `<project>/.ai-loop/`；
+   - 跨项目或根目录运行保存在工作区根目录 `.ai-loop/`；
+   - 恢复与状态查询统一支持 `--project-path` 筛选。
 
-1. 遵守项目与上级规则、现有权限。deny 立即停止，不换工具、代理、权限模式或平台绕过。修改 settings.json 前必须取得具体许可；安装和模型设置默认不改它。三个及以上文件改动先取得方案确认；已有确认不重复询问。
-2. 新聊天首次处理项目相关请求，执行插件 `scripts/memory.mjs bootstrap --project ROOT`，读取共享 `memory/index.md`。若索引不存在，使用 `scripts/plugin.mjs init --project ROOT` 预演，再在已有任务授权内加 --apply 创建必要资料，不安装项目工作流副本，不修改项目 .codex 或根规范。已读同版本资料复用。
-3. 用户命令明显延续唯一活跃任务时，用 `bootstrap --intent continue` 定位，不要求用户记住 run_id；明确新需求用 new，普通提问用 inspect。多个候选才澄清；用户明确指定运行优先。不能把“发现唯一任务”当作无条件执行授权。
-4. 恢复先读取 state、session、checkpoint 中必要 details，查看 work_units 未关闭单元、游标之后事件；核对实际文件与旧验证适用性。pending 工作单元表示可能中断，不表示代码未改或测试通过。缺失/冲突先合并，保留原记录。任何聊天中尚未落盘的信息不能宣称已恢复。
-5. 使用插件 WORKFLOW.md、MEMORY.md 和当前角色。原生 loop-* 已发现、模型已配置且本任务授权使用子代理时，standard/full 按角色执行；独立评审必须是真实独立上下文。首次未配置默认五个角色关闭，不强迫设置模型；用户开启后再选择当前可用模型。不能用口头扮演或 shell 启动 CLI 冒充原生子代理。
-6. 每个有意义的工作单元开始前用 `loop.mjs progress` 保存 planned，变更完成立即保存 done/blocked，重要需求和决策及时记 event。阶段结束再整理 checkpoint；不为每次普通工具调用写文档。交接包含改动文件、符号、原因、优先读取位置。长文档用 memory read/search，不全量加载。
-7. 项目已有旧部署时保留其运行、模型和规则，先展示 `scripts/plugin.mjs init` 预演。plugin marker 只改变本次脚本来源，不移除旧入口；旧入口仍可能优先，必要迁移先说明具体差异。不要声称安装插件自动迁移旧项目。
-8. 插件 doctor 检查文件完整性、全局模型/项目覆盖、Windows 所有者；原生发现、真实执行、有效模型与 UI 单独核对。Windows 受保护配置由正常用户宿主进程写入，不能在 sandbox 账户中创建后再批量改权限。遇到 OS 权限故障先诊断，修复不绕过配置 deny。
+## 会话启动与前运行规划
 
-插件命令：`scripts/plugin.mjs init|doctor --project ROOT`；运行/交接接口见 `scripts/README.md`。模型与强度选择、全局默认、项目覆盖和恢复默认使用同插件 ai-loop-models 技能。安装一次不代表每个聊天强制加载，也不授予额外权限。
+1. **项目启动与上下文恢复**：
+   - 首次处理项目相关请求时，调用 `node PLUGIN/scripts/memory.mjs bootstrap --project ROOT --intent new|continue|inspect` 读取项目长期记忆与运行状态；
+   - `continue`：延续既有活跃运行（用户明确指定优先，唯一活跃自动定位，多候选请用户选择）；
+   - `new`：明确的新需求，启动前运行规划；
+   - `inspect`：只读了解现状与架构，不启动开发流程。
+2. **前运行轻量规划 (Pre-run Planning)**：
+   - 复杂或多模块任务在正式冻结运行前，先梳理出任务分解、互斥文件范围（`in_scope`/`out_of_scope`）、依赖拓扑（`depends_on`）、验收标准（`acceptance`）与自动化检查命令（`checks`）；
+   - 方案草案向用户呈现并获得确认后，再调用 `loop.mjs create` 创建正式运行，避免生成无效废弃运行。
 
-任务调度使用共享核心的 owner、in_scope/out_of_scope、dependencies 与 ready/blocked_reason；范围未知不并行写入。新任务选择 managed_execution 时，tester/reviewer 报告必须带核心当前角色 attempt 和代码 revision。先确认旧执行者停止再接管，不能只重派。磁盘 mail/inbox 保存语义交接，不替代原生消息、任务状态或真实独立评审。
+## 角色分工与执行规范
 
-复杂任务可让一个 `run` 级 planner 提出拆分建议，主代理审核后建立正式任务并统一派发；简单任务由主代理直接计划。run 级 `task` 仅用于 planner/scribe；`final` 仅用于整体 tester/reviewer。可选 `spec.workflow.nodes/edges` 描述有向无环的流程分支/汇合；它只展示交接结构，不改变任务依赖、phase 或证据门禁。多方向用独立正式 task 和互斥范围。同一 task+role 不可并发重复派发，写入收敛后验证与评审按当前 revision 串行。scribe 默认每个 run 共用，按阶段批量记录。看板仅依据匹配的原生父子上下文显示真实调用连线。
+- **分级模式**：
+  - `lite`：简单低风险任务，由主代理单代理闭环完成方案、实现与自检；
+  - `standard`：普通功能开发，包含计划、开发、测试与评审；
+  - `full`：关键核心或高风险任务，必须通过独立的自动化测试验证与独立评审（`independent`）。
+- **角色定位**：
+  - `planner`（计划）：运行级角色，输出方案草案与 DAG 任务拆分；
+  - `dev`（开发）：任务级角色，遵循最小改动原则，互斥文件范围的任务可并行开发；完成写入后调用 `finish --task ID` 汇聚；
+  - `tester`（测试）：任务级角色，在代码快照（`revision`）上执行真实命令并沉淀日志于 `reports/`；
+  - `reviewer`（评审）：任务级角色，对代码快照及测试证据进行真实缺陷与风险审查；
+  - `scribe`（记录）：运行级共享角色（`task: "run"`），在阶段收敛、交付或会话中断前增量保存长期知识与交接状态。
 
-插件设置直接读取 Codex 本机工作区列表，用户选择只读，点击统一保存后才保存启用状态，新工作区默认停用；不要求手填路径或单独登记。受信任的 SessionStart 钩子仅为用户启用的精确根目录提供恢复入口，不负责候选发现。必须尊重新命令意图，先恢复必要资料再行动。首次使用恢复入口需在 Codex 原生 `/hooks` 审核并信任钩子，不修改信任缓存或绕过审核。插件设置的实际显示与点击保存仍需在客户端页面验收，不能以自动测试代替。
+## 原生子代理派发流程
 
-SessionStart 的 `AI_LOOP_CHAT_CONTEXT` 为当前聊天提供真实 root/session。有该上下文时，子代理观察的 context.parent_id 使用 session，用户请求打开看板时调用 `ai_loop.dashboard` 并传入相同 root/session，自动进入本聊天历次运行。禁止把原生代理别名（如 /root）、插件 cwd、首个工作区或其他聊天缓存当作当前聊天标识。宿主空参数线程入口本身不携带聊天 ID；缺少上下文时只提供工作区运行选择，不能声称已自动定位。子代理聊天入口只使用宿主实际返回的可导航会话 ID，缺少地址保持不可打开。
+在 `standard`/`full` 模式下派发已在插件设置中开启的原生角色时，严格遵循以下四步闭环：
 
 侧栏安全边界：`ai_loop.dashboard` 只用于用户明确要求打开面板；页面内刷新、初始化和配置后读取仅调用无 UI 资源的 `ai_loop.dashboard.read`。上下文缺失时保留手选，禁止自动发送定位聊天消息、让模型回调打开面板或从其他聊天缓存猜测归属。
 
-4.5.0 角色策略：未配置默认全部关闭，设置模型菜单的“关闭”映射 enabled=false，不把它当模型 ID。保存保留原模型，关闭或仅改自动入口不依赖模型目录。doctor dispatch=disabled 时由主代理继续工作，不能调用已发现但已关闭的角色；保留的原生文件不是启用证据。运行中停止需原生确认，independent 要求不能自动降级。包内 MCP thread 看板不启动 HTTP；真实客户端渲染、实际模型及 UI 仍分别验收。
+角色策略：未配置默认全部关闭，设置模型菜单的“关闭”映射 enabled=false，不把它当模型 ID。保存保留原模型，关闭或仅改自动入口不依赖模型目录。doctor dispatch=disabled 时由主代理继续工作，不能调用已发现但已关闭的角色；保留的原生文件不是启用证据。运行中停止需原生确认，independent 要求不能自动降级。包内 MCP thread 看板不启动 HTTP；真实客户端渲染、实际模型及 UI 仍分别验收。
+```
+[1. 派发前校验]   ──> 执行 scripts/plugin.mjs doctor 核查派发条件；读取当前 attempt 与 revision
+        │
+        ▼
+[2. 状态预登记]   ──> 调用 activity.mjs record 登记 requested 状态
+        │
+        ▼
+[3. 原生工具启动] ──> 使用会话原生工具启动对应 loop-* 子代理
+        │
+        ▼
+[4. 观察同步归档] ──> 将实际返回保存至本运行 reports/，调用 activity.mjs 同步 running 与终态证据
+```
+
+- **执行约束**：`run` 与 `task` 必须严格匹配；普通阶段传正式 task id；`run` 级 planner/scribe 传 `task: "run"`；整体验收传 `task: "final"`。
+- **独立性底线**：独立评审报告必须携带 `execution_id` 与代码快照 `revision`；若缺少原生执行条件，如实标记为待复核或自检（`self`），严禁口头扮演或冒充独立通过。
+- **持续交接**：每个主代理执行轮次结束前原子保存 `checkpoint.json`；重要需求、约束和决策确认后立即追加事件，不依赖用户提前通知中断。scribe 未开启或不可用时由主代理履责；未落盘内容不能保证恢复。有可靠上下文指标达到 80% 时提醒并保存，不编造百分比。

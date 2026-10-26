@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { status as runStatus } from '../../../scripts/loop.mjs';
+import { runPaths } from '../../../scripts/storage.mjs';
 import { installed } from '../../../scripts/models.mjs';
 import { resolveProfile } from '../../../scripts/profiles.mjs';
 import { ROLES, roleEnabled, routeHash, validateProfile } from '../../../scripts/routing.mjs';
@@ -8,24 +9,24 @@ import { assert, rootPath, safePath, validId, jsonFile, locked, writeJson, args,
 
 const transitions = { requested: ['running', 'failed', 'stopped'], running: ['waiting', 'completed', 'failed', 'stopped'], waiting: ['running', 'failed', 'stopped'], completed: [], failed: [], stopped: [] };
 const nonempty = value => typeof value === 'string' && value.trim() && value.length <= 1000;
-function ledger(root, run) {
+function ledger(root, run, options = {}) {
   validId(run);
-  const file = safePath(root, `.ai-loop/runs/${run}/agents.json`);
+  const file = safePath(runPaths(root, run, options.project_path).directory, 'agents.json');
   return { file, data: fs.existsSync(file) ? jsonFile(file) : { schema_version: 1, agents: [] } };
 }
 const compact = item => ({ id: item.id, harness: item.harness, role: item.role, task: item.task,
   state: item.state, native_id: item.native_id, requested: item.requested, profile_hash: item.profile_hash,
   updated_at: item.updated_at, ...(item.replaces ? { replaces: item.replaces } : {}),
   observations: item.observations.slice(-1), history_count: item.history.length });
-export function recordAgent(project, run, input) {
+export function recordAgent(project, run, input, options = {}) {
   const root = rootPath(project);
   assert(input && Object.keys(input).every(key => ['id', 'harness', 'role', 'task', 'state', 'native_id', 'summary', 'observation', 'replaces'].includes(key)), '代理记录字段无效');
   validId(input.id);
   assert(Object.hasOwn(transitions, input.state) && nonempty(input.summary), '代理状态或摘要无效');
-  return locked(root, `run-${validId(run)}`, () => {
-    const current = runStatus(root, run);
+  return locked(runPaths(root, run, options.project_path).base, `run-${validId(run)}`, () => {
+    const current = runStatus(root, run, options);
     assert(current.status !== 'complete' && current.status !== 'stopped', '已关闭运行不能新增或更新代理记录');
-    const { file, data } = ledger(root, run);
+    const { file, data } = ledger(root, run, options);
     assert(data.schema_version === 1 && Array.isArray(data.agents), '代理台账格式无效');
     const previous = data.agents.find(agent => agent.id === input.id);
     let item;
@@ -73,21 +74,21 @@ export function recordAgent(project, run, input) {
     return { ...compact(item), effective_model: 'unverified', note: '台账记录调度者的原生观察，不自动解析证据或强制模型；completed 不代表任务验证通过' };
   });
 }
-export function agentStatus(project, run) {
+export function agentStatus(project, run, options = {}) {
   const root = rootPath(project);
-  runStatus(root, run);
-  const { data } = ledger(root, run);
+  runStatus(root, run, options);
+  const { data } = ledger(root, run, options);
   assert(data.schema_version === 1 && Array.isArray(data.agents), '代理台账格式无效');
   return { schema_version: 1, agents: data.agents.map(compact), note: '仅显示最后记录的状态和最近观察，不是实时轮询。完整历史保存在 agents.json；实际运行状态以原生工具为准。' };
 }
 export function cli(argv) {
   const options = args(argv);
-  allowArgs(options, ['project', 'run', 'input', 'help']);
+  allowArgs(options, ['project', 'run', 'project-path', 'input', 'help']);
   assert(options._.length <= 1, '只能指定一个命令');
   const [command] = options._;
   if (options.help || !command) return { usage: 'agents.mjs record|status --project ROOT --run ID [--input PROJECT_RELATIVE_JSON]' };
-  if (command === 'status') return agentStatus(options.project, options.run);
+  if (command === 'status') return agentStatus(options.project, options.run, { project_path: options['project-path'] });
   assert(command === 'record', '未知命令');
-  return recordAgent(options.project, options.run, jsonFile(safePath(rootPath(options.project), options.input)));
+  return recordAgent(options.project, options.run, jsonFile(safePath(rootPath(options.project), options.input)), { project_path: options['project-path'] });
 }
 if (mainModule(import.meta.url)) printResult(() => cli(process.argv.slice(2)));

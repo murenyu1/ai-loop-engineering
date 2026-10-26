@@ -20,3 +20,5 @@ await import('./dsh-client.test.mjs');
 await import('./dsh-release.test.mjs');
 await import('./dev-status.test.mjs');
 await import('./layout.test.mjs');
+
+await import('./storage.test.mjs');

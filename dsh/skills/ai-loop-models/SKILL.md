@@ -1,16 +1,26 @@
 ---
 name: ai-loop-models
-description: 管理 DSH AI Loop 的精确工作区启停、全局角色模型、项目覆盖和并发。
+description: 管理 DSH AI Loop 插件的精确工作区启停、全局与项目角色模型路由、思考深度及并发上限。
 ---
 
-# DSH 原生插件设置
+# DSH 原生模型与插件设置规范
 
-在 DSH 设置中的 AI Loop 插件页面管理配置；配置由 DSH 原生 volatile 字段保存。不要调用 Codex 设置服务，不通过宿主 fs、CLI 或修改 settings.json 代替原生设置。
+本技能用于指导在 DeepSeek Harness (DSH) 原生插件设置页配置 AI Loop 工作区及各角色模型。
+所有配置由 DSH 原生设置系统安全保存，严禁使用脚本或外部命令绕过宿主直接修改 `settings.json`。
 
-- 旧配置（无 `schemaVersion`）的总开关由 `enabled` 读取。首次通过 DSH 原生设置保存后使用 `schemaVersion: 2` 和 `workflowEnabled`；同时必须保持兼容旧版的 `enabled: false`，由原生表单原子保存这三个字段。不得手写 `enabled: true` 绕过兼容保护。只有 v2 总开关开启且 `projects` 中精确路径条目 `enabled: true` 才启用；选择工作区只读，新工作区默认停用，父路径不会自动启用子项目。
-- 全局 `roles` 包含 planner/dev/tester/reviewer/scribe。未配置角色默认关闭；新设置可显式用 `enabled: false` 关闭，关闭优先于保留的旧路由。旧版显式 `provider` 与 `model` 成对配置仍视为开启。开启角色必须明确选择 provider/model；`reasoningEffort` 使用所选模型实际支持的 id，留空表示模型默认或同一路由父代理继承。项目 `enabled: false` 覆盖全局开启；重置项目角色恢复继承全局设置。
-- `projects[].roles` 按角色覆盖全局；模型路由的 `provider` 与 `model` 必须成对设置或同时留空，不能只改其中一个。思考强度可单独覆盖；未覆盖的值继承全局。显式空字符串清除对应值并回到父代理/模型默认。恢复全局时移除该项目角色覆盖。
-- `maxConcurrent` 为 1 到 16 的整数，默认 3；项目可覆盖。它只限制此插件的项目派发，不提高 DSH 自身子代理容量和深度限制。
-- 保存后下一次上下文组装和派发读取新配置，已运行子代理不受追溯修改。通过 DSH 实际可用模型目录核实 provider/model/强度；派发时原生 resolveCallConfig 会预检，无效设置报错，不静默降级。
+## 配置架构与开关机制
 
-插件技能与设置不会授予额外权限。不要把配置保存成功当成真实模型执行或 UI 验收已经通过。
+1. **版本与双重安全校验**：
+   - 采用 Schema v2 规范，总开关为 `workflowEnabled`（并保持兼容性字段 `enabled: false` 保护）；
+   - 精确项目安全机制：仅当 v2 总开关开启且 `projects` 中对应工作区条目显式标记为 `enabled: true` 时，该项目才真正启用；新检测到的工作区默认处于停用状态，父目录启用绝不自动继承给未配置的子项目。
+2. **五角色模型路由**：
+   - 角色包含 `planner`、`dev`、`tester`、`reviewer`、`scribe`；
+   - 新环境默认所有角色处于关闭状态；
+   - 开启角色必须成对指定 `provider` 与 `model`；`reasoningEffort`（思考深度）仅使用目标模型真实支持的等级，留空表示继承默认；
+   - 项目级配置覆盖：支持在项目条目中按角色覆盖全局配置；显式设为空清除覆盖并恢复继承全局，设为 `enabled: false` 显式关闭该角色。
+3. **并发上限控制**：
+   - `maxConcurrent` 限制当前项目同时派发的子代理数量，有效取值为 1 到 32 的整数，系统默认值为 6；支持在项目级单独配置覆盖；
+   - 插件并发计数仅限制本插件的任务派发，不提升 DSH 宿主自身的子代理深度与全局容量。
+4. **生效与生命周期边界**：
+   - 设置保存后即时对后续派发生效，已处于运行状态的子代理保持启动时的配置不变；
+   - 派发时宿主会预检模型可用性，无效或不可达模型将直接报错终止，绝不静默降级或偷换模型。
