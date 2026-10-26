@@ -59,12 +59,12 @@ export function registerProjectBase(project, projectPath) {
 }
 
 function matchesProject(base, root, run, projectPath) {
-  if (projectPath === undefined) return true;
   const file = stateFile(base, run);
   if (!fs.existsSync(file)) return false;
   try {
     const state = jsonFile(file);
-    return samePath(state.project_path ?? '.', projectPath);
+    if (!samePath(base, root) && (state.project_path ?? '.') === '.') return false;
+    return projectPath === undefined || samePath(state.project_path ?? '.', projectPath);
   } catch (error) {
     if (!(error instanceof SyntaxError) && error.code !== 'ENOENT') throw error;
     return samePath(base, root) && projectPath === '.';

@@ -1,4 +1,4 @@
-4.7.0 为当前版本；4.6.0 与 4.5.0 的发布和安装说明保留为历史版本。
+4.7.1 为当前版本；4.6.0 与 4.5.0 的发布和安装说明保留为历史版本。
 
 # AI Loop DeepSeek Harness 插件
 
@@ -6,13 +6,13 @@
 
 ## 安装
 
-当前版本为 **4.7.0**：[v4.7.0 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.7.0) 提供[下载 DSH 插件](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.0/ai-loop-dsh-4.7.0.tgz)及 [SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.0/SHA256SUMS)。4.6.0、4.5.0、4.4.3 和 DSH 4.3.0 预览版保留在历史发布页。
+当前版本为 **4.7.1**：[v4.7.1 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.7.1) 提供[下载 DSH 插件](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.1/ai-loop-dsh-4.7.1.tgz)及 [SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.1/SHA256SUMS)。4.6.0、4.5.0、4.4.3 和 DSH 4.3.0 预览版保留在历史发布页。
 
 维护者也可从仓库构建安装包：
 
 ```powershell
 node scripts/build-dsh.mjs --pack
-dsh plugin --profile YOUR_PROFILE add ./downloads/ai-loop-dsh-4.7.0.tgz
+dsh plugin --profile YOUR_PROFILE add ./downloads/ai-loop-dsh-4.7.1.tgz
 ```
 
 命令应从源包根目录执行。用户拿到独立 tgz 后，可在其所在目录运行第二条命令并调整文件路径。预构建包没有安装脚本，不需要构建授权。使用 DSH 自带插件管理器安装到实际使用的 profile；不要把桌面安装目录当项目根目录或手动复制进应用程序资源。
@@ -21,7 +21,7 @@ dsh plugin --profile YOUR_PROFILE add ./downloads/ai-loop-dsh-4.7.0.tgz
 
 ```powershell
 & 'D:\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd' --version
-& 'D:\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd' plugin --profile YOUR_PROFILE add .\downloads\ai-loop-dsh-4.7.0.tgz
+& 'D:\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd' plugin --profile YOUR_PROFILE add .\downloads\ai-loop-dsh-4.7.1.tgz
 ```
 
 实际 profile 需与桌面正在使用的一致。插件安装涉及 profile 配置和依赖登记，请从正常用户终端操作；脚本不会修改 `settings.json`、应用安装资源或权限。

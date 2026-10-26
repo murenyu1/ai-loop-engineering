@@ -27,6 +27,7 @@ function analyzeWorkflow(tasks, workflow) {
   for (const link of workflow.edges) {
     const from = nodes.get(link.from), to = nodes.get(link.to);
     if (!definitions.has(from?.task) || !definitions.has(to?.task)) continue;
+    if (from.task === to.task) continue;
     if (reaches(from.task, to.task)) result.conflicts.push(`流程边 ${from.task} → ${to.task} 与 depends_on 反向`);
     else if (!reaches(to.task, from.task)) result.warnings.push(`流程边 ${from.task} → ${to.task} 未声明 depends_on，仅用于展示，不形成执行门禁`);
   }
@@ -615,6 +616,7 @@ export function listRuns(project, options = {}) {
       if (!fs.existsSync(stateFile)) continue;
       try {
         const state = jsonFile(stateFile);
+        if (path.relative(root, base) && (state.project_path ?? '.') === '.') continue;
         list.push({ run_id: entry, status: state.status, goal: state.goal, updated_at: state.updated_at, created_at: state.created_at, project_path: state.project_path ?? '.', snapshot_paths: state.snapshot_paths ?? null, storage_path: path.relative(root, base).split(path.sep).join('/') || '.' });
       } catch (error) {
         if (!(error instanceof SyntaxError) && error.code !== 'ENOENT') throw error;

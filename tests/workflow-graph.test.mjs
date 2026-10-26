@@ -4,13 +4,40 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
+import crypto from 'node:crypto';
 import { createWorkflowGraph } from '../core/scripts/workflow-graph.mjs';
 import { create, validateSpec, status, begin } from '../core/scripts/loop.mjs';
 import { dispatchCheck, recordActivity } from '../core/scripts/activity.mjs';
+import { bootstrap } from '../core/scripts/memory.mjs';
 
 const task = { id: 'task1', title: '任务一', acceptance: ['完成'], review: 'self', checks: [{ id: 'all', command: 'node tests/all.mjs' }] };
 const spec = workflow => ({ goal: '图测试', tasks: [task], workflow });
 const workflow = { nodes: [{ id: 'plan', task: 'run', role: 'planner' }, { id: 'dev', task: 'task1', role: 'dev' }, { id: 'scribe', task: 'run', role: 'scribe' }], edges: [{ from: 'plan', to: 'dev' }, { from: 'dev', to: 'scribe' }] };
+
+test('同一任务的阶段交接不作为跨任务依赖，反向依赖与图循环仍拒绝', () => {
+  const internal = { nodes: [{ id: 'dev', task: 'task1', role: 'dev' }, { id: 'test', task: 'task1', role: 'tester' }, { id: 'review', task: 'task1', role: 'reviewer' }], edges: [{ from: 'dev', to: 'test' }, { from: 'test', to: 'review' }] };
+  assert.deepEqual(validateSpec(spec(internal)).workflow, internal);
+  assert.throws(() => validateSpec(spec({ ...internal, edges: [...internal.edges, { from: 'review', to: 'dev' }] })), /循环/);
+  const tasks = [{ ...task, id: 'a' }, { ...task, id: 'b', depends_on: ['a'] }];
+  const nodes = [{ id: 'a', task: 'a', role: 'dev' }, { id: 'b', task: 'b', role: 'dev' }];
+  assert.doesNotThrow(() => validateSpec({ goal: '依赖', tasks, workflow: { nodes, edges: [{ from: 'a', to: 'b' }] } }));
+  assert.throws(() => validateSpec({ goal: '依赖', tasks, workflow: { nodes, edges: [{ from: 'b', to: 'a' }] } }), /反向/);
+});
+
+test('4.6.4已有同任务流程记录可只读恢复，spec和state不被迁移或重写', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-legacy-workflow-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const directory = path.join(root, '.ai-loop/runs/legacy'); fs.mkdirSync(directory, { recursive: true });
+  const definition = { ...task, id: 'audit' };
+  const old = { goal: '旧记录', tasks: [definition], max_fixes: 3, ignore_paths: [], workflow: { nodes: [{ id: 'test', task: 'audit', role: 'tester' }, { id: 'review', task: 'audit', role: 'reviewer' }], edges: [{ from: 'test', to: 'review' }] } };
+  const state = { schema_version: 4, version: '4.6.4', run_id: 'legacy', goal: old.goal, status: 'active', max_fixes: 3, event_seq: 1, spec_hash: crypto.createHash('sha256').update(JSON.stringify(old)).digest('hex'), tasks: [{ id: 'audit', title: definition.title, review: 'self', phase: 'pending', fixes: 0 }] };
+  fs.writeFileSync(path.join(directory, 'spec.json'), JSON.stringify(old)); fs.writeFileSync(path.join(directory, 'state.json'), JSON.stringify(state));
+  fs.writeFileSync(path.join(directory, 'events.jsonl'), JSON.stringify({ seq: 1, type: 'created' }) + '\n'); fs.writeFileSync(path.join(directory, 'session.md'), '保留旧交接');
+  const before = ['spec.json', 'state.json', 'events.jsonl', 'session.md'].map(file => fs.readFileSync(path.join(directory, file)));
+  assert.equal(status(root, 'legacy').run_id, 'legacy');
+  assert.equal(bootstrap(root, { intent: 'continue' }).selected.run_id, 'legacy');
+  for (const [index, file] of ['spec.json', 'state.json', 'events.jsonl', 'session.md'].entries()) assert.deepEqual(fs.readFileSync(path.join(directory, file)), before[index]);
+});
 
 test('workflow spec 校验唯一任务角色绑定、有效引用及无环拓扑', () => {
   assert.deepEqual(validateSpec(spec(workflow)).workflow, workflow);

@@ -120,6 +120,20 @@ test('planner和scribe不能借正式任务run同名绕过角色边界', t => {
   for (const role of ['planner', 'scribe']) assert.throws(() => dispatchCheck(root, 'legacy', 'run', role), /不能挂到正式任务/);
 });
 
+test('子目录独立工作区的旧本地记录不归父工作区，原根可继续读取且不改记录', t => {
+  const root = fixture(t), child = path.join(root, 'one');
+  loop.create(child, spec('.'), 'standalone');
+  const files = runPaths(child, 'standalone');
+  const before = [files.spec, files.state, files.events].map(file => fs.readFileSync(file));
+  loop.create(root, spec('two'), 'workspace');
+  assert.deepEqual(loop.listRuns(root).map(run => run.run_id), ['workspace']);
+  assert.equal(bootstrap(root, { intent: 'continue' }).selected.run_id, 'workspace');
+  assert.throws(() => loop.status(root, 'standalone'), /运行不存在/);
+  assert.equal(loop.status(child, 'standalone').run_id, 'standalone');
+  assert.equal(bootstrap(child, { intent: 'continue' }).selected.run_id, 'standalone');
+  for (const [index, file] of [files.spec, files.state, files.events].entries()) assert.deepEqual(fs.readFileSync(file), before[index]);
+});
+
 test('集中存储拒绝跨项目覆盖且保留状态、事件、报告和中断目录', t => {
   const root = fixture(t);
   loop.create(root, { ...spec('one'), snapshot_paths: ['one', 'two'] }, 'same');

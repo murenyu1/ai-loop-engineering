@@ -1,9 +1,9 @@
 {
-  "version": "4.7.0",
+  "version": "4.7.1",
   "files": [
     {
       "path": ".codex-plugin/plugin.json",
-      "hash": "dcee3fb68e8d780ec49f3eec7bda1cae58ded2a09c7c72e0290e604a7684ba53"
+      "hash": "cfc153d04484228ce8b8aef842944a22aaf03f9bd7669db41bd222e73dc52c41"
     },
     {
       "path": ".mcp.json",
@@ -35,7 +35,7 @@
     },
     {
       "path": "marketplace.json",
-      "hash": "e71ad92e4fcef76e9804a52b8843c0dd24bc56edbda72ddaa1bdef96a823efe0"
+      "hash": "62e2ab1b3ff198dba086fe4f78758bdb2d048ec12e7a0fcbe192b46b7e022666"
     },
     {
       "path": "mcp.json",
@@ -47,11 +47,11 @@
     },
     {
       "path": "plugin.json",
-      "hash": "b256a5e88a5403b23f0e6dfe5a264704ea845111d1e3c5afdcd985b5790dd7f3"
+      "hash": "adbc4566b3646a934031b198c53993df67960afe0df0f4b0b14e247dbddf7a0b"
     },
     {
       "path": "README.md",
-      "hash": "c1be7607fb72c68fe46f5cba018ed96fb0ed013ffdbc3fa50d8087b0ae64a50d"
+      "hash": "43a9e1ff1fe81f80dec04e4c96446fc2a5008eb97b628569211aa1856646d813"
     },
     {
       "path": "ROUTING.md",
@@ -103,11 +103,11 @@
     },
     {
       "path": "scripts/lib.mjs",
-      "hash": "3f7bfce49d52e148d2eea638a5f00e760a940322e69b09327dd0ef333e57085a"
+      "hash": "f7e18f1e5050c6a80506781383d92c59f33b35625825f6ef5efad15ae26d5834"
     },
     {
       "path": "scripts/loop.mjs",
-      "hash": "064181b712eb328177b964f2860b0f620b82119846f254bef5b0331a8cc5c7b3"
+      "hash": "01010bcbfae7c1360af51671d45d7037136ae7f610f500354030080a624609fd"
     },
     {
       "path": "scripts/memory-store.mjs",
@@ -167,7 +167,7 @@
     },
     {
       "path": "scripts/storage.mjs",
-      "hash": "77f84ccca2a91285f4d23da058057885bd2941002e388ee580d8de61517c045b"
+      "hash": "096a317fba605b652a799a6add223eca989df123ea78c9dc25d7b260134db029"
     },
     {
       "path": "scripts/toml.mjs",

@@ -1,6 +1,6 @@
 {
   "name": "ai-loop-monorepo",
-  "version": "4.7.0",
+  "version": "4.7.1",
   "private": true,
   "description": "AI Loop Engineering Monorepo (Core, DSH, Codex, and future Harness adapters)",
   "type": "module",

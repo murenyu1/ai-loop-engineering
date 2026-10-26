@@ -1,21 +1,21 @@
 # AI Loop Engineering
 
-**4.7.0** 汇总 Codex 侧栏与设置优化、DSH 前运行规划、项目记录隔离和持续交接；修复全局草稿保存、状态轮询、同名运行定位及发行包缺失依赖。验收范围与限制见 [4.7.0 综合验收](docs/development/release-4.7.0.md)。
+**4.7.1** 修复旧流程记录中同任务阶段连线的误判，以及父工作区混入独立子项目旧运行的问题；保留旧记录原字节与跨任务依赖门禁。验收与安装说明见 [4.7.1 交付](docs/development/release-4.7.1.md)。
 
-AI Loop Engineering 4.7.0 提供通用工作流、Codex 插件和 DSH 插件三个独立包。发布状态见 [v4.7.0 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.7.0)；4.4.3 设置修复背景见 [开发交接](docs/development/settings-refresh.md)。
+AI Loop Engineering 4.7.1 提供通用工作流、Codex 插件和 DSH 插件三个独立包。发布状态见 [v4.7.1 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.7.1)；4.4.3 设置修复背景见 [开发交接](docs/development/settings-refresh.md)。
 
-让 AI 按“计划 → 开发 → 验证 → 评审 → 交接”推进项目，并从已保存的记录恢复中断任务。当前版本为 **4.7.0**，通用核心需要 Node.js 18+，不依赖第三方 npm 包；原生插件使用对应宿主提供的运行接口。
+让 AI 按“计划 → 开发 → 验证 → 评审 → 交接”推进项目，并从已保存的记录恢复中断任务。当前版本为 **4.7.1**，通用核心需要 Node.js 18+，不依赖第三方 npm 包；原生插件使用对应宿主提供的运行接口。
 
 ## 选择适合你的版本
 
 | 用途 | 获取方式 | 内容 |
 |---|---|---|
-| 在不同 AI 开发工具中使用共用流程 | [通用工作流 4.7.0](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.0/ai-loop-workflow-4.7.0.zip) | 共用流程、角色、状态和分页记忆工具；不含 Codex 插件 |
-| 在 Codex 中一次安装，并在插件详情页设置 | [Codex 插件 4.7.0](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.0/ai-loop-codex-4.7.0.zip) | Codex 插件、原生设置、工作区管理和所需核心 |
-| 在 DeepSeek Harness 中使用原生插件 | [DSH 插件 4.7.0](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.0/ai-loop-dsh-4.7.0.tgz)，见 [安装说明](dsh/README.md) | 面向 0.2.1-rc.2 的插件、原生角色调度、设置和所需核心 |
+| 在不同 AI 开发工具中使用共用流程 | [通用工作流 4.7.1](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.1/ai-loop-workflow-4.7.1.zip) | 共用流程、角色、状态和分页记忆工具；不含 Codex 插件 |
+| 在 Codex 中一次安装，并在插件详情页设置 | [Codex 插件 4.7.1](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.1/ai-loop-codex-4.7.1.zip) | Codex 插件、原生设置、工作区管理和所需核心 |
+| 在 DeepSeek Harness 中使用原生插件 | [DSH 插件 4.7.1](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.1/ai-loop-dsh-4.7.1.tgz)，见 [安装说明](dsh/README.md) | 面向 0.2.1-rc.2 的插件、原生角色调度、设置和所需核心 |
 | 修改工作流或开发其他客户端插件 | 本仓库源码 | core、平台适配器、插件源码、测试和构建工具 |
 
-三个包和统一校验文件位于 [v4.7.0 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.7.0)：[SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.0/SHA256SUMS)。Codex 用户只需插件包；其他工具可选通用工作流包。GitHub 自动提供的 Source code 压缩包包含仓库源码，主要供开发维护使用。历史版本仍可从 [v4.4.3](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.4.3)、[v4.3.1](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.3.1) 和 [DSH 4.3.0 预览版](https://github.com/murenyu1/ai-loop-engineering/releases/tag/dsh-v4.3.0) 获取。
+三个包和统一校验文件位于 [v4.7.1 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.7.1)：[SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.1/SHA256SUMS)。Codex 用户只需插件包；其他工具可选通用工作流包。GitHub 自动提供的 Source code 压缩包包含仓库源码，主要供开发维护使用。历史版本仍可从 [v4.4.3](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.4.3)、[v4.3.1](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.3.1) 和 [DSH 4.3.0 预览版](https://github.com/murenyu1/ai-loop-engineering/releases/tag/dsh-v4.3.0) 获取。
 
 ## 功能
 
@@ -30,7 +30,7 @@ Codex 插件的模型设置通过本地 stdio MCP 的 `openai/settings` 集成�
 
 ## Codex 安装与使用
 
-1. 下载并解压 [Codex 插件 4.7.0](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.0/ai-loop-codex-4.7.0.zip)，安装并登录 Codex，并准备 Node.js 18+.
+1. 下载并解压 [Codex 插件 4.7.1](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.1/ai-loop-codex-4.7.1.zip)，安装并登录 Codex，并准备 Node.js 18+.
 2. 在解压后的插件目录，以正常用户终端预演和安装：
 
    ```powershell
@@ -40,7 +40,7 @@ Codex 插件的模型设置通过本地 stdio MCP 的 `openai/settings` 集成�
 
    插件安装到当前用户的 Codex 插件范围。桌面版 CLI 不在 PATH 时安装器会尝试定位；特殊安装可将 `AI_LOOP_CODEX_CLI` 设为 Codex 可执行文件路径。安装成功不等于当前聊天已经加载新版本。
 
-3. 打开 Codex 的 AI Loop Engineering 插件详情页，直接在“Codex 工作区”下拉框选择项目，无需查找或填写路径。选择仅查看该项目的模型和启用状态；新项目默认停用。4.7.0 中，工作区开关、模型、思考深度与并发统一点击“应用设置”，角色菜单默认关闭。选中工作区后，配置范围默认“仅当前工作区”；需要修改所有继承项目的默认值时，可明确选择“全局默认”。
+3. 打开 Codex 的 AI Loop Engineering 插件详情页，直接在“Codex 工作区”下拉框选择项目，无需查找或填写路径。选择仅查看该项目的模型和启用状态；新项目默认停用。4.7.1 中，工作区开关、模型、思考深度与并发统一点击“应用设置”，角色菜单默认关闭。选中工作区后，配置范围默认“仅当前工作区”；需要修改所有继承项目的默认值时，可明确选择“全局默认”。
 4. 项目范围的配置覆盖全局默认；使用恢复动作后，项目重新继承全局配置。主会话模型仍在 Codex 自身模型选择器里修改。保存后对下一次原生重载后的派发生效。
 5. 工作区列表读取不依赖钩子。自动恢复入口需要在 Codex 原生 `/hooks` 页面审核并信任 SessionStart；它只在用户启用的精确根目录生效。选择工作区不会自动信任钩子。
 
@@ -50,7 +50,7 @@ Codex 插件的模型设置通过本地 stdio MCP 的 `openai/settings` 集成�
 
 ## 通用工作流
 
-DeepSeek Harness 用户可从 [v4.7.0 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.7.0) 下载 [DSH 插件包](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.0/ai-loop-dsh-4.7.0.tgz) 和 [SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.0/SHA256SUMS)，用 DSH 插件管理器安装到实际使用的 profile；也可按 [DSH 插件说明](dsh/README.md) 从源码构建。
+DeepSeek Harness 用户可从 [v4.7.1 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.7.1) 下载 [DSH 插件包](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.1/ai-loop-dsh-4.7.1.tgz) 和 [SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.1/SHA256SUMS)，用 DSH 插件管理器安装到实际使用的 profile；也可按 [DSH 插件说明](dsh/README.md) 从源码构建。
 
 下载并解压通用工作流 ZIP 到固定目录，不必复制进每个项目。让当前 AI：
 

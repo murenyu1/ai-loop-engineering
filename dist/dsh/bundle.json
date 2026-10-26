@@ -1,5 +1,5 @@
 {
-  "version": "4.7.0",
+  "version": "4.7.1",
   "harness": "dsh",
   "files": [
     {
@@ -40,7 +40,7 @@
     },
     {
       "path": "core/README.md",
-      "hash": "7ba43e8591324f7dae26f42dd056660eb79239bf03edc77dd5718aead641d73d"
+      "hash": "528e36838aab5c790e34225cd046208d12a4e0fcc5208c4e71ca4becc2d18431"
     },
     {
       "path": "core/ROUTING.md",
@@ -60,11 +60,11 @@
     },
     {
       "path": "core/scripts/lib.mjs",
-      "hash": "89387bb30879cce84a1000571185be961e5f1c4b09cfb4719bc2c2d11ab2105d"
+      "hash": "55962188a5ba5469ae814590e449302d4969ce1d28de6a42696be3a604d4da9e"
     },
     {
       "path": "core/scripts/loop.mjs",
-      "hash": "064181b712eb328177b964f2860b0f620b82119846f254bef5b0331a8cc5c7b3"
+      "hash": "01010bcbfae7c1360af51671d45d7037136ae7f610f500354030080a624609fd"
     },
     {
       "path": "core/scripts/memory-store.mjs",
@@ -84,7 +84,7 @@
     },
     {
       "path": "core/scripts/storage.mjs",
-      "hash": "77f84ccca2a91285f4d23da058057885bd2941002e388ee580d8de61517c045b"
+      "hash": "096a317fba605b652a799a6add223eca989df123ea78c9dc25d7b260134db029"
     },
     {
       "path": "core/scripts/ui-theme.mjs",
@@ -116,11 +116,11 @@
     },
     {
       "path": "package.json",
-      "hash": "c60416d6ade20f34c6cbfa5475358149c25ea26e82239576d6e46569e442579c"
+      "hash": "93cf2a9265cdc1408f8bd7e322deb481f4c4db3c39272792b7c12dfe5adce7a2"
     },
     {
       "path": "README.md",
-      "hash": "e1361859b91009c0eb8ce7c76e22d9479f1e20ec0e3befe6e7bb115e6b9b1ad1"
+      "hash": "5d70071945e22b88978d8e36b7c1e080215ab70795687e8e92021fdda21012df"
     },
     {
       "path": "ROUTING.md",
