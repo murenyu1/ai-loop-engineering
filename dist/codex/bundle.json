@@ -1,9 +1,9 @@
 {
-  "version": "4.7.2",
+  "version": "4.7.3",
   "files": [
     {
       "path": ".codex-plugin/plugin.json",
-      "hash": "c7e18b4c89ff1fe767e310694b7d17e1e37072db03e4596cadf5c29bbcc38a5a"
+      "hash": "b1fa19a4ee021f64b523898ce7d9f331979850fea7f07476ff15cc5a07ef3715"
     },
     {
       "path": ".mcp.json",
@@ -35,7 +35,7 @@
     },
     {
       "path": "marketplace.json",
-      "hash": "79962d73fe6eac79d1ec800195aca00be14328ffc94b6231f851ec59a92ba38e"
+      "hash": "eb1efdc61a760f4c2d970cb3423ed050098323f2e2017ef7015c1b14a1283edf"
     },
     {
       "path": "mcp.json",
@@ -47,7 +47,7 @@
     },
     {
       "path": "plugin.json",
-      "hash": "4b85d581cb8710e12151d3cbef7d3969dfb63668f4a6ea38cccb76c5379cf68c"
+      "hash": "b234b2463baf9bcda559cb4466c2c41bf1f0a274b747ec4200c053241d2c682e"
     },
     {
       "path": "README.md",
@@ -75,7 +75,7 @@
     },
     {
       "path": "scripts/codex-workspaces.mjs",
-      "hash": "bea226f59feb51a50f14fbf2e37b1637056c3883592a15b7f7049acbfbd4a30e"
+      "hash": "bd4c0d006983ab906c2ebda74c14152f83f2b47d48169e410e3bc7ea6ee1f7ba"
     },
     {
       "path": "scripts/dashboard.mjs",
@@ -103,7 +103,7 @@
     },
     {
       "path": "scripts/lib.mjs",
-      "hash": "7f5a4090dd210985c5b80ce595fd84686fa8ab4739b26b4e294abb59304d0401"
+      "hash": "4ccf234c23bde7bfd5bac8e42e2a495d2d9eda0ce7380523d64a62228ec49818"
     },
     {
       "path": "scripts/loop.mjs",
@@ -159,7 +159,7 @@
     },
     {
       "path": "scripts/settings-server.mjs",
-      "hash": "f52c8511d4e30073fb106f6650363070ad25f233cd37afce3138f2c439c17a65"
+      "hash": "4007d17238fb4474f8aed30a1c915b996a720140c8083b432cc0a8b1052e6b91"
     },
     {
       "path": "scripts/source.mjs",
@@ -215,7 +215,7 @@
     },
     {
       "path": "ui/agent-dashboard.html",
-      "hash": "e866fe58761dd7e06d3e13b361319dc32a7e8a471e7d735d6024b8b4f573dce7"
+      "hash": "bd1dab72bc08f3b964e9f6b329efbf22c0e06d29331f2bf532654141155cc4f3"
     },
     {
       "path": "WORKFLOW.md",

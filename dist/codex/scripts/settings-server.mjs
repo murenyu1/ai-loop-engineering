@@ -55,6 +55,7 @@ const toolList = [
   { name: 'ai_loop.dashboard.status', title: '读取运行代理状态', description: '读取最后一次子代理观察及任务证据，不代表实时状态。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, run: { type: 'string' }, project_path: { type: 'string' }, session: { type: 'string' } }, required: ['root', 'run'], additionalProperties: false }, annotations: { readOnlyHint: true } },
   { name: 'ai_loop.dashboard.history', title: '读取当前聊天历次任务', description: '按真实父聊天 ID 筛选历次运行，未知归属的旧记录单独计数，不混入当前聊天。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' }, after: { type: 'string' } }, required: ['root', 'session'], additionalProperties: false }, annotations: { readOnlyHint: true } },
   { name: 'ai_loop.dashboard.navigation.verify', title: '验证子代理聊天导航目标', description: '只读核对当前父聊天、工作区与 Codex 原生子线程索引；不打开页面、不发送聊天消息。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' }, thread_id: { type: 'string' } }, required: ['root', 'session', 'thread_id'], additionalProperties: false }, annotations: { readOnlyHint: true } },
+  { name: 'ai_loop.dashboard.navigation.resolve', title: '核对指定父聊天的子代理', description: '根据用户指定的父聊天与运行记录，只读核对子代理身份。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, run: { type: 'string' }, project_path: { type: 'string' }, session: { type: 'string' }, agent_id: { type: 'string' } }, required: ['root', 'run', 'session', 'agent_id'], additionalProperties: false }, annotations: { readOnlyHint: true } },
 ];
 for (const name of ['ai_loop.dashboard.runs', 'ai_loop.dashboard.history']) {
   const tool = toolList.find(item => item.name === name);
@@ -300,6 +301,18 @@ export function createSettingsProtocol(manager = createSettingsManager(), option
           if (typeof args.root !== 'string' || typeof args.session !== 'string' || typeof args.thread_id !== 'string' || Object.keys(args).some(key => !['root', 'session', 'thread_id'].includes(key))) throw new Error('navigation.verify 需要 root、session 与 thread_id');
           const root = discoveredRoot(args.root);
           return { jsonrpc: '2.0', id, result: toolResult(navigationProof(root, args.session, args.thread_id)) };
+        }
+        if (name === 'ai_loop.dashboard.navigation.resolve') {
+          if (typeof args.root !== 'string' || typeof args.session !== 'string' || typeof args.agent_id !== 'string' || Object.keys(args).some(key => !['root', 'run', 'project_path', 'session', 'agent_id'].includes(key))) throw new Error('需要工作区、运行、父聊天和代理记录');
+          const root = discoveredRoot(args.root), run = validId(args.run), agentId = validId(args.agent_id);
+          const workspace = resolveChatWorkspace(home(), args.session);
+          const samePath = (left, right) => process.platform === 'win32' ? path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase() : path.resolve(left) === path.resolve(right);
+          if (!workspace?.roots?.some(member => samePath(member, root))) return { jsonrpc: '2.0', id, result: toolResult({ available: false, reason: '父聊天不属于当前工作区' }) };
+          const observed = activityStatus(root, run, { project_path: args.project_path });
+          const agent = observed.agents.find(item => item.id === agentId);
+          if (!agent || agent.harness !== 'codex' || (agent.context?.parent_id && agent.context.parent_id !== args.session)) return { jsonrpc: '2.0', id, result: toolResult({ available: false, reason: '代理记录不存在或属于其他父聊天' }) };
+          const proof = resolveCodexSubagent(home(), { agentPath: agent.native_id, agentRole: `loop-${agent.role}`, parentThreadId: args.session, roots: workspace.roots, startedAt: agent.started_at ?? null });
+          return { jsonrpc: '2.0', id, result: toolResult(proof) };
         }
         if (typeof name === 'string' && ['ai_loop.settings.apply', 'ai_loop.settings.discard', 'ai_loop.settings.reset_project', 'ai_loop.workspace.toggle'].includes(name)) {
           if (Object.keys(args).length) throw new Error(`${name} 不接受参数`);

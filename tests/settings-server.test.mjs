@@ -317,18 +317,24 @@ test('现代 workspace_id 历史只启用原生验证子代理并在点击时重
   const rollout = path.join(sessions, `${childId}.jsonl`);
   fs.writeFileSync(rollout, JSON.stringify({ type: 'session_meta', payload: { id: childId, session_id: parentId, parent_thread_id: parentId, cwd: project, source, base_instructions: 'x'.repeat(12000) } }) + '\n');
   const db = new DatabaseSync(path.join(home, 'state_5.sqlite'));
-  db.exec('CREATE TABLE threads (id TEXT, cwd TEXT, rollout_path TEXT, source TEXT)');
-  const insert = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?)');
-  insert.run(parentId, project, '', '"user"'); insert.run(childId, project, rollout, JSON.stringify(source)); db.close();
+  db.exec('CREATE TABLE threads (id TEXT, cwd TEXT, rollout_path TEXT, source TEXT, created_at INTEGER)');
+  const insert = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?)');
+  insert.run(parentId, project, '', '"user"', Math.floor(Date.now()/1000)); insert.run(childId, project, rollout, JSON.stringify(source), Math.floor(Date.now()/1000)); db.close();
   create(project, { goal: '真实导航', tasks: [{ id: 'task1', title: '开发', review: 'self', acceptance: ['可验证'], checks: [{ id: 'check', command: 'node --version' }] }] }, 'run1');
   begin(project, 'run1', 'task1', 'development');
   recordActivity(project, 'run1', { id: 'nav-agent', task: 'task1', role: 'dev', harness: 'codex', state: 'requested', summary: '真实测试子线程', native_id: '/root/repair_dev', context: { mode: 'independent', id: '/root/repair_dev', parent_id: parentId } });
+  recordActivity(project, 'run1', { id: 'nav-agent', state: 'completed', summary: '夹具调用已结束' });
+  recordActivity(project, 'run1', { id: 'unbound-agent', task: 'task1', role: 'dev', harness: 'codex', state: 'requested', summary: '未记录父聊天', native_id: '/root/repair_dev' });
   const managerFactory = () => ({
     read: async () => ({ values: {}, schema: { properties: {} }, dirty: false }),
     update: async () => ({ values: {}, schema: { properties: {} }, dirty: false }),
     hasDrafts: () => false,
   });
   const protocol = createSettingsProtocol({}, { home, managerFactory });
+  const resolve = async (session, agent_id) => (await protocol.request({ jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'ai_loop.dashboard.navigation.resolve', arguments: { root: project, run: 'run1', session, agent_id } } })).result.structuredContent;
+  assert.deepEqual(await resolve(parentId, 'unbound-agent'), { available: true, thread_id: childId, parent_thread_id: parentId, role: 'loop-dev' });
+  assert.equal((await resolve('21234567-89ab-cdef-0123-456789abcdef', 'unbound-agent')).available, false);
+  assert.equal((await resolve(parentId, 'missing-agent')).available, false);
   const historical = await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'ai_loop.dashboard.history', arguments: { workspace_id: 'project', session: parentId } } });
   const proof = historical.result.structuredContent.rounds[0].activity.agents[0].navigation;
   assert.deepEqual(proof, { available: true, thread_id: childId, parent_thread_id: parentId, role: 'loop-dev' });
@@ -369,6 +375,18 @@ test('现代 workspace_id 历史只启用原生验证子代理并在点击时重
   releaseVerify();
   await staleClick;
   assert.deepEqual(opened, [`codex://threads/${childId}`], '点击重验期间切换工作区后不再导航');
+  holdVerify = false;
+  elem('workspace').value = 'project';
+  elem('parent-thread').value = `codex://threads/${parentId}`;
+  context.manualData = { root: project, run: { run_id: 'run1', project_path: '.', tasks: [] }, activity: { agents: activityStatus(project, 'run1').agents } };
+  vm.runInContext('chat=null; render(manualData)', context);
+  assert.match(elem('view').innerHTML, /data-agent="unbound-agent"/);
+  await elem('view').listeners.click({ target: { closest: selector => selector === 'button[data-session]' ? { dataset: { session: '', agent: 'unbound-agent' } } : selector === '[data-graph-key]' ? section : null } });
+  assert.ok(calls.some(call => call.method === 'tools/call' && call.params.name === 'ai_loop.dashboard.navigation.resolve' && call.params.arguments.session === parentId));
+  assert.deepEqual(opened, [`codex://threads/${childId}`, `codex://threads/${childId}`]);
+  const changed = new DatabaseSync(path.join(home, 'state_5.sqlite'));
+  changed.prepare('UPDATE threads SET created_at = ? WHERE id = ?').run(1, childId); changed.close();
+  assert.equal((await resolve(parentId, 'unbound-agent')).available, false, '不关联其他时间的同名子代理');
 });
 
 test('代理树展示多运行历史、转义内容并仅允许真实 Codex 聊天地址', async () => {

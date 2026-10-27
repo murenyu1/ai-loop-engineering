@@ -120,7 +120,7 @@ export function verifyCodexSubagent(home, { threadId, parentThreadId, roots } = 
 }
 
 /** Resolve a Codex agent path only inside the explicitly supplied parent and workspace. */
-export function resolveCodexSubagent(home, { agentPath, agentRole, parentThreadId, roots } = {}) {
+export function resolveCodexSubagent(home, { agentPath, agentRole, parentThreadId, roots, startedAt } = {}) {
   const unavailable = reason => ({ available: false, reason });
   const roles = new Set(['loop-planner', 'loop-dev', 'loop-tester', 'loop-reviewer', 'loop-scribe']);
   if (typeof agentPath !== 'string' || !agentPath.trim() || agentPath.length > 512
@@ -139,13 +139,16 @@ export function resolveCodexSubagent(home, { agentPath, agentRole, parentThreadI
     db = new DatabaseSync(database, { readOnly: true });
     const columns = new Set(db.prepare('PRAGMA table_info(threads)').all().map(row => row.name));
     for (const name of ['id', 'source']) if (!columns.has(name)) return unavailable('Codex 会话索引格式不受支持');
+    const start = startedAt === undefined ? null : Date.parse(startedAt);
+    if (startedAt !== undefined && (!Number.isFinite(start) || !columns.has('created_at'))) return unavailable('缺少可验证的代理开始时间');
     const candidates = [];
-    for (const row of db.prepare('SELECT id, source FROM threads').iterate()) {
+    for (const row of db.prepare(`SELECT id, source${start === null ? '' : ', created_at'} FROM threads`).iterate()) {
       if (typeof row.id !== 'string' || !/^[a-f0-9-]{36}$/i.test(row.id)) continue;
       let source;
       try { source = JSON.parse(row.source); } catch { continue; }
       const spawn = source?.subagent?.thread_spawn;
       if (spawn?.parent_thread_id === parentThreadId && spawn?.agent_path === agentPath && spawn?.agent_role === agentRole) {
+        if (start !== null && (!Number.isFinite(row.created_at) || row.created_at * 1000 < start - 10000 || row.created_at * 1000 > start + 600000)) continue;
         candidates.push(row.id);
         if (candidates.length > 1) break;
       }
