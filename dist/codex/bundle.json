@@ -23,7 +23,7 @@
     },
     {
       "path": "agents/loop-scribe.md",
-      "hash": "ffb4270e999218c22c8bff74217536d4aaa5beb1a33a6d0b248e45e780c2e72a"
+      "hash": "afe0bf223327027946990ab860a6ead3621c384ff613c9b0c36289fd936a8fdf"
     },
     {
       "path": "agents/loop-tester.md",
@@ -75,7 +75,7 @@
     },
     {
       "path": "scripts/codex-workspaces.mjs",
-      "hash": "276261f3f13f480e5f58bb23f097b372d6fced97487dbc2d1b5d52290e3ccf8d"
+      "hash": "69d3b04e302fa3709cfa393a8b1863f4416d2be78d0532692be20ee4f67fd4ad"
     },
     {
       "path": "scripts/dashboard.mjs",
@@ -107,7 +107,7 @@
     },
     {
       "path": "scripts/loop.mjs",
-      "hash": "01010bcbfae7c1360af51671d45d7037136ae7f610f500354030080a624609fd"
+      "hash": "f8b4e909f359c8b0f15f4d6869a1419d0c723306471db560ff19c538f4fed603"
     },
     {
       "path": "scripts/memory-store.mjs",
@@ -115,7 +115,7 @@
     },
     {
       "path": "scripts/memory.mjs",
-      "hash": "cf64293d4b071a871a964034e840d40954d819b36587326966e9b95d4989853b"
+      "hash": "cbbb63883fd827409e5914fd7a40c3b43e83da49ef7df1b398f66d567ec64dc2"
     },
     {
       "path": "scripts/models.mjs",
@@ -159,7 +159,7 @@
     },
     {
       "path": "scripts/settings-server.mjs",
-      "hash": "ee1ab274a2b07cc4c8d6e03d3e313943eda20f114992e9e11e7df57a14e476d0"
+      "hash": "7d4343c0290bdafce61cafc87c2c895dab23a8422fa3b39aa6bf1042dab37e2d"
     },
     {
       "path": "scripts/source.mjs",
@@ -199,7 +199,7 @@
     },
     {
       "path": "skills/ai-loop-models/SKILL.md",
-      "hash": "5e071f7dccce5b3926c50eac92c188e97d60da130e19800f2dc025a37b97601b"
+      "hash": "d6e1627816a659e1eed578554134a079f909f57729607a9716d93ea19c303540"
     },
     {
       "path": "skills/ai-loop/SKILL.md",
@@ -215,11 +215,11 @@
     },
     {
       "path": "ui/agent-dashboard.html",
-      "hash": "6f7b7f77b6c285941ba1d5ad56f28b126c0cc0b52e6b0d231a9a15400f0a0100"
+      "hash": "e866fe58761dd7e06d3e13b361319dc32a7e8a471e7d735d6024b8b4f573dce7"
     },
     {
       "path": "WORKFLOW.md",
-      "hash": "1badf6af52e791a3534d1c16763afc6ad163f5c036709516d85a46a12165b39b"
+      "hash": "71271548afb7bb514e2fbc21e014dab5587bac714d446b3793b16d966a4d949e"
     }
   ]
 }

@@ -275,7 +275,7 @@ test('看板聊天历史、运行列表及单次运行都隔离同工作区其�
   const home = path.join(base, 'home'), project = path.join(base, 'project');
   fs.mkdirSync(home); fs.mkdirSync(project);
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(home, '.codex-global-state.json'), JSON.stringify({ 'active-workspace-roots': [project] }));
+  fs.writeFileSync(path.join(home, '.codex-global-state.json'), JSON.stringify({ 'project-order': ['project'], 'local-projects': { project: { name: '项目', rootPaths: [project] } }, 'thread-project-assignments': { A: { projectKind: 'local', projectId: 'project' }, B: { projectKind: 'local', projectId: 'project' } } }));
   const spec = { goal: '历史', tasks: [{ id: 't1', title: '开发方向', review: 'self', acceptance: ['可测'], checks: [{ id: 'c', command: 'node --version' }] }] };
   for (const [run, parent] of [['r1', 'A'], ['r2', 'A'], ['r3', 'B'], ['legacy', null]]) {
     create(project, spec, run); begin(project, run, 't1', 'development');
@@ -283,14 +283,90 @@ test('看板聊天历史、运行列表及单次运行都隔离同工作区其�
   }
   const protocol = createSettingsProtocol({}, { home });
   const call = async (name, args) => (await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })).result;
-  const history = (await call('ai_loop.dashboard.history', { root: project, session: 'A' })).structuredContent;
+  const historyResult = await call('ai_loop.dashboard.history', { root: project, session: 'A' });
+  assert.notEqual(historyResult.isError, true, JSON.stringify(historyResult));
+  const history = historyResult.structuredContent;
   assert.deepEqual(history.rounds.map(item => item.run.run_id).sort(), ['r1', 'r2']);
   assert.equal(history.rounds[0].run.tasks.length, 1);
+  assert.equal(history.rounds[0].activity.agents[0].navigation.available, false);
   assert.equal(history.unbound_count, 1);
   const runs = (await call('ai_loop.dashboard.runs', { root: project, session: 'A' })).structuredContent.runs;
   assert.deepEqual(runs.map(item => item.run_id).sort(), ['r1', 'r2']);
+  const status = (await call('ai_loop.dashboard.status', { root: project, run: 'r1', session: 'A' })).structuredContent;
+  assert.equal(status.activity.agents[0].navigation.available, false);
   assert.equal((await call('ai_loop.dashboard.status', { root: project, run: 'r3', session: 'A' })).isError, true);
   assert.equal((await call('ai_loop.dashboard.history', { root: project, session: 'A', after: 'not-a-cursor' })).isError, true);
+});
+
+test('现代 workspace_id 历史只启用原生验证子代理并在点击时重验后导航', async t => {
+  let DatabaseSync; try { ({ DatabaseSync } = (await import('node:module')).createRequire(import.meta.url)('node:sqlite')); } catch { t.skip('当前Node没有内置只读SQLite支持'); return; }
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-nav-live-'));
+  const home = path.join(base, 'home'), project = path.join(base, 'project'), sessions = path.join(home, 'sessions');
+  for (const dir of [home, project, sessions]) fs.mkdirSync(dir, { recursive: true });
+  const jobs = new Set();
+  let context, releaseVerify;
+  t.after(async () => {
+    releaseVerify?.();
+    if (context) vm.runInContext('dispose()', context);
+    while (jobs.size) await Promise.allSettled([...jobs]);
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+  const parentId = '01234567-89ab-cdef-0123-456789abcdef', childId = '11234567-89ab-cdef-0123-456789abcdef';
+  fs.writeFileSync(path.join(home, '.codex-global-state.json'), JSON.stringify({ 'project-order': ['project'], 'local-projects': { project: { name: '项目', rootPaths: [project] } }, 'thread-project-assignments': { [parentId]: { projectKind: 'local', projectId: 'project' } } }));
+  const source = { subagent: { thread_spawn: { parent_thread_id: parentId, depth: 1, agent_path: '/root/repair_dev', agent_role: 'loop-dev' } } };
+  const rollout = path.join(sessions, `${childId}.jsonl`);
+  fs.writeFileSync(rollout, JSON.stringify({ type: 'session_meta', payload: { id: childId, session_id: parentId, parent_thread_id: parentId, cwd: project, source, base_instructions: 'x'.repeat(12000) } }) + '\n');
+  const db = new DatabaseSync(path.join(home, 'state_5.sqlite'));
+  db.exec('CREATE TABLE threads (id TEXT, cwd TEXT, rollout_path TEXT, source TEXT)');
+  const insert = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?)');
+  insert.run(parentId, project, '', '"user"'); insert.run(childId, project, rollout, JSON.stringify(source)); db.close();
+  create(project, { goal: '真实导航', tasks: [{ id: 'task1', title: '开发', review: 'self', acceptance: ['可验证'], checks: [{ id: 'check', command: 'node --version' }] }] }, 'run1');
+  begin(project, 'run1', 'task1', 'development');
+  recordActivity(project, 'run1', { id: 'nav-agent', task: 'task1', role: 'dev', harness: 'codex', state: 'requested', summary: '真实测试子线程', session_id: childId, context: { mode: 'independent', id: '/root/real-context-alias', parent_id: parentId } });
+  const managerFactory = () => ({
+    read: async () => ({ values: {}, schema: { properties: {} }, dirty: false }),
+    update: async () => ({ values: {}, schema: { properties: {} }, dirty: false }),
+    hasDrafts: () => false,
+  });
+  const protocol = createSettingsProtocol({}, { home, managerFactory });
+  const historical = await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'ai_loop.dashboard.history', arguments: { workspace_id: 'project', session: parentId } } });
+  const proof = historical.result.structuredContent.rounds[0].activity.agents[0].navigation;
+  assert.deepEqual(proof, { available: true, thread_id: childId, parent_thread_id: parentId, role: 'loop-dev' });
+  const rootHistory = await protocol.request({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'ai_loop.dashboard.history', arguments: { root: project, session: parentId } } });
+  assert.equal(rootHistory.result.structuredContent.rounds[0].root, project);
+  assert.equal(rootHistory.result.structuredContent.rounds[0].activity.agents[0].navigation.available, true);
+
+  const script = dashboardHtml().match(/<script>([\s\S]*?)<\/script>/)[1];
+  const elements = new Map(), handlers = [], calls = [], opened = []; let holdVerify = false;
+  const elem = id => { if (!elements.has(id)) elements.set(id, { value: '', innerHTML: '', textContent: '', hidden: true, listeners: {}, addEventListener(name, fn) { this.listeners[name] = fn; } }); return elements.get(id); };
+  const parent = { postMessage(message) { calls.push(message); if (!message.id) return; const run = async () => {
+    let result = {};
+    if (message.method === 'tools/call') {
+      const { name, arguments: args } = message.params;
+      if (name === DASHBOARD_READ_TOOL) result = { structuredContent: { workspaces: [{ id: 'project', root: project, enabled: false }], context: { root: project, session_id: parentId } } };
+      else if (name === 'ai_loop.dashboard.navigation.verify' && holdVerify) await new Promise(resolve => { releaseVerify = resolve; });
+      if (name !== DASHBOARD_READ_TOOL) result = (await protocol.request({ jsonrpc: '2.0', id: message.id, method: message.method, params: message.params })).result;
+    } else if (message.method === 'ui/open-link') { opened.push(message.params.url); result = { ok: true }; }
+    handlers.forEach(fn => fn({ source: parent, data: { jsonrpc: '2.0', id: message.id, result } }));
+  }; const job = run(); jobs.add(job); job.finally(() => jobs.delete(job)); } };
+  context = vm.createContext({ window: { parent, openai: { toolInput: { root: project, session: parentId } }, addEventListener: (name, fn) => { if (name === 'message') handlers.push(fn); } }, document: { getElementById: elem, querySelectorAll: () => [] }, setTimeout, clearTimeout, queueMicrotask, URL, URLSearchParams, AbortController });
+  vm.runInContext(script, context);
+  await new Promise(resolve => setTimeout(resolve, 80));
+  assert.match(elem('view').innerHTML, new RegExp(`data-session="${childId}"`));
+  const section = { dataset: { graphKey: JSON.stringify([project, '.', 'run1']) } };
+  await elem('view').listeners.click({ target: { closest: selector => selector === 'button[data-session]' ? { dataset: { session: childId } } : selector === '[data-graph-key]' ? section : null } });
+  assert.ok(calls.some(call => call.method === 'tools/call' && call.params.name === 'ai_loop.dashboard.navigation.verify' && call.params.arguments.thread_id === childId));
+  assert.deepEqual(opened, [`codex://threads/${childId}`]);
+  holdVerify = true;
+  const click = () => elem('view').listeners.click({ target: { closest: selector => selector === 'button[data-session]' ? { dataset: { session: childId } } : selector === '[data-graph-key]' ? section : null } });
+  const staleClick = click();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(typeof releaseVerify, 'function');
+  elem('workspace').value = 'switched-workspace';
+  elem('workspace').listeners.change?.();
+  releaseVerify();
+  await staleClick;
+  assert.deepEqual(opened, [`codex://threads/${childId}`], '点击重验期间切换工作区后不再导航');
 });
 
 test('代理树展示多运行历史、转义内容并仅允许真实 Codex 聊天地址', async () => {
@@ -303,9 +379,10 @@ test('代理树展示多运行历史、转义内容并仅允许真实 Codex 聊�
       const { name, arguments: args } = message.params;
       if (name === DASHBOARD_READ_TOOL) result = { workspaces: [{ root: 'root-A', enabled: false }], context: { root: 'root-A', session_id: 'A' } };
       if (name === 'ai_loop.dashboard.runs') { assert.equal(args.session, 'A'); result = { runs: [] }; }
-      if (name === 'ai_loop.dashboard.history') result = { rounds: ['first', 'second'].map(run => ({ run: { run_id: run, tasks: [] }, activity: { agents: [{ role: 'dev', harness: 'codex', native_id: '/root/dev', observation: { summary: '<script>bad</script>' } }, { role: 'dev', harness: 'codex', context: { id: '/root/dev' }, native_id: '01234567-89ab-cdef-0123-456789abcdef' }] } })), next_after: null };
+      if (name === 'ai_loop.dashboard.history') result = { rounds: ['first', 'second'].map(run => ({ root: 'root-A', run: { run_id: run, tasks: [] }, activity: { agents: [{ role: 'dev', harness: 'codex', native_id: '/root/dev', observation: { summary: '<script>bad</script>' } }, { role: 'dev', harness: 'codex', context: { id: '01234567-89ab-cdef-0123-456789abcdef', parent_id: 'A' }, native_id: '01234567-89ab-cdef-0123-456789abcdef', navigation: { available: true, thread_id: '01234567-89ab-cdef-0123-456789abcdef', parent_thread_id: 'A' } }] } })), next_after: null };
       result = { structuredContent: result };
     }
+    if (message.method === 'tools/call' && message.params.name === 'ai_loop.dashboard.navigation.verify') result = { structuredContent: { available: true, thread_id: message.params.arguments.thread_id, parent_thread_id: 'A' } };
     if (message.method === 'ui/open-link') result = { isError: true };
     queueMicrotask(() => handlers.forEach(fn => fn({ source: parent, data: { jsonrpc: '2.0', id: message.id, result } })));
   } };
@@ -316,7 +393,9 @@ test('代理树展示多运行历史、转义内容并仅允许真实 Codex 聊�
   assert.match(view.innerHTML, /class="graph-port"/); assert.match(view.innerHTML, /&lt;script&gt;/);
   assert.doesNotMatch(view.innerHTML, /data-session="\/root/);
   assert.match(view.innerHTML, /data-session="01234567-89ab-cdef-0123-456789abcdef"/);
-  await view.listeners.click({ target: { closest: () => ({ dataset: { session: '01234567-89ab-cdef-0123-456789abcdef' } }) } });
+  const clickedSection = { dataset: { graphKey: '["root-A",".","first"]' } };
+  await view.listeners.click({ target: { closest: selector => selector === 'button[data-session]' ? { dataset: { session: '01234567-89ab-cdef-0123-456789abcdef' } } : selector === '[data-graph-key]' ? clickedSection : null } });
+  assert.ok(calls.some(call => call.method === 'tools/call' && call.params.name === 'ai_loop.dashboard.navigation.verify' && call.params.arguments.root === 'root-A'));
   assert.ok(calls.some(call => call.method === 'ui/open-link' && call.params.url === 'codex://threads/01234567-89ab-cdef-0123-456789abcdef'));
   assert.match(elem('message').textContent, /宿主未能打开聊天.*宿主拒绝/);
   assert.doesNotMatch(elem('message').textContent, /已向宿主请求打开/);

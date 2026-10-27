@@ -4,7 +4,7 @@
   "files": [
     {
       "path": "client.js",
-      "hash": "647259c6ff01d61a3437015460f4a795f230c0edab61c769e8f0cd8c212152a3"
+      "hash": "be04f9798dc702e285476434dd9be779468466e7441051f65758ec4b00f8b5bb"
     },
     {
       "path": "config.mjs",
@@ -28,7 +28,7 @@
     },
     {
       "path": "core/agents/loop-scribe.md",
-      "hash": "ffb4270e999218c22c8bff74217536d4aaa5beb1a33a6d0b248e45e780c2e72a"
+      "hash": "afe0bf223327027946990ab860a6ead3621c384ff613c9b0c36289fd936a8fdf"
     },
     {
       "path": "core/agents/loop-tester.md",
@@ -64,7 +64,7 @@
     },
     {
       "path": "core/scripts/loop.mjs",
-      "hash": "01010bcbfae7c1360af51671d45d7037136ae7f610f500354030080a624609fd"
+      "hash": "f8b4e909f359c8b0f15f4d6869a1419d0c723306471db560ff19c538f4fed603"
     },
     {
       "path": "core/scripts/memory-store.mjs",
@@ -72,11 +72,11 @@
     },
     {
       "path": "core/scripts/memory.mjs",
-      "hash": "cf64293d4b071a871a964034e840d40954d819b36587326966e9b95d4989853b"
+      "hash": "cbbb63883fd827409e5914fd7a40c3b43e83da49ef7df1b398f66d567ec64dc2"
     },
     {
       "path": "core/scripts/README.md",
-      "hash": "df2cdc7798a30ce8a0fce21f787f8adb13daedca1588aace1ffefd06caad0d05"
+      "hash": "6edf119e430cbe635d304e1fb17887051a1d94e6a1d74b7931c4892c9c558e43"
     },
     {
       "path": "core/scripts/roles.mjs",
@@ -108,7 +108,7 @@
     },
     {
       "path": "core/WORKFLOW.md",
-      "hash": "1badf6af52e791a3534d1c16763afc6ad163f5c036709516d85a46a12165b39b"
+      "hash": "71271548afb7bb514e2fbc21e014dab5587bac714d446b3793b16d966a4d949e"
     },
     {
       "path": "index.mjs",

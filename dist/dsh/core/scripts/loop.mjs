@@ -340,6 +340,19 @@ function validateReport(report, expectedRevision) {
   else assert(report.revision === null || validRevision(report.revision), '阻塞报告的 revision 须为上一已知完整快照或 null');
   assert(Array.isArray(report.issues), '报告须有 issues 数组');
 }
+function issueSummary(issues) {
+  return issues.map(issue => {
+    if (typeof issue === 'string') return issue.trim().slice(0, 1000);
+    if (!issue || typeof issue !== 'object' || Array.isArray(issue)) return String(issue).slice(0, 1000);
+    const entries = Object.entries(issue);
+    if (typeof issue.message === 'string' && !entries.some(([key]) => key === 'message')) entries.unshift(['message', issue.message]);
+    const fields = entries.map(([key, value]) => {
+      const detail = typeof value === 'string' ? value.trim() : JSON.stringify(value) ?? String(value);
+      return key === 'message' ? detail : `${key}=${detail}`;
+    });
+    return (fields.length ? fields.join('；') : JSON.stringify(issue)).slice(0, 1000);
+  }).filter(Boolean).join('；');
+}
 function saveReport(root, files, state, report) {
   const name = `${report.task_id || 'final'}-${report.role}-${state.event_seq + 1}-${crypto.randomUUID().slice(0, 8)}.json`;
   const target = safePath(files.directory, `reports/${name}`);
@@ -445,10 +458,11 @@ export function record(project, run, report, options = {}) {
     else if (report.status === 'APPROVED') task.phase = 'done';
     else if (report.status === 'BLOCKED') task.phase = 'blocked';
     else task.phase = 'needs_fix';
-    task.reason = task.phase === 'blocked' ? report.issues.join('; ') : null;
+    const issues = issueSummary(report.issues);
+    task.reason = task.phase === 'blocked' ? issues : null;
     if (report.permission_denied === true) {
       state.status = 'stopped'; task.reason = '权限拒绝：停止，不得换工具或平台绕过';
-      state.stop_reason = report.issues.join('; ') || task.reason;
+      state.stop_reason = issues || task.reason;
     }
     persist(root, files, state, 'report', { task_id: task.id, role: report.role, status: report.status, report: reportPath });
     return summary(state, spec.tasks, spec.workflow ?? null);

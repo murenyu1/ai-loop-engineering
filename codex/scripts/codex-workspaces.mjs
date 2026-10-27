@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { listWorkspaces, workspaceHash } from './workspaces.mjs';
 import { sortWorkspaces } from './workspace-recency.mjs';
+
+const require = createRequire(import.meta.url);
 
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const identity = root => process.platform === 'win32' ? root.toLowerCase() : root;
@@ -19,6 +22,100 @@ function existingRoot(value) {
     const root = fs.realpathSync(absolute);
     return identity(root) === identity(absolute) ? root : null;
   } catch { return null; }
+}
+
+function nativePath(value) {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  const clean = value.replace(/^\\\\\?\\/, '');
+  const absolute = path.resolve(clean);
+  return process.platform === 'win32' ? absolute.toLowerCase() : absolute;
+}
+
+function withinRoots(value, roots) {
+  const target = nativePath(value);
+  if (!target || !path.isAbsolute(value.replace(/^\\\\\?\\/, ''))) return false;
+  return roots.some(root => {
+    const allowed = nativePath(root);
+    return target === allowed || target.startsWith(allowed + path.sep);
+  });
+}
+
+function safeRollout(home, value) {
+  if (typeof value !== 'string' || !path.isAbsolute(value)) return null;
+  const target = path.resolve(value);
+  const allowed = ['sessions', 'archived_sessions'].map(name => path.join(home, name));
+  if (!allowed.some(root => target.startsWith(path.resolve(root) + path.sep))) return null;
+  let current = path.resolve(home);
+  const relative = path.relative(current, target);
+  for (const part of relative.split(path.sep)) {
+    current = path.join(current, part);
+    try { if (fs.lstatSync(current).isSymbolicLink()) return null; } catch { return null; }
+  }
+  const info = fs.statSync(target);
+  return info.isFile() && info.size > 0 ? target : null;
+}
+
+function readRolloutHeader(file) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const chunks = [];
+    let total = 0, position = 0;
+    while (total <= 1024 * 1024) {
+      const buffer = Buffer.alloc(8192);
+      const bytes = fs.readSync(fd, buffer, 0, buffer.length, position);
+      if (!bytes) break;
+      position += bytes;
+      const chunk = buffer.subarray(0, bytes);
+      const newline = chunk.indexOf(10);
+      const part = newline >= 0 ? chunk.subarray(0, newline) : chunk;
+      chunks.push(part); total += part.length;
+      if (newline >= 0) return JSON.parse(Buffer.concat(chunks).toString('utf8').replace(/\r$/, ''));
+      if (total > 1024 * 1024) return null;
+    }
+    return total <= 1024 * 1024 ? JSON.parse(Buffer.concat(chunks).toString('utf8').replace(/\r$/, '')) : null;
+  } finally { fs.closeSync(fd); }
+}
+
+/** Verify a Codex child thread from the read-only thread index and its rollout header. */
+export function verifyCodexSubagent(home, { threadId, parentThreadId, roots } = {}) {
+  const unavailable = reason => ({ available: false, reason });
+  if (typeof threadId !== 'string' || !/^[a-f0-9-]{36}$/i.test(threadId)
+    || typeof parentThreadId !== 'string' || !/^[a-f0-9-]{36}$/i.test(parentThreadId)
+    || !Array.isArray(roots) || !roots.length) return unavailable('会话身份或工作区不完整');
+  let db;
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    const files = fs.readdirSync(home).filter(name => /^state_\d+\.sqlite$/.test(name))
+      .sort((a, b) => Number(b.match(/\d+/)[0]) - Number(a.match(/\d+/)[0]));
+    if (!files.length) return unavailable('Codex 会话索引不可用');
+    const database = path.join(home, files[0]);
+    if (fs.lstatSync(database).isSymbolicLink()) return unavailable('Codex 会话索引不可用');
+    db = new DatabaseSync(database, { readOnly: true });
+    const columns = new Set(db.prepare('PRAGMA table_info(threads)').all().map(row => row.name));
+    for (const name of ['id', 'cwd', 'rollout_path', 'source']) if (!columns.has(name)) return unavailable('Codex 会话索引格式不受支持');
+    const row = id => db.prepare('SELECT id, cwd, rollout_path, source FROM threads WHERE id = ? LIMIT 1').get(id);
+    const child = row(threadId), parent = row(parentThreadId);
+    if (!child || !parent || !withinRoots(child.cwd, roots) || !withinRoots(parent.cwd, roots)) return unavailable('子会话或父会话不属于当前工作区');
+    let source;
+    try { source = JSON.parse(child.source); } catch { return unavailable('子会话来源无法验证'); }
+    const spawn = source?.subagent?.thread_spawn;
+    if (!spawn || spawn.parent_thread_id !== parentThreadId || !Number.isInteger(spawn.depth) || spawn.depth < 1
+      || typeof spawn.agent_path !== 'string' || !spawn.agent_path || !['loop-planner', 'loop-dev', 'loop-tester', 'loop-reviewer', 'loop-scribe'].includes(spawn.agent_role)) return unavailable('子会话父子关系无法验证');
+    const rollout = safeRollout(home, child.rollout_path);
+    if (!rollout) return unavailable('子会话历史记录路径不安全或不存在');
+    let metadata;
+    try { metadata = readRolloutHeader(rollout); } catch { return unavailable('子会话历史记录格式无法验证'); }
+    const meta = metadata?.type === 'session_meta' ? metadata.payload ?? metadata : null;
+    const headerSpawn = meta?.source?.subagent?.thread_spawn;
+    if (!meta || (meta.id ?? meta.thread_id) !== threadId
+      || meta.parent_thread_id !== parentThreadId || headerSpawn?.parent_thread_id !== parentThreadId
+      || !withinRoots(meta.cwd, roots)) return unavailable('子会话历史头部与父会话或工作区不匹配');
+    return { available: true, thread_id: threadId, parent_thread_id: parentThreadId, role: spawn.agent_role };
+  } catch (error) {
+    if (error?.code === 'ERR_UNKNOWN_BUILTIN_MODULE' || error?.code === 'ERR_UNKNOWN_MODULE_REQUEST') return unavailable('当前 Node 不支持只读 Codex 会话索引验证');
+    if (error?.code === 'ENOENT' || error?.code === 'SQLITE_ERROR' || error?.code === 'ERR_MODULE_NOT_FOUND') return unavailable('Codex 子会话验证所需数据不可用');
+    return unavailable('Codex 子会话元数据不可用');
+  } finally { db?.close(); }
 }
 
 function stateFile(home) {

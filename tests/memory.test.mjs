@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { link } from './support.mjs';
 import path from 'node:path';
 import os from 'node:os';
-import { bootstrap, inspect, save, checkpoint, search } from '../scripts/memory.mjs';
+import { bootstrap, inspect, save, checkpoint, search, readMemory, cli } from '../scripts/memory.mjs';
 import { create, begin, event, status, record, fix, stop, snapshot, complete } from '../scripts/loop.mjs';
 import { install, REQUIRED_FILES } from '../scripts/install.mjs';
 
@@ -48,6 +48,61 @@ test('启动只读、索引按需初始化；没有记录不伪造项目知识',
   assert.match(fs.readFileSync(path.join(root, '.ai-loop/memory/index.md'), 'utf8'), /尚未整理/);
   assert.equal(fs.existsSync(path.join(root, '.ai-loop/memory/architecture.md')), false);
   assert.equal(bootstrap(root).memory.status, 'uninitialized');
+});
+
+test('显式子项目知识库统一隔离存取且来源仍相对原工作区', t => {
+  const { root } = fixture(t);
+  fs.mkdirSync(path.join(root, 'one'), { recursive: true }); fs.mkdirSync(path.join(root, 'shared'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'one/a.txt'), 'one 项目资料'); fs.writeFileSync(path.join(root, 'shared/a.txt'), '共享资料');
+  const child = { id: 'same-id', title: '子项目条目', text: '子项目知识边界', scope: 'one', status: 'observed', sources: [{ type: 'file', path: 'one/a.txt' }, { type: 'file', path: 'shared/a.txt' }] };
+  const eventRun = create(root, { goal: '子项目事件来源', project_path: 'one', tasks: [{ id: 'task1', title: '事件', review: 'none', acceptance: ['有效'], checks: [{ id: 'check', command: 'node --version' }] }] }, 'childrun');
+  event(root, eventRun.run_id, { type: 'decision', summary: 'one 子项目事件' }, { project_path: 'one' });
+  child.sources.push({ type: 'event', run: 'childrun', seq: 1, project_path: 'one' });
+  const inputFile = path.join(root, 'memory-save.json');
+  fs.writeFileSync(inputFile, JSON.stringify({ base_revision: 0, documents: [{ name: 'index', summary: '子项目知识。', expected_hash: null, entries: [child] }] }));
+  const saved = cli(['save', '--project', root, '--project-path', 'one', '--input', inputFile]);
+  assert.equal(saved.status, 'saved');
+  assert.deepEqual(saved.history, []);
+  const checked = cli(['inspect', '--project', root, '--project-path', 'one']);
+  assert.equal(checked.status, 'ready'); assert.equal(checked.index, 'one/.ai-loop/memory/index.md');
+  const updated = save(root, { base_revision: saved.revision, documents: [{ name: 'index', summary: '更新后的子项目知识。', expected_hash: checked.documents[0].hash, entries: [child] }] }, { project_path: 'one' });
+  assert.match(updated.history.join(' '), /^one\//);
+  assert.equal(cli(['search', '--project', root, '--project-path', 'one', '--query', '子项目知识']).matches[0].read.path, 'one/.ai-loop/memory/index.md');
+  assert.equal(cli(['read', '--project', root, '--project-path', 'one', '--document', 'index', '--entry', 'same-id']).path, 'one/.ai-loop/memory/index.md');
+  assert.equal(cli(['bootstrap', '--project', root, '--project-path', 'one', '--intent', 'inspect']).memory.index, 'one/.ai-loop/memory/index.md');
+  const latestChild = inspect(root, { project_path: 'one' });
+  assert.throws(() => save(root, { base_revision: latestChild.revision, documents: [{ name: 'index', summary: '拒绝自引。', expected_hash: latestChild.documents[0].hash, entries: [{ ...child, sources: [{ type: 'file', path: 'one/.ai-loop/memory/index.md' }] }] }] }, { project_path: 'one' }), /不能循环引用/);
+  assert.equal(inspect(root).status, 'uninitialized', '子项目知识未落入根库');
+  saveIndex(root, [fact({ id: 'same-id' })]);
+  assert.equal(inspect(root).status, 'ready', '根库可保留同名条目');
+  assert.equal(inspect(root, { project_path: 'one' }).status, 'ready', '子库与根库分别可读');
+  const pointer = search(root, '子项目知识', 8, undefined, { project_path: 'one' }).matches[0].read;
+  assert.equal(pointer.project_path, 'one');
+  assert.match(readMemory(root, pointer).content, /子项目知识边界/, '搜索返回的读取参数不能读到根库同名条目');
+  assert.doesNotMatch(readMemory(root, pointer).content, /保留已有数据接口/);
+  assert.equal(bootstrap(root, { project_path: 'missing', intent: 'inspect' }).memory.status, 'uninitialized', '未初始化子库不回退根库');
+  assert.throws(() => cli(['save', '--project', root, '--project-path', 'missing', '--input', inputFile]), /项目目录不存在/);
+  assert.equal(fs.existsSync(path.join(root, 'missing')), false, '写入不得因项目路径拼错而创建新项目');
+  assert.throws(() => inspect(root, { project_path: '' }), /路径必须是项目内相对路径/);
+  const finalChild = inspect(root, { project_path: 'one' });
+  assert.throws(() => save(root, { base_revision: finalChild.revision, documents: [{ name: 'index', expected_hash: finalChild.documents[0].hash, entries: [{ ...child, sources: [{ type: 'file', path: '../outside.txt' }] }] }] }, { project_path: 'one' }), /路径越界|不能包含/);
+  if (process.platform === 'win32') assert.throws(() => save(root, { base_revision: finalChild.revision, documents: [{ name: 'index', expected_hash: finalChild.documents[0].hash, entries: [{ ...child, sources: [{ type: 'file', path: 'one/.AI-LOOP/MEMORY/index.md' }] }] }] }, { project_path: 'one' }), /不能循环引用/);
+});
+
+test('子项目知识分页和损坏页指针均从原工作区定位', t => {
+  const { root } = fixture(t);
+  fs.mkdirSync(path.join(root, 'one'));
+  save(root, { base_revision: 0, documents: [{ name: 'index', expected_hash: null, summary: '分页隔离。', entries: [fact({ text: '子项目分页知识。'.repeat(3000) })] }] }, { project_path: 'one' });
+  const first = readMemory(root, { project_path: 'one', document: 'index' });
+  assert.ok(first.total_pages > 1);
+  assert.match(first.path, /^one\/\.ai-loop\/memory\//);
+  assert.ok(fs.existsSync(path.join(root, first.path)));
+  const second = readMemory(root, { project_path: 'one', document: 'index', page: 2 });
+  assert.notEqual(first.path, second.path);
+  fs.appendFileSync(path.join(root, second.path), '\n人工修改分页');
+  const issue = inspect(root, { project_path: 'one' }).documents[0].issues.find(item => item.type === 'edited-page');
+  assert.equal(issue.path, second.path);
+  assert.throws(() => readMemory(root, { project_path: 'one', document: 'index', page: 2 }), /正文已变化/);
 });
 
 test('知识增量合并、可核对来源与撤销状态；重复保存不增加版本', t => {

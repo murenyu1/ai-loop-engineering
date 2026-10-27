@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readCodexWorkspaces, resolveChatWorkspace } from '../codex/scripts/codex-workspaces.mjs';
+import { readCodexWorkspaces, resolveChatWorkspace, verifyCodexSubagent } from '../codex/scripts/codex-workspaces.mjs';
 import { registerWorkspace, setWorkspaceRecordById, workspaceEntryById } from '../scripts/workspaces.mjs';
 import { createSettingsManager } from '../codex/scripts/native-settings.mjs';
 import { startupContext } from '../codex/scripts/session-start.mjs';
@@ -53,6 +53,27 @@ function fixture(t) {
   const stateFile = path.join(home, '.codex-global-state.json');
   return { parent, home, a, b, stateFile, save: state => fs.writeFileSync(stateFile, JSON.stringify(state)) };
 }
+
+test('子代理导航只认可索引及rollout头部一致的真实子线程，支持长头部并拒绝错父和越界路径', t => {
+  let DatabaseSync; try { ({ DatabaseSync } = createRequire(import.meta.url)('node:sqlite')); } catch { t.skip('当前Node没有内置只读SQLite支持'); return; }
+  const f = fixture(t), sessions = path.join(f.home, 'sessions'); fs.mkdirSync(sessions);
+  const parentId = '01234567-89ab-cdef-0123-456789abcdef', childId = '11234567-89ab-cdef-0123-456789abcdef';
+  const rollout = path.join(sessions, `${childId}.jsonl`);
+  const source = { subagent: { thread_spawn: { parent_thread_id: parentId, depth: 1, agent_path: '/root/repair_dev', agent_role: 'loop-dev' } } };
+  const header = { type: 'session_meta', payload: { id: childId, session_id: parentId, parent_thread_id: parentId, cwd: f.a, source, base_instructions: 'x'.repeat(24000) } };
+  fs.writeFileSync(rollout, JSON.stringify(header) + '\n{"type":"message","payload":"never read"}\n');
+  const db = new DatabaseSync(path.join(f.home, 'state_5.sqlite'));
+  db.exec('CREATE TABLE threads (id TEXT, cwd TEXT, rollout_path TEXT, source TEXT)');
+  const insert = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?)');
+  insert.run(parentId, f.a, '', '"user"'); insert.run(childId, f.a, rollout, JSON.stringify(source)); db.close();
+  assert.deepEqual(verifyCodexSubagent(f.home, { threadId: childId, parentThreadId: parentId, roots: [f.a] }), { available: true, thread_id: childId, parent_thread_id: parentId, role: 'loop-dev' });
+  assert.equal(verifyCodexSubagent(f.home, { threadId: childId, parentThreadId: '21234567-89ab-cdef-0123-456789abcdef', roots: [f.a] }).available, false);
+  assert.equal(verifyCodexSubagent(f.home, { threadId: childId, parentThreadId: parentId, roots: [f.b] }).available, false);
+  const guardian = { subagent: { other: 'guardian' } };
+  const db2 = new DatabaseSync(path.join(f.home, 'state_5.sqlite'));
+  db2.prepare('UPDATE threads SET source=? WHERE id=?').run(JSON.stringify(guardian), childId); db2.close();
+  assert.equal(verifyCodexSubagent(f.home, { threadId: childId, parentThreadId: parentId, roots: [f.a] }).available, false);
+});
 
 test('按宿主项目 ID 合并全部目录，忽略旧活动根列表并保留启用状态', t => {
   const f = fixture(t);

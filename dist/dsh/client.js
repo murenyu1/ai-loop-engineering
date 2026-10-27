@@ -537,52 +537,45 @@ window.__ModuleLoader__.load({
     if (agent?.harness && agent.harness !== 'dsh') return '';
     return [agent?.session_id, agent?.context?.id, agent?.native_id].find(value => typeof value === 'string' && value.trim() && !value.startsWith('/')) || '';
   }
-  async function openAgentSession(ctx, parentSessionId, agent) {
+  async function openAgentSession(ctx, parentSessionId, agent, options = {}) {
     const childId = agentSessionId(agent);
-    if (!childId) return false;
-    parentSessionId = agent?.context?.parent_id || agent?.parent_id || parentSessionId;
+    const current = () => typeof options.isCurrent !== 'function' || options.isCurrent();
+    if (!childId || !current()) return false;
+    const recordedParent = agent?.context?.parent_id || agent?.parent_id || '';
+    if (!parentSessionId || recordedParent && recordedParent !== parentSessionId) return false;
     try {
       const sessions = ctx?.get?.('sessions') || ctx?.sessions;
       const workspaces = ctx?.get?.('workspaces') || ctx?.workspaces;
       const uiWorkspace = ctx?.get?.('uiWorkspace') || ctx?.uiWorkspace;
       const layout = ctx?.get?.('layout') || ctx?.layout;
-      if (typeof uiWorkspace?.openSession === 'function') {
-        if (typeof sessions?.refreshSubagents === 'function' && parentSessionId) {
-          try { await sessions.refreshSubagents(parentSessionId); } catch {}
-        }
-        const retained = sessions?.subagentAddress?.(childId);
-        const target = retained && (!parentSessionId || retained.parentSessionId === parentSessionId)
-          ? retained
-          : (parentSessionId ? { parentSessionId, childSessionId: childId, mode: 'continuable' } : childId);
-        const result = await Promise.resolve(uiWorkspace.openSession(target));
+      if (typeof sessions?.refreshProjections === 'function') {
+        await sessions.refreshProjections(parentSessionId);
+      } else if (typeof sessions?.refreshSubagents === 'function') {
+        await sessions.refreshSubagents(parentSessionId);
+      }
+      if (!current()) return false;
+      const address = sessions?.subagentAddress?.(childId);
+      if (!address || address.parentSessionId !== parentSessionId || address.childSessionId !== childId
+        || typeof address.mode !== 'string' || !address.mode || address.mode === 'external') return false;
+      if (typeof sessions?.retain !== 'function') return false;
+      const reference = sessions.retain(address, { source: 'ai-loop-dashboard', ...(options.signal ? { signal: options.signal } : {}) });
+      try {
+        if (!reference?.ready || typeof reference.release !== 'function') return false;
+        await reference.ready;
+        if (!current()) return false;
+        let result;
+        if (typeof uiWorkspace?.openSession === 'function') {
+          result = await Promise.resolve(uiWorkspace.openSession(address));
+        } else if (sessions?.openSubagent) {
+          result = await sessions.openSubagent(address);
+        } else if (typeof workspaces?.openSession === 'function') {
+          result = await workspaces.openSession(address);
+        } else return false;
         if (result === false || result?.ok === false || result?.isError) return false;
         layout?.selectPanel?.(null);
         return true;
-      }
-      if (sessions?.openSubagent) {
-        if (typeof sessions.refreshSubagents === 'function' && parentSessionId) {
-          try { await sessions.refreshSubagents(parentSessionId); } catch {}
-        }
-        const retained = sessions.subagentAddress?.(childId);
-        if (!parentSessionId && !retained) return false;
-        const result = await sessions.openSubagent(retained && (!parentSessionId || retained.parentSessionId === parentSessionId)
-          ? retained
-          : { parentSessionId, childSessionId: childId, mode: 'continuable' });
-        if (result === false || result?.ok === false || result?.isError) return false;
-        layout?.selectPanel?.(null);
-        return true;
-      }
-      if (typeof sessions?.open === 'function') {
-        const result = await sessions.open(childId);
-        if (result === false || result?.ok === false || result?.isError) return false;
-        layout?.selectPanel?.(null);
-        return true;
-      }
-      if (typeof workspaces?.openSession === 'function') {
-        if (!parentSessionId) return false;
-        const result = await workspaces.openSession({ parentSessionId, childSessionId: childId, mode: 'continuable' });
-        if (result === false || result?.ok === false || result?.isError) return false;
-        return true;
+      } finally {
+        reference?.release?.();
       }
     } catch (err) {
       console.warn('[AI Loop] 切换子代理会话失败:', err);
@@ -714,6 +707,16 @@ window.__ModuleLoader__.load({
     const [expandedAgentId, setExpandedAgentId] = React.useState(null);
     const [filterMode, setFilterMode] = React.useState('all'); // 'all' | 'active'
     const [navigationError, setNavigationError] = React.useState('');
+    const navigationSeq = React.useRef(0);
+    const navigationController = React.useRef(null);
+    const scopeKey = `${sourceSessionKey ?? ''}\u0000${workspacePath || ''}`;
+    const navigationScope = React.useRef(null);
+    if (navigationScope.current?.key !== scopeKey) {
+      navigationController.current?.abort();
+      navigationSeq.current++;
+      navigationScope.current = { key: scopeKey, session: sourceSessionKey, workspace: workspacePath || '', generation: (navigationScope.current?.generation ?? 0) + 1 };
+    }
+    React.useEffect(() => () => { navigationSeq.current++; navigationController.current?.abort(); }, []);
     const [collapsedTasks, setCollapsedTasks] = React.useState([]);
     const [zoom, setZoom] = React.useState(1);
     const [drag, setDrag] = React.useState(null);
@@ -782,6 +785,23 @@ window.__ModuleLoader__.load({
       return taskGroups;
     }, [taskGroups, filterMode]);
 
+    const navigateAgent = agent => {
+      if (!agentSessionId(agent)) {
+        setNavigationError('此记录没有真实子代理会话 ID，无法打开聊天。');
+        return Promise.resolve(false);
+      }
+      navigationController.current?.abort();
+      const controller = new AbortController();
+      navigationController.current = controller;
+      const seq = ++navigationSeq.current;
+      const scope = navigationScope.current;
+      const isCurrent = () => navigationSeq.current === seq && navigationScope.current === scope;
+      return openAgentSession(ctx, sessionKey, agent, { isCurrent, signal: controller.signal }).then(opened => {
+        if (isCurrent()) setNavigationError(opened ? '' : '未能打开子代理聊天，请确认 DSH 会话仍可用。');
+        return opened;
+      });
+    };
+
     const renderAgentNode = (agent, index) => {
       const agentId = agent.native_id || agent.id || `agent-${index}`;
       const isExpanded = expandedAgentId === agentId;
@@ -790,10 +810,7 @@ window.__ModuleLoader__.load({
       const isLive = agent.live === true && !['completed', 'failed', 'cancelled', 'stopped', 'ended_unknown'].includes(agent.state);
       const direction = agent.direction || (typeof agent.task === 'string' && agent.task.includes('#') ? agent.task.split('#')[1] : null);
       const childId = agentSessionId(agent);
-      const openSession = () => {
-        if (!childId) { setNavigationError('此记录没有真实子代理会话 ID，无法打开聊天。'); return; }
-        openAgentSession(ctx, sessionKey, agent).then(opened => setNavigationError(opened ? '' : '未能打开子代理聊天，请确认 DSH 会话仍可用。'));
-      };
+      const openSession = () => navigateAgent(agent);
 
       return h('div', {
         key: agentId,
@@ -1167,15 +1184,15 @@ window.__ModuleLoader__.load({
                       canCollapse ? h('button', { type: 'button', 'aria-label': isCollapsed ? '展开任务阶段' : '折叠任务阶段', style: { ...S.btn(false), padding: '1px 6px', flex: '0 0 auto' }, onClick: event => { event.stopPropagation(); toggleTask(node.taskId); } }, isCollapsed ? '＋' : '−') : null,
                     ),
                     h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-primary, CanvasText)', overflow: 'hidden', textOverflow: 'ellipsis', overflowWrap: 'anywhere' }, title: node.status }, node.status),
-                    h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, node.agents?.length ? `${node.agents.length} 次真实调用 · 选择查看` : node.kind === 'stage' ? '尚无调用' : node.taskId ? `任务 ${node.taskId}` : data?.run_id ?? ''),
+                    h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, node.agents?.length ? `${node.agents.length} 次已记录调用 · 选择查看` : node.kind === 'stage' ? '尚无调用' : node.taskId ? `任务 ${node.taskId}` : data?.run_id ?? ''),
                   );
                 }),
               ),
             ),
           ),
-          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, '实线：阶段交接', '虚线：任务依赖', '点线：真实调用'),
+          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, '实线：阶段交接', '虚线：任务依赖', '点线：运行记录中的调用关联'),
           selectedNode ? h('section', { className: 'workflow-node-details', 'aria-label': `${selectedNode.label}调用详情`, style: S.dashCard },
-            h('strong', { style: { color: roleColor[selectedNode.role] ?? roleColor.main } }, `${selectedNode.label} · ${detailAgents.length} 次真实调用`),
+            h('strong', { style: { color: roleColor[selectedNode.role] ?? roleColor.main } }, `${selectedNode.label} · ${detailAgents.length} 次已记录调用`),
             detailAgents.length ? detailAgents.map((agent, index) => {
               const id = agent.native_id || agent.id || `agent-${index}`;
               const childId = agentSessionId(agent);
@@ -1183,7 +1200,7 @@ window.__ModuleLoader__.load({
               return h('article', { key: id, style: { padding: `${theme.space ?? 12}px 0`, borderBottom: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, CanvasText 18%, transparent))' } },
                 h('div', { style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
                   h('strong', null, `${ROLES[agent.role]?.name ?? agent.role ?? '代理'} · ${agentStateLabel(agent.state)}`),
-                  childId ? h('button', { type: 'button', style: S.btn(false), onClick: () => openAgentSession(ctx, sessionKey, agent).then(opened => setNavigationError(opened ? '' : '未能打开子代理聊天，请确认 DSH 会话仍可用。')) }, '进入子代理聊天') : h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, '未记录可导航的聊天标识'),
+                  childId ? h('button', { type: 'button', style: S.btn(false), onClick: () => navigateAgent(agent) }, '进入子代理聊天') : h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, '未记录可导航的聊天标识'),
                 ),
                 h('p', { style: { margin: '4px 0', fontSize: 12 } }, agent.summary ?? agent.observation?.summary ?? '暂无摘要'),
                 h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, tokenUsageLabel(agent.usage)),
@@ -1200,7 +1217,7 @@ window.__ModuleLoader__.load({
               return h('article', { key: id, style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, CanvasText 18%, transparent))' } },
                 h('span', { style: { fontSize: 12 } }, `${ROLES[agent.role]?.name ?? agent.role ?? '代理'} · ${agent.task ?? '运行级'} · ${agentStateLabel(agent.state)} · ${agent.summary ?? '暂无摘要'}`),
                 h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, tokenUsageLabel(agent.usage)),
-                childId ? h('button', { type: 'button', style: S.btn(false), onClick: () => openAgentSession(ctx, sessionKey, agent).then(opened => setNavigationError(opened ? '' : '未能打开子代理聊天，请确认 DSH 会话仍可用。')) }, '进入聊天') : null,
+                childId ? h('button', { type: 'button', style: S.btn(false), onClick: () => navigateAgent(agent) }, '进入聊天') : null,
               );
             }),
           ),
@@ -1613,7 +1630,7 @@ window.__ModuleLoader__.load({
     }
 
   }
-  return { inject: ['slots', 'configForms', 'remote', 'remote.session', 'workspaces', 'sessions'], apply, Controller, samePath, rolesValid, projectsValid, requestStatus, tokenUsageLabel, statusMessage, createStatusPollStore, openAgentSession, agentSessionId, RunDashboard, SidebarDashboard, SidebarTitle, activeActivityCount, useCatalog, RoleCard, Card, ConversationDashboard, sessionCwdOf };
+  return { inject: ['slots', 'configForms', 'remote', 'remote.session', 'workspaces', 'sessions', 'uiWorkspace'], apply, Controller, samePath, rolesValid, projectsValid, requestStatus, tokenUsageLabel, statusMessage, createStatusPollStore, openAgentSession, agentSessionId, RunDashboard, SidebarDashboard, SidebarTitle, activeActivityCount, useCatalog, RoleCard, Card, ConversationDashboard, sessionCwdOf };
 })(require, {"accent":"#3b82f6","success":"#22c55e","danger":"#ef4444","warning":"#eab308","radius":10,"space":12,"font":13,"indent":14,"graphNodeWidth":220,"graphNodeHeight":104,"graphGapX":32,"graphGapY":36,"graphRoles":{"planner":"#818cf8","dev":"#34d399","tester":"#fbbf24","reviewer":"#c084fc","scribe":"#60a5fa"}}, function createWorkflowGraph(data, { collapsedTasks = [] } = {}) {
   const run = data?.run ?? {}, tasks = Array.isArray(run.tasks) ? run.tasks : [];
   const agents = Array.isArray(data?.activity?.agents) ? data.activity.agents : [];

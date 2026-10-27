@@ -2,7 +2,7 @@
 
 ## 4.7.0 原生执行证据与子项目
 
-新建 `review: independent` 运行自动要求原生证据并使用 schema 4。旧运行保留原契约与历史，`legacy-unverified` 不表示已补验收。参与同一新运行的各端须升级到 4.6.0。
+新建运行使用 schema 2；声明 `role_policy` 时使用 schema 3；要求独立 tester/reviewer 原生证据（`execution_evidence`）时使用 schema 4。参与同一运行的各端须至少升级到 4.7.0，且必须支持该运行实际使用的最高 schema。使用本次知识隔离与导航修复时，各端须同步安装对应修复包并核对摘要，不能仅凭相同版本号判定能力一致。旧运行保留原契约与历史，`legacy-unverified` 不表示已补验收。
 
 1. 派发前用原生工具写输入 JSON，`activity.mjs record` 登记 requested：`id/task/role/attempt/harness/revision/summary`。独立运行每次进入验证或评审都递增 attempt，即使未声明 managed_execution。
 2. 通过宿主原生工具实际启动，登记 native_id 与 `context:{mode:"independent",id:"真实子上下文",parent_id:"真实父上下文"}`，先更新 running。
@@ -74,4 +74,4 @@ MEMORY.md 定义 save / checkpoint 的输入结构、来源、并发处理和分
 
 ## 运行状态兼容
 
-新建运行使用 `schema_version: 2`，旧核心只识别 schema 1，因此会拒绝写入新版运行。当前核心可以读取 schema 1 的历史运行；4.3.1 及更早且不含新版字段的安全旧运行仍可继续写入。候选版 4.4.0 的 schema 1 记录（包括 `owner`、范围、托管执行批次或 `developed` 阶段）仅可读取，写入前须显式迁移。先核实没有旧执行者仍在写入，再运行 `node scripts/loop.mjs migrate --project ROOT --run RUN --confirm-no-active-executors`。迁移在锁内保存原 state 备份，保留 run_id、修复计数、报告与历史事件，并追加迁移事件；不重置或改写任务状态。不要手工改写 state.json 的 schema 或阶段来绕过此门禁。`inbox` 的公开游标参数为 `--after-id`，其值是 `mail-00001` 这类邮件 ID。
+基础新运行使用 schema 2，声明 `role_policy` 使用 schema 3，启用独立执行证据门禁使用 schema 4。旧核心只识别 schema 1，因此会拒绝写入新版运行。当前核心可以读取 schema 1 的历史运行；4.3.1 及更早且不含新版字段的安全旧运行仍可继续写入。候选版 4.4.0 的 schema 1 记录（包括 `owner`、范围、托管执行批次或 `developed` 阶段）仅可读取，写入前须显式迁移。先核实没有旧执行者仍在写入，再运行 `node scripts/loop.mjs migrate --project ROOT --run RUN --confirm-no-active-executors`。迁移在锁内保存原 state 备份，保留 run_id、修复计数、报告与历史事件，并追加迁移事件；不重置或改写任务状态。不要手工改写 state.json 的 schema 或阶段来绕过此门禁。`inbox` 的公开游标参数为 `--after-id`，其值是 `mail-00001` 这类邮件 ID。

@@ -195,12 +195,22 @@ test('评审拒绝的修复须重新验证，自检不能替代独立评审', t 
 test('普通阻塞可恢复，权限拒绝停止运行且不能恢复', t => {
   const { root, run } = fixture(t);
   begin(root, run, 'task1', 'development'); begin(root, run, 'task1', 'verification');
-  record(root, run, verification(root, run, { status: 'BLOCKED', issues: ['缺少环境'] }));
+  record(root, run, verification(root, run, { status: 'BLOCKED', issues: ['尚未准备环境', { type: 'missing-tool', description: '缺少测试运行时', file: 'tools/check', location: { line: 12 }, guidance: '须安装批准的运行时' }] }));
+  assert.match(status(root, run).tasks[0].reason, /type=missing-tool/);
+  assert.match(status(root, run).tasks[0].reason, /缺少测试运行时/);
+  assert.match(status(root, run).tasks[0].reason, /tools\/check/);
+  assert.match(status(root, run).tasks[0].reason, /尚未准备环境/);
+  assert.match(status(root, run).tasks[0].reason, /line.*12/);
+  assert.match(status(root, run).tasks[0].reason, /须安装批准的运行时/);
+  assert.doesNotMatch(status(root, run).tasks[0].reason, /\[object Object\]/);
   resume(root, run, 'task1', '环境已经准备');
   assert.equal(status(root, run).tasks[0].fixes, 0);
   begin(root, run, 'task1', 'verification');
-  record(root, run, verification(root, run, { status: 'BLOCKED', permission_denied: true, issues: ['配置deny'] }));
+  record(root, run, verification(root, run, { status: 'BLOCKED', permission_denied: true, issues: [{ type: 'permission_denied', description: '配置deny', file: 'tools/check' }] }));
   assert.equal(status(root, run).status, 'stopped');
+  assert.match(status(root, run).stop_reason, /permission_denied/);
+  assert.match(status(root, run).stop_reason, /配置deny/);
+  assert.match(status(root, run).stop_reason, /tools\/check/);
   assert.throws(() => resume(root, run, 'task1', '换工具'), /已停止/);
 });
 

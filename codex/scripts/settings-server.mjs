@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { activityStatus } from '../../scripts/activity.mjs';
 import { events, listRuns, status } from '../../scripts/loop.mjs';
 import { mainModule, VERSION, validId } from '../../scripts/lib.mjs';
-import { readCodexWorkspaces, resolveChatWorkspace } from './codex-workspaces.mjs';
+import { readCodexWorkspaces, resolveChatWorkspace, verifyCodexSubagent } from './codex-workspaces.mjs';
 import { themeCss } from '../../scripts/ui-theme.mjs';
 import { createWorkflowGraph } from '../../scripts/workflow-graph.mjs';
 import { chatHistory } from '../../scripts/dashboard.mjs';
@@ -54,6 +54,7 @@ const toolList = [
   { name: 'ai_loop.dashboard.runs', title: '读取工作区运行列表', description: '读取工作区运行；提供 session 时仅列出该聊天的运行。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' } }, required: ['root'], additionalProperties: false }, annotations: { readOnlyHint: true } },
   { name: 'ai_loop.dashboard.status', title: '读取运行代理状态', description: '读取最后一次子代理观察及任务证据，不代表实时状态。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, run: { type: 'string' }, project_path: { type: 'string' }, session: { type: 'string' } }, required: ['root', 'run'], additionalProperties: false }, annotations: { readOnlyHint: true } },
   { name: 'ai_loop.dashboard.history', title: '读取当前聊天历次任务', description: '按真实父聊天 ID 筛选历次运行，未知归属的旧记录单独计数，不混入当前聊天。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' }, after: { type: 'string' } }, required: ['root', 'session'], additionalProperties: false }, annotations: { readOnlyHint: true } },
+  { name: 'ai_loop.dashboard.navigation.verify', title: '验证子代理聊天导航目标', description: '只读核对当前父聊天、工作区与 Codex 原生子线程索引；不打开页面、不发送聊天消息。', inputSchema: { type: 'object', properties: { root: { type: 'string' }, session: { type: 'string' }, thread_id: { type: 'string' } }, required: ['root', 'session', 'thread_id'], additionalProperties: false }, annotations: { readOnlyHint: true } },
 ];
 for (const name of ['ai_loop.dashboard.runs', 'ai_loop.dashboard.history']) {
   const tool = toolList.find(item => item.name === name);
@@ -101,6 +102,20 @@ export function createSettingsProtocol(manager = createSettingsManager(), option
     if (!found) throw new Error('只能读取 Codex 已发现且当前存在的精确工作区');
     return (found.roots || [found.root]).find(root => normalize(root) === normalize(value));
   };
+  const navigationProof = (root, session, threadId, workspace = resolveChatWorkspace(home(), session)) => {
+    const samePath = (left, right) => process.platform === 'win32' ? path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase() : path.resolve(left) === path.resolve(right);
+    if (!workspace || !workspace.roots.some(member => samePath(member, root))) return { available: false, reason: '父聊天不属于当前工作区' };
+    return verifyCodexSubagent(home(), { threadId, parentThreadId: session, roots: workspace.roots });
+  };
+  const navigationActivity = (root, session, activity, workspace) => ({
+    ...activity,
+    agents: (activity?.agents ?? []).map(agent => {
+      const threadId = [agent.session_id, agent.context?.id, agent.native_id].find(value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value));
+      return { ...agent, navigation: agent.harness === 'codex' && agent.context?.parent_id === session
+        ? navigationProof(root, session, threadId, workspace)
+        : { available: false, reason: '缺少当前工作区内可验证的子会话身份' } };
+    }),
+  });
   const sessionRuns = (root, session) => {
     if (typeof session !== 'string' || !session.trim() || session.length > 1000) throw new Error('须提供真实聊天标识');
     const rounds = []; let after;
@@ -232,7 +247,7 @@ export function createSettingsProtocol(manager = createSettingsManager(), option
             let after;
             do {
               const page = chatHistory(root, { session_id: args.session, harness: 'codex', limit: 100, after });
-              rounds.push(...page.rounds.map(round => ({ ...round, root })));
+              rounds.push(...page.rounds.map(round => ({ ...round, root, activity: navigationActivity(root, args.session, round.activity, mapped) })));
               if (!after) { unbound_count += page.unbound_count; unbound_activity_count += page.unbound_activity_count; unreadable_count += page.unreadable_count || 0; }
               after = page.next_after;
             } while (after);
@@ -266,12 +281,22 @@ export function createSettingsProtocol(manager = createSettingsManager(), option
           const current = status(root, run, scope);
           const profile = resolveProfile(root, { home: home() }).profile || disabledProfile('codex');
           const roles = Object.fromEntries(Object.entries(profile.roles).map(([role, value]) => [role, { enabled: roleEnabled(value), model: value.model }]));
-          return { jsonrpc: '2.0', id, result: toolResult({ root, run: current, roles, activity: bound?.activity ?? activityStatus(root, run, scope), events: events(root, run, Math.max(0, current.event_seq - 100), 100, scope).events }) };
+          const observed = bound?.activity ?? activityStatus(root, run, scope);
+          const activity = bound ? navigationActivity(root, args.session, observed, resolveChatWorkspace(home(), args.session)) : observed;
+          return { jsonrpc: '2.0', id, result: toolResult({ root, run: current, roles, activity, events: events(root, run, Math.max(0, current.event_seq - 100), 100, scope).events }) };
         }
         if (name === 'ai_loop.dashboard.history') {
           if (typeof args.session !== 'string' || !args.session.trim() || args.session.length > 1000 || Object.keys(args).some(key => !['root', 'session', 'after'].includes(key))) throw new Error('history 需要真实 root/session 与可选 after');
           const root = discoveredRoot(args.root);
-          return { jsonrpc: '2.0', id, result: toolResult({ root, ...chatHistory(root, { session_id: args.session, harness: 'codex', after: args.after, limit: 20 }) }) };
+          const history = chatHistory(root, { session_id: args.session, harness: 'codex', after: args.after, limit: 20 });
+          const workspace = resolveChatWorkspace(home(), args.session);
+          const rounds = (history.rounds ?? []).map(round => ({ ...round, root, activity: navigationActivity(root, args.session, round.activity, workspace) }));
+          return { jsonrpc: '2.0', id, result: toolResult({ root, ...history, rounds }) };
+        }
+        if (name === 'ai_loop.dashboard.navigation.verify') {
+          if (typeof args.root !== 'string' || typeof args.session !== 'string' || typeof args.thread_id !== 'string' || Object.keys(args).some(key => !['root', 'session', 'thread_id'].includes(key))) throw new Error('navigation.verify 需要 root、session 与 thread_id');
+          const root = discoveredRoot(args.root);
+          return { jsonrpc: '2.0', id, result: toolResult(navigationProof(root, args.session, args.thread_id)) };
         }
         if (typeof name === 'string' && ['ai_loop.settings.apply', 'ai_loop.settings.discard', 'ai_loop.settings.reset_project', 'ai_loop.workspace.toggle'].includes(name)) {
           if (Object.keys(args).length) throw new Error(`${name} 不接受参数`);

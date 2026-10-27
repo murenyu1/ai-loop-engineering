@@ -24,7 +24,7 @@ description: 管理 Codex AI Loop 插件的工作区启停、五角色模型路�
 1. **五角色模型配置**：
    - 角色包含 `planner`、`dev`、`tester`、`reviewer`、`scribe`；
    - 首次未配置时默认全部角色关闭；
-   - 开启角色时，`provider` 与 `model` 必须成对选择；思考深度（`reasoningEffort`）仅使用目标模型实际支持的等级；
+   - Codex 原生角色配置使用 `model` 与 `effort`；思考深度仅使用所选模型实际支持的等级。`provider` 与 `reasoningEffort` 字段不属于此处的 Codex 配置格式；
    - 主会话模型继续由 Codex 原生模型选择器控制，不受子代理配置影响。
 2. **并发与生效边界**：
    - 并发设置限制同一项目内允许同时处于活跃状态的子代理数量；

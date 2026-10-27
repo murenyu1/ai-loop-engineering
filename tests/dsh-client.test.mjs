@@ -31,36 +31,96 @@ test('后台轮询保留已有运行，网络失败不清空，403立即清除�
   off(); assert.equal(timers.size, 0);
 });
 
-test('子代理导航优先真实会话、等待异步成功并正确返回拒绝和失败', async () => {
+test('子代理导航只打开宿主确认且已就绪的真实父子会话', async () => {
   const opened = [], panels = [];
-  const agent = { harness: 'dsh', native_id: 'native-alias', session_id: 'child', context: { id: 'other', parent_id: 'recorded-parent' } };
+  const released = [], refreshed = [];
+  const address = { parentSessionId: 'recorded-parent', childSessionId: 'child', mode: 'history-only' };
+  const agent = { harness: 'dsh', native_id: 'native-alias', session_id: 'child', context: { id: 'child', parent_id: 'recorded-parent' } };
   let finish;
-  const sessions = { openSubagent: address => { opened.push(address); return new Promise(resolve => { finish = resolve; }); } };
+  const sessions = {
+    refreshProjections: async parent => refreshed.push(parent),
+    subagentAddress: id => id === 'child' ? address : undefined,
+    retain: target => ({ ready: Promise.resolve(target), release: () => released.push(target.childSessionId) }),
+    openSubagent: target => { opened.push(target); return new Promise(resolve => { finish = resolve; }); }
+  };
   const ctx = { sessions, layout: { selectPanel: value => panels.push(value) } };
-  const result = plugin.openAgentSession(ctx, 'current-chat', agent);
+  const result = plugin.openAgentSession(ctx, 'recorded-parent', agent);
   assert.equal(panels.length, 0);
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(opened[0].childSessionId, 'child');
   assert.equal(opened[0].parentSessionId, 'recorded-parent');
+  assert.equal(opened[0].mode, 'history-only');
+  assert.deepEqual(refreshed, ['recorded-parent']);
   finish(false); assert.equal(await result, false); assert.equal(panels.length, 0);
-  sessions.openSubagent = async () => { throw new Error('已删除'); };
+  assert.deepEqual(released, ['child']);
+  assert.equal(await plugin.openAgentSession(ctx, 'other-parent', agent), false);
+  assert.equal(await plugin.openAgentSession(ctx, 'recorded-parent', { ...agent, session_id: 'subagent-dev-demo-01', native_id: 'subagent-dev-demo-01' }), false);
+  sessions.subagentAddress = () => undefined;
+  assert.equal(await plugin.openAgentSession(ctx, 'recorded-parent', agent), false);
+  sessions.subagentAddress = () => ({ ...address, parentSessionId: 'other-parent' });
   assert.equal(await plugin.openAgentSession(ctx, '', agent), false);
-  sessions.openSubagent = async () => ({ ok: true });
-  assert.equal(await plugin.openAgentSession(ctx, '', agent), true);
-  assert.deepEqual(panels, [null]);
+  let fresh = true, staleRetains = 0, staleOpens = 0;
+  const staleCtx = { sessions: {
+    refreshProjections: async () => { fresh = false; },
+    subagentAddress: () => address,
+    retain: () => { staleRetains++; return { ready: Promise.resolve(), release: () => {} }; },
+  }, uiWorkspace: { openSession: () => { staleOpens++; } } };
+  assert.equal(await plugin.openAgentSession(staleCtx, 'recorded-parent', agent, { isCurrent: () => fresh }), false);
+  assert.equal(staleRetains, 0);
+  assert.equal(staleOpens, 0);
 
-  // 测试 uiWorkspace.openSession 优先与导航
-  const uiOpened = [];
+  // openSession 返回 void；成功只能说明调用发生，不绕过 ready 门。
+  const uiOpened = [], uiReleased = [];
+  let ready;
   const uiCtx = {
-    get: key => key === 'uiWorkspace' ? { openSession: target => { uiOpened.push(target); return true; } } : null,
+    get: key => ({
+      sessions: { subagentAddress: () => address, retain: target => ({ ready: new Promise(resolve => { ready = resolve; }), release: () => uiReleased.push(target.childSessionId) }) },
+      uiWorkspace: { openSession: target => { uiOpened.push(target); } },
+    }[key]),
     layout: { selectPanel: value => panels.push(value) }
   };
-  assert.equal(await plugin.openAgentSession(uiCtx, 'current-chat', agent), true);
+  const uiResult = plugin.openAgentSession(uiCtx, 'recorded-parent', agent);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(uiOpened.length, 0);
+  ready();
+  assert.equal(await uiResult, true);
   assert.equal(uiOpened.length, 1);
   assert.equal(uiOpened[0].childSessionId, 'child');
   assert.equal(uiOpened[0].parentSessionId, 'recorded-parent');
+  assert.deepEqual(uiReleased, ['child']);
+
+  let stillCurrent = true, finishReady, cancelledReleased = 0, cancelledOpened = 0;
+  const abortController = new AbortController(); let retainedSignal;
+  const cancelledCtx = {
+    sessions: { subagentAddress: () => address, retain: (_target, options) => { retainedSignal = options.signal; return { ready: new Promise(resolve => { finishReady = resolve; }), release: () => cancelledReleased++ }; } },
+    uiWorkspace: { openSession: () => { cancelledOpened++; } },
+  };
+  const cancelled = plugin.openAgentSession(cancelledCtx, 'recorded-parent', agent, { isCurrent: () => stillCurrent, signal: abortController.signal });
+  await new Promise(resolve => setImmediate(resolve));
+  stillCurrent = false;
+  abortController.abort();
+  finishReady();
+  assert.equal(await cancelled, false);
+  assert.equal(cancelledOpened, 0);
+  assert.equal(cancelledReleased, 1);
+  assert.equal(retainedSignal, abortController.signal);
+  assert.equal(retainedSignal.aborted, true);
+
+  // A → B → A 的键值虽然回到原值，代次已变，旧请求不能复活。
+  let generation = 1, oldReady, generationOpened = 0, generationReleased = 0;
+  const generationCtx = { sessions: { subagentAddress: () => address, retain: () => ({ ready: new Promise(resolve => { oldReady = resolve; }), release: () => generationReleased++ }) }, uiWorkspace: { openSession: () => generationOpened++ } };
+  const oldGeneration = generation;
+  const oldRequest = plugin.openAgentSession(generationCtx, 'recorded-parent', agent, { isCurrent: () => generation === oldGeneration });
+  await new Promise(resolve => setImmediate(resolve));
+  generation = 2; generation = 3; // B 后切回 A 仍是不同代次
+  oldReady();
+  assert.equal(await oldRequest, false);
+  assert.equal(generationOpened, 0);
+  assert.equal(generationReleased, 1);
 
   assert.equal(plugin.agentSessionId({ harness: 'codex', session_id: 'wrong-host' }), '');
   assert.equal(plugin.agentSessionId({ native_id: '/root/alias' }), '');
+  assert.ok(plugin.inject.includes('uiWorkspace'));
 });
 
 test('403清除组件分页缓存与游标，恢复访问后在途旧分页也不能回流', async () => {
@@ -183,7 +243,7 @@ test('DSH client release uses the real lazy factory contract without eager depen
   assert.equal(loaded.id, 'dsh-plugin-ai-loop-engineering');
   const client = loaded.factory(runtime);
   assert.equal(typeof client.apply, 'function');
-  assert.deepEqual(Array.from(client.inject), ['slots', 'configForms', 'remote', 'remote.session', 'workspaces', 'sessions']);
+  assert.deepEqual(Array.from(client.inject), ['slots', 'configForms', 'remote', 'remote.session', 'workspaces', 'sessions', 'uiWorkspace']);
 });
 
 test('DSH native configuration attaches only to its own installed package page', () => {
@@ -585,10 +645,12 @@ test('聊天图展开观察对象可读，并使用真实子代理 ID 导航', a
   const view = createPlugin(name => name === 'react' ? React : runtime(name));
   const { card } = controller();
   const opened = [];
+  const childAddress = { parentSessionId: 'parent-session', childSessionId: 'child-real', mode: 'history-only' };
   const ctx = {
     get: key => key === 'sessions' ? {
       list: { getSnapshot: () => ({ byId: { 'parent-session': { cwd: '/project' } } }), subscribe: () => () => {} },
-      openSubagent: address => opened.push(address), subagentAddress: () => undefined,
+      openSubagent: address => opened.push(address), subagentAddress: id => id === 'child-real' ? childAddress : undefined,
+      retain: target => ({ ready: Promise.resolve(target), release: () => {} }),
     } : key === 'layout' ? { selectPanel: () => {} } : undefined,
   };
   const flatten = node => Array.isArray(node) ? node.flatMap(flatten) : node && typeof node === 'object' ? [node, ...(node.props?.children || []).flatMap(flatten)] : [node];
@@ -606,7 +668,7 @@ test('聊天图展开观察对象可读，并使用真实子代理 ID 导航', a
     assert.ok(nodes.includes('Token 用量不可获取'));
     assert.ok(nodes.includes('Tokens: 12 In / 不可获取 Out（部分数据）'));
     assert.ok(nodes.some(node => node?.props?.children?.includes('开发')));
-    assert.ok(nodes.some(node => node?.props?.children?.includes('点线：真实调用')));
+    assert.ok(nodes.some(node => node?.props?.children?.includes('点线：运行记录中的调用关联')));
     assert.ok(nodes.some(node => node?.props?.role === 'region' && node.props['aria-label']?.includes('关系图')));
     assert.ok(nodes.some(node => node?.type === 'button' && node.props['aria-label'] === '缩小画布'));
     assert.ok(nodes.some(node => node?.type === 'button' && node.props['aria-label'] === '放大画布'));
@@ -634,7 +696,7 @@ test('聊天图展开观察对象可读，并使用真实子代理 ID 导航', a
     const openButton = detailsNodes.find(node => node?.type === 'button' && node.props.children?.includes('进入子代理聊天'));
     assert.ok(openButton);
     await openButton.props.onClick();
-    assert.deepEqual(opened, [{ parentSessionId: 'parent-session', childSessionId: 'child-real', mode: 'continuable' }]);
+    assert.deepEqual(opened, [childAddress]);
     const olderButton = nodes.find(node => node?.type === 'button' && node.props.children?.includes('加载更早运行'));
     assert.ok(olderButton);
     await olderButton.props.onClick();
@@ -648,6 +710,60 @@ test('聊天图展开观察对象可读，并使用真实子代理 ID 导航', a
     assert.equal(opened.at(-1).parentSessionId, 'parent-session', '工作区范围仍从真实记录取得父聊天');
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+for (const label of ['进入子代理聊天', '进入聊天']) test(`实际${label}入口取消切换、返回旧聊天及卸载中的历史加载`, async () => {
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  for (const transition of ['switch', 'return', 'unmount']) {
+    const slots = [], effects = []; let cursor = 0;
+    const same = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
+    const React = {
+      Component: class {}, createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+      useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = typeof initial === 'function' ? initial() : initial; return [slots[i], value => { slots[i] = typeof value === 'function' ? value(slots[i]) : value; }]; },
+      useRef(initial) { const i = cursor++; if (!(i in slots)) slots[i] = { current: initial }; return slots[i]; },
+      useMemo(fn, deps) { const i = cursor++; if (!slots[i] || !same(slots[i].deps, deps)) slots[i] = { deps, value: fn() }; return slots[i].value; },
+      useEffect(fn, deps) { const i = cursor++, old = slots[i]; if (!old || !same(old.deps, deps)) effects.push(() => { old?.cleanup?.(); slots[i] = { deps, cleanup: fn() }; }); },
+      useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
+    };
+    const view = createPlugin(name => name === 'react' ? React : runtime(name));
+    const address = { parentSessionId: 'parent-A', childSessionId: 'real-child', mode: 'history-only' };
+    let finishReady, retainedOptions, released = 0; const opened = [];
+    const ctx = {
+      sessions: {
+        list: { getSnapshot: () => ({ byId: { 'parent-A': { cwd: '/one' }, 'parent-B': { cwd: '/two' } } }), subscribe: () => () => {} },
+        subagentAddress: () => address,
+        retain: (_target, options) => { retainedOptions = options; return { ready: new Promise(resolve => { finishReady = resolve; }), release: () => { released++; } }; },
+      }, uiWorkspace: { openSession: target => { opened.push(target); } }, layout: { selectPanel: () => {} },
+    };
+    const value = { enabled: true, projects: [{ path: '/one', enabled: true }, { path: '/two', enabled: true }] };
+    const controller = { store: { getSnapshot: () => value, subscribe: () => () => {} }, savedSnapshot: () => value };
+    const payload = { run_id: 'round-1', status: 'active', tasks: [{ id: 'task1', title: '开发', phase: 'developing' }], runs: [{ run_id: 'round-1', project_path: '.', status: 'active' }], activity: { agents: [{ id: 'dev-exec', harness: 'dsh', native_id: 'real-child', task: 'task1', role: 'dev', state: 'completed', context: { id: 'real-child', parent_id: 'parent-A' } }] } };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: true, json: async () => payload });
+    const child = view.ConversationDashboard({ ctx, sessionId: 'parent-A', workspacePath: '/one', controller }).props.children[0];
+    const render = () => { cursor = 0; const tree = child.type(child.props); effects.splice(0).forEach(fn => fn()); return tree; };
+    const flatten = node => Array.isArray(node) ? node.flatMap(flatten) : node && typeof node === 'object' ? [node, ...(node.props?.children || []).flatMap(flatten)] : [node];
+    try {
+      render(); await tick(); render();
+      const stage = flatten(render()).find(node => node?.props?.['data-node-id'] === 'stage:task1:dev');
+      assert.ok(stage); stage.props.onClick();
+      const button = flatten(render()).find(node => node?.type === 'button' && node.props.children?.includes(label));
+      assert.ok(button);
+      const pending = button.props.onClick(); await tick();
+      assert.equal(typeof finishReady, 'function');
+      assert.ok(retainedOptions.signal, `${label}须向原生历史加载传递取消信号`);
+      if (transition === 'unmount') slots.forEach(slot => slot?.cleanup?.());
+      else {
+        child.props.sessionId = 'parent-B'; child.props.workspacePath = '/two'; render(); await tick(); render();
+        if (transition === 'return') { child.props.sessionId = 'parent-A'; child.props.workspacePath = '/one'; render(); await tick(); render(); }
+      }
+      assert.equal(retainedOptions.signal.aborted, true, transition);
+      finishReady(); await pending; await tick();
+      assert.deepEqual(opened, [], `${label}/${transition}不得打开旧聊天`);
+      assert.equal(released, 1, '取消后释放原生会话引用');
+      if (transition !== 'unmount') assert.ok(!flatten(render()).some(node => node?.props?.role === 'alert'), '旧请求不得给新上下文写错误');
+    } finally { globalThis.fetch = originalFetch; slots.forEach(slot => slot?.cleanup?.()); }
   }
 });
 

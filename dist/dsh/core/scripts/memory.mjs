@@ -15,6 +15,12 @@ const nonempty = value => typeof value === 'string' && value.trim().length > 0;
 const cut = (value, size) => typeof value === 'string' ? value.slice(0, size) : null;
 const sameProjectPath = (left, right) => process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
 const docPath = name => `.ai-loop/memory/${name}.md`;
+function memoryScope(project, options) {
+  const sourceRoot = rootPath(project);
+  const projectPath = options.project_path ?? options['project-path'] ?? '.';
+  return { sourceRoot, root: projectBase(sourceRoot, projectPath), projectPath };
+}
+const workspacePath = (sourceRoot, root, relative) => path.relative(sourceRoot, safePath(root, relative)).split(path.sep).join('/');
 function text(value, name, size = 2000) {
   assert(nonempty(value) && value.length <= size, `${name} 须为非空文本，且不超过 ${size} 个字符`);
   return value;
@@ -43,7 +49,7 @@ function fileHash(root, relative) {
   } finally { fs.closeSync(descriptor); }
   return digest.digest('hex');
 }
-function catalog(root) {
+function catalog(root, sourceRoot = root) {
   const item = file(root, '.ai-loop/memory/catalog.json');
   if (item.content === null) return { item, value: { schema_version: 1, revision: 0, documents: {} } };
   const value = loadCatalog(root, item);
@@ -55,7 +61,7 @@ function catalog(root) {
     for (const entry of document.entries) {
       validId(entry.id); assert(!ids.has(entry.id), '知识条目编号重复'); ids.add(entry.id);
       assert(STATES.includes(entry.status) && nonempty(entry.title) && nonempty(entry.text) && nonempty(entry.scope) && Array.isArray(entry.sources) && entry.sources.length <= 8, '知识条目字段无效');
-      for (const source of entry.sources) validateSource(root, source, false);
+      for (const source of entry.sources) validateSource(sourceRoot, source, false);
     }
   }
   return { item, value };
@@ -64,7 +70,8 @@ function validateSource(root, source, observe = true) {
   assert(source && typeof source === 'object' && !Array.isArray(source), '知识来源格式无效');
   if (source.type === 'file') {
     text(source.path, '来源路径', 1024); safePath(root, source.path);
-    assert(!source.path.startsWith('.ai-loop/memory/'), '知识来源请引用原始项目资料、事件或迁移备份，不能循环引用知识库自身');
+    const sourceParts = source.path.replace(/\\/g, '/').split('/').map(part => process.platform === 'win32' ? part.toLowerCase() : part);
+    assert(!sourceParts.some((part, index) => part === '.ai-loop' && sourceParts[index + 1] === 'memory'), '知识来源请引用原始项目资料、事件或迁移备份，不能循环引用知识库自身');
     if (!observe) { assert(/^[a-f0-9]{64}$/.test(source.hash), '文件来源摘要无效'); return source; }
     const digest = fileHash(root, source.path); assert(digest, '知识来源文件不存在：' + source.path);
     return { type: 'file', path: source.path, hash: digest };
@@ -118,11 +125,12 @@ function historical(root, item) {
   return { ...file(root, target), updated: item.content };
 }
 
-export function save(project, input) {
-  const root = rootPath(project);
+export function save(project, input, options = {}) {
+  const { sourceRoot, root, projectPath } = memoryScope(project, options);
+  assert(fs.existsSync(root) && fs.statSync(root).isDirectory(), '知识库项目目录不存在');
   assert(input && Number.isInteger(input.base_revision) && input.base_revision >= 0 && Array.isArray(input.documents) && input.documents.length > 0 && input.documents.length <= NAMES.length, '知识更新需要 base_revision 和 documents');
   return locked(root, 'memory', () => {
-    const loaded = catalog(root);
+    const loaded = catalog(root, sourceRoot);
     assert(input.base_revision === loaded.value.revision, '知识目录已更新，请读取最新 revision 后合并');
     const next = structuredClone(loaded.value);
     const observations = [loaded.item];
@@ -156,7 +164,7 @@ export function save(project, input) {
         validId(entry.id); assert(!patchedIds.has(entry.id), '同批次知识条目编号重复'); patchedIds.add(entry.id);
         text(entry.title, '知识标题', 160); text(entry.text, '知识正文', 200000); text(entry.scope, '适用范围', 400);
         assert(STATES.includes(entry.status) && Array.isArray(entry.sources) && entry.sources.length <= 8 && (entry.status === 'unverified' || entry.sources.length > 0), '知识须有有效状态与来源；猜测须标待核对');
-        const sources = entry.sources.map(source => validateSource(root, source));
+        const sources = entry.sources.map(source => validateSource(sourceRoot, source));
         entries.set(entry.id, { id: entry.id, title: entry.title, text: entry.text, scope: entry.scope, status: entry.status, sources });
       }
       const document = { name: patch.name, summary: text(patch.summary ?? old?.summary, '文档摘要', 1600), entries: [...entries.values()] };
@@ -172,42 +180,42 @@ export function save(project, input) {
         changes.push({ ...item, updated: content });
       }
     }
-    if (isDeepStrictEqual(next.documents, loaded.value.documents) && !changes.length) return { status: 'unchanged', revision: next.revision, documents: [...names] };
+    if (isDeepStrictEqual(next.documents, loaded.value.documents) && !changes.length) return { status: 'unchanged', revision: next.revision, project_path: projectPath, documents: [...names] };
     next.revision++; next.updated_at = now();
     const encoded = encodeCatalog(root, next, stage);
     if (loaded.item.content && JSON.parse(loaded.item.content).schema_version === 1) changes.push(historical(root, loaded.item));
     unchanged(root, observations);
     // 来源文件也需仍对应本次实际观察，不把变化中的内容标为有效来源。
-    for (const name of names) for (const entry of next.documents[name].entries) if (patchedEntry(input, name, entry.id)) for (const source of entry.sources) if (source.type === 'file') assert(fileHash(root, source.path) === source.hash, '来源文件在记录期间变化，请重新核对：' + source.path);
+    for (const name of names) for (const entry of next.documents[name].entries) if (patchedEntry(input, name, entry.id)) for (const source of entry.sources) if (source.type === 'file') assert(fileHash(sourceRoot, source.path) === source.hash, '来源文件在记录期间变化，请重新核对：' + source.path);
     changes.push({ ...loaded.item, updated: encoded });
     transaction(root, changes);
-    return { status: 'saved', revision: next.revision, documents: [...names], pages: [...names].map(name => ({ name, count: next.documents[name].pages?.length || 0 })), history: changes.filter(item => item.path.includes('/history/')).map(item => item.path) };
+    return { status: 'saved', revision: next.revision, project_path: projectPath, documents: [...names], pages: [...names].map(name => ({ name, count: next.documents[name].pages?.length || 0 })), history: changes.filter(item => item.path.includes('/history/')).map(item => workspacePath(sourceRoot, root, item.path)) };
   });
 }
 function patchedEntry(input, name, id) { return input.documents.find(document => document.name === name)?.entries.some(entry => entry.id === id); }
 
-function sourceIssues(root, source, cache = new Map()) {
+function sourceIssues(root, source, sourceRoot = root, cache = new Map()) {
   const key = JSON.stringify(source);
   if (cache.has(key)) return cache.get(key);
-  const issue = uncachedSourceIssue(root, source);
+  const issue = uncachedSourceIssue(root, source, sourceRoot);
   cache.set(key, issue);
   return issue;
 }
-function uncachedSourceIssue(root, source) {
+function uncachedSourceIssue(root, source, sourceRoot = root) {
   if (source.type === 'file') {
-    const digest = fileHash(root, source.path);
+    const digest = fileHash(sourceRoot, source.path);
     return digest === null ? { type: 'missing-reference', path: source.path } : digest !== source.hash ? { type: 'changed-reference', path: source.path } : null;
   }
   if (source.type === 'event') {
-    if (!listRuns(root, { project_path: source.project_path }).some(run => run.run_id === source.run)) return { type: 'missing-event-run', run: source.run };
-    const selected = events(root, source.run, source.seq - 1, 1, { project_path: source.project_path }).events[0];
+    if (!listRuns(sourceRoot, { project_path: source.project_path }).some(run => run.run_id === source.run)) return { type: 'missing-event-run', run: source.run };
+    const selected = events(sourceRoot, source.run, source.seq - 1, 1, { project_path: source.project_path }).events[0];
     return selected?.seq === source.seq ? null : { type: 'missing-event', run: source.run, seq: source.seq };
   }
   return null;
 }
-export function inspect(project) {
-  const root = rootPath(project);
-  const { value } = catalog(root);
+export function inspect(project, options = {}) {
+  const { sourceRoot, root, projectPath } = memoryScope(project, options);
+  const { value } = catalog(root, sourceRoot);
   const documents = [];
   const sourceCache = new Map();
   for (const name of NAMES) {
@@ -219,18 +227,18 @@ export function inspect(project) {
     else {
       if (item.content === null) issues.push({ type: 'missing-document' });
       else if (item.hash !== record.content_hash) issues.push({ type: 'edited-document' });
-      issues.push(...verifyPages(root, record.pages));
+      issues.push(...verifyPages(root, record.pages).map(issue => ({ ...issue, path: workspacePath(sourceRoot, root, issue.path) })));
       for (const entry of record.entries) {
         if (entry.status === 'superseded') continue;
         for (const source of entry.sources) {
-          const issue = sourceIssues(root, source, sourceCache);
+          const issue = sourceIssues(root, source, sourceRoot, sourceCache);
           if (issue) issues.push({ ...issue, entry: entry.id });
         }
       }
     }
     documents.push({ name, path: item.path, hash: item.hash, indexed: Boolean(record), pages: record?.pages?.length || 0, entries: record?.entries.length || 0, issues });
   }
-  return { revision: value.revision, status: !Object.keys(value.documents).length ? 'uninitialized' : documents.some(document => document.issues.length) ? 'needs-check' : 'ready', index: docPath('index'), documents };
+  return { revision: value.revision, project_path: projectPath, status: !Object.keys(value.documents).length ? 'uninitialized' : documents.some(document => document.issues.length) ? 'needs-check' : 'ready', index: workspacePath(sourceRoot, root, docPath('index')), documents: documents.map(document => ({ ...document, path: workspacePath(sourceRoot, root, document.path) })) };
 }
 function list(value, name, max = 30) {
   assert(Array.isArray(value) && value.length <= max && value.every(item => nonempty(item) && item.length <= 2000), `${name} 须为最多 ${max} 条非空短文本`);
@@ -397,16 +405,16 @@ export function bootstrap(project, options = {}) {
   const duplicateIds = new Set(runs.filter((run,index) => runs.some((other,j) => j !== index && run.run_id === other.run_id)).map(run => run.run_id));
   const visible = listed.slice(0, limit);
   const remaining = listed.length > visible.length;
-  const memoryBase = options.project_path && options.project_path !== '.' ? projectBase(root, options.project_path) : root;
-  const memory = inspect(fs.existsSync(safePath(memoryBase, '.ai-loop/memory')) ? memoryBase : root);
+  const memory = inspect(root, { project_path: options.project_path });
   // 启动输出只给短状态和路径，不把知识正文、已完成历史或报告回灌给模型。
   const memorySummary = { status: memory.status, revision: memory.revision, index: memory.index, documents: memory.documents.map(document => ({ name: document.name, path: document.path, indexed: document.indexed, issue_count: document.issues.length, issues: document.issues.slice(0, 5) })) };
   return { intent, memory: memorySummary, active_count: runs.length, runs: visible, selected, needs_choice: !options.run && intent === 'continue' && runs.length > 1, next_after: remaining ? (duplicateIds.has(visible.at(-1).run_id) ? 'v2:' + Buffer.from(JSON.stringify({run_id:visible.at(-1).run_id,project_path:visible.at(-1).project_path})).toString('base64url') : visible.at(-1).run_id) : null, snapshot_status: 'unchecked', warning: '启动仅发现记录，不自动执行、恢复或证明代码与证据有效；知识记录不代替项目规则和权限。' };
 }
-export function search(project, query, limit = 8, after) {
-  const root = rootPath(project); text(query, '检索词', 200);
+export function search(project, query, limit = 8, after, options = {}) {
+  const { sourceRoot, root, projectPath } = memoryScope(project, options);
+  text(query, '检索词', 200);
   assert(Number.isInteger(limit) && limit > 0 && limit <= 20, '检索 limit 须为 1–20');
-  const { value } = catalog(root);
+  const { value } = catalog(root, sourceRoot);
   const terms = query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const found = [];
   const identical = new Map();
@@ -422,7 +430,8 @@ export function search(project, query, limit = 8, after) {
         const key = JSON.stringify([entry.title, entry.text, entry.scope, entry.status, entry.sources]);
         if (identical.has(key)) identical.get(key).also_in.push({ document: document.name, id: entry.id });
         else {
-          const match = { score, document: document.name, id: entry.id, title: entry.title, status: entry.status, scope: entry.scope, text: cut(entry.text, 1200), read: { document: document.name, entry: entry.id }, sources: entry.sources.slice(0, 4).map(source => cut(sourceLabel(source), 240)), source_count: entry.sources.length, also_in: [] };
+          const pointer = workspacePath(sourceRoot, root, docPath(document.name));
+          const match = { score, document: document.name, id: entry.id, title: entry.title, status: entry.status, scope: entry.scope, text: cut(entry.text, 1200), read: { document: document.name, entry: entry.id, project_path: projectPath, path: pointer }, sources: entry.sources.slice(0, 4).map(source => cut(sourceLabel(source), 240)), source_count: entry.sources.length, also_in: [] };
           found.push(match); identical.set(key, match);
         }
       }
@@ -439,7 +448,7 @@ export function search(project, query, limit = 8, after) {
     matches.push(match); size += length;
   }
   const truncated = found.length > start + matches.length;
-  return { query, matches, truncated, next_after: truncated && matches.length ? `${matches.at(-1).document}:${matches.at(-1).id}` : null, warning: '摘要可能截断，重要约束用 read --document NAME --entry ID 核对；来源可能过期，使用前运行 inspect 并核对实际资料。' };
+  return { query, project_path: projectPath, index: workspacePath(sourceRoot, root, docPath('index')), matches, truncated, next_after: truncated && matches.length ? `${matches.at(-1).document}:${matches.at(-1).id}` : null, warning: '摘要可能截断，重要约束用 read --document NAME --entry ID 核对；来源可能过期，使用前运行 inspect 并核对实际资料。' };
 }
 export function readHandoff(project, run, options = {}) {
   const root = rootPath(project), state = runState(root, validId(run), options.project_path ?? options['project-path']), info = checkpointInfo(root, state);
@@ -455,24 +464,25 @@ export function readHandoff(project, run, options = {}) {
   return { run_id: run, page, total_pages: count, content: content.slice(offset, end), next_offset: end < content.length ? end : null, next_page: end === content.length && page < count ? page + 1 : null };
 }
 export function readMemory(project, options = {}) {
-  const root = rootPath(project), { value } = catalog(root);
+  const { sourceRoot, root, projectPath } = memoryScope(project, options), { value } = catalog(root, sourceRoot);
   assert(NAMES.includes(options.document), 'document 须为 index / architecture / decisions / lessons');
   const document = value.documents[options.document];
   assert(document, '知识文档尚未创建');
   assert(file(root, docPath(document.name)).hash === document.content_hash && !verifyPages(root, document.pages).length, '正文已变化；先 inspect 并合并');
   const offset = Number(options.offset || 0);
   assert(Number.isInteger(offset) && offset >= 0, 'offset 须为非负整数');
-  let content, totalPages = document.pages?.length || 1, page = Number(options.page || 1);
+  let content, pointer = docPath(document.name), totalPages = document.pages?.length || 1, page = Number(options.page || 1);
   if (options.entry) {
     const entry = document.entries.find(entry => entry.id === options.entry);
     assert(entry, '知识条目不存在'); content = render({ ...document, entries: [entry] });
   } else {
     assert(Number.isInteger(page) && page >= 1 && page <= totalPages, 'page 超出分页范围');
-    content = document.pages?.length ? file(root, document.pages[page - 1].path).content : file(root, docPath(document.name)).content;
+    pointer = document.pages?.length ? document.pages[page - 1].path : docPath(document.name);
+    content = file(root, pointer).content;
   }
   assert(offset <= content.length, 'offset 超出正文范围');
   const end = Math.min(offset + 8000, content.length);
-  return { document: document.name, entry: options.entry || null, page, total_pages: totalPages, content: content.slice(offset, end), next_offset: end < content.length ? end : null, next_page: !options.entry && end === content.length && page < totalPages ? page + 1 : null };
+  return { document: document.name, project_path: projectPath, path: workspacePath(sourceRoot, root, pointer), entry: options.entry || null, page, total_pages: totalPages, content: content.slice(offset, end), next_offset: end < content.length ? end : null, next_page: !options.entry && end === content.length && page < totalPages ? page + 1 : null };
 }
 export function cli(argv) {
   const options = args(argv);
@@ -483,10 +493,10 @@ export function cli(argv) {
   if (command === 'read') return options.run ? readHandoff(options.project, options.run, options) : readMemory(options.project, options);
   const input = () => { assert(typeof options.input === 'string', '该命令需要 --input JSON 文件'); return jsonFile(path.resolve(options.input)); };
   if (command === 'bootstrap') return bootstrap(options.project, { intent: options.intent, run: options.run, after: options.after, project_path: options['project-path'], ...(options.limit !== undefined ? { limit: Number(options.limit) } : {}) });
-  if (command === 'inspect') return inspect(options.project);
-  if (command === 'save') return save(options.project, input());
+  if (command === 'inspect') return inspect(options.project, { project_path: options['project-path'] });
+  if (command === 'save') return save(options.project, input(), { project_path: options['project-path'] });
   if (command === 'checkpoint') return checkpoint(options.project, options.run, input(), { project_path: options['project-path'] });
-  if (command === 'search') return search(options.project, options.query, options.limit === undefined ? 8 : Number(options.limit), options.after);
+  if (command === 'search') return search(options.project, options.query, options.limit === undefined ? 8 : Number(options.limit), options.after, { project_path: options['project-path'] });
   throw new Error('未知记忆命令，请查看 --help');
 }
 if (mainModule(import.meta.url)) printResult(() => cli(process.argv.slice(2)));
