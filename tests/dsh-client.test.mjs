@@ -69,54 +69,66 @@ test('子代理导航只打开宿主确认且已就绪的真实父子会话', as
   assert.equal(staleRetains, 0);
   assert.equal(staleOpens, 0);
 
-  // openSession 返回 void；成功只能说明调用发生，不绕过 ready 门。
-  const uiOpened = [], uiReleased = [];
-  let ready;
+  // 现代宿主：uiWorkspace.openSession 是唯一入口，生命周期由宿主 replaceMain 独占，
+  // 调用方不得再 retain/release，否则与宿主抢引用把刚切过去的会话提前销毁。
+  const uiOpened = [], uiRetained = [], uiPanels = [];
   const uiCtx = {
     get: key => ({
-      sessions: { subagentAddress: () => address, retain: target => ({ ready: new Promise(resolve => { ready = resolve; }), release: () => uiReleased.push(target.childSessionId) }) },
+      sessions: { refreshProjections: async () => {}, subagentAddress: () => address, retain: target => { uiRetained.push(target); return { ready: Promise.resolve(), release: () => {} }; } },
       uiWorkspace: { openSession: target => { uiOpened.push(target); } },
-    }[key]),
-    layout: { selectPanel: value => panels.push(value) }
+    }[key] || (key === 'layout' ? { selectPanel: value => uiPanels.push(value) } : undefined)),
+    layout: { selectPanel: value => uiPanels.push(value) }
   };
-  const uiResult = plugin.openAgentSession(uiCtx, 'recorded-parent', agent);
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(uiOpened.length, 0);
-  ready();
-  assert.equal(await uiResult, true);
+  assert.equal(await plugin.openAgentSession(uiCtx, 'recorded-parent', agent), true);
   assert.equal(uiOpened.length, 1);
   assert.equal(uiOpened[0].childSessionId, 'child');
   assert.equal(uiOpened[0].parentSessionId, 'recorded-parent');
-  assert.deepEqual(uiReleased, ['child']);
+  assert.equal(uiOpened[0].mode, 'history-only');
+  assert.deepEqual(uiRetained, []);
+  assert.deepEqual(uiPanels, [null]);
 
-  let stillCurrent = true, finishReady, cancelledReleased = 0, cancelledOpened = 0;
-  const abortController = new AbortController(); let retainedSignal;
+  // 宿主 catalog 尚未物化（subagentAddress 返回 undefined）时，真实 UUID 子会话必须仍可导航：
+  // 用显式 address 免预载，这正是过去"点了没反应"的根因。
+  const uuid = 'ade08a51-9b89-4eae-9867-86a7425f4d4a';
+  const uuidAgent = { harness: 'dsh', native_id: uuid, context: { id: uuid, parent_id: 'recorded-parent' } };
+  const uuidOpened = [];
+  const uuidCtx = { sessions: { subagentAddress: () => undefined }, uiWorkspace: { openSession: target => uuidOpened.push(target) }, layout: { selectPanel: () => {} } };
+  assert.equal(await plugin.openAgentSession(uuidCtx, 'recorded-parent', uuidAgent), true);
+  assert.deepEqual(uuidOpened, [{ parentSessionId: 'recorded-parent', childSessionId: uuid, mode: 'continuable' }]);
+
+  // 非 UUID 且宿主未确认 = 运行记录里的占位标识，必须拒绝而不是静默失败。
+  const placeholderOpened = [];
+  const placeholderCtx = { sessions: { subagentAddress: () => undefined }, uiWorkspace: { openSession: target => placeholderOpened.push(target) } };
+  assert.equal(await plugin.openAgentSession(placeholderCtx, 'recorded-parent', agent), false);
+  assert.equal(placeholderOpened.length, 0);
+
+  // 宿主拒绝（返回 false 或抛错）时不能谎报成功。
+  assert.equal(await plugin.openAgentSession({ sessions: { subagentAddress: () => address }, uiWorkspace: { openSession: () => false }, layout: { selectPanel: () => { throw new Error('不应关面板'); } } }, 'recorded-parent', agent), false);
+  assert.equal(await plugin.openAgentSession({ sessions: { subagentAddress: () => address }, uiWorkspace: { openSession: () => { throw new Error('unknown session'); } }, layout: { selectPanel: () => { throw new Error('不应关面板'); } } }, 'recorded-parent', agent), false);
+
+  // 取消：refreshProjections 期间失效后不得再触发导航。
+  let stillCurrent = true, cancelledOpened = 0;
+  const abortController = new AbortController();
   const cancelledCtx = {
-    sessions: { subagentAddress: () => address, retain: (_target, options) => { retainedSignal = options.signal; return { ready: new Promise(resolve => { finishReady = resolve; }), release: () => cancelledReleased++ }; } },
+    sessions: { refreshProjections: async () => { stillCurrent = false; abortController.abort(); }, subagentAddress: () => address },
     uiWorkspace: { openSession: () => { cancelledOpened++; } },
   };
-  const cancelled = plugin.openAgentSession(cancelledCtx, 'recorded-parent', agent, { isCurrent: () => stillCurrent, signal: abortController.signal });
-  await new Promise(resolve => setImmediate(resolve));
-  stillCurrent = false;
-  abortController.abort();
-  finishReady();
-  assert.equal(await cancelled, false);
+  assert.equal(await plugin.openAgentSession(cancelledCtx, 'recorded-parent', agent, { isCurrent: () => stillCurrent, signal: abortController.signal }), false);
   assert.equal(cancelledOpened, 0);
-  assert.equal(cancelledReleased, 1);
-  assert.equal(retainedSignal, abortController.signal);
-  assert.equal(retainedSignal.aborted, true);
 
-  // A → B → A 的键值虽然回到原值，代次已变，旧请求不能复活。
-  let generation = 1, oldReady, generationOpened = 0, generationReleased = 0;
-  const generationCtx = { sessions: { subagentAddress: () => address, retain: () => ({ ready: new Promise(resolve => { oldReady = resolve; }), release: () => generationReleased++ }) }, uiWorkspace: { openSession: () => generationOpened++ } };
-  const oldGeneration = generation;
-  const oldRequest = plugin.openAgentSession(generationCtx, 'recorded-parent', agent, { isCurrent: () => generation === oldGeneration });
+  // 旧宿主降级：没有 uiWorkspace 时仍走 retain 就绪门 + openSubagent。
+  const legacyReleased = [], legacyOpened = [];
+  let legacyReady;
+  const legacyCtx = { sessions: { subagentAddress: () => address, retain: target => ({ ready: new Promise(resolve => { legacyReady = resolve; }), release: () => legacyReleased.push(target.childSessionId) }), openSubagent: target => { legacyOpened.push(target); return true; } } };
+  const legacyResult = plugin.openAgentSession(legacyCtx, 'recorded-parent', agent);
   await new Promise(resolve => setImmediate(resolve));
-  generation = 2; generation = 3; // B 后切回 A 仍是不同代次
-  oldReady();
-  assert.equal(await oldRequest, false);
-  assert.equal(generationOpened, 0);
-  assert.equal(generationReleased, 1);
+  assert.equal(legacyOpened.length, 0);
+  legacyReady();
+  assert.equal(await legacyResult, true);
+  assert.deepEqual(legacyOpened, [address]);
+  assert.deepEqual(legacyReleased, ['child']);
+  assert.equal(plugin.isSessionUuid(uuid), true);
+  assert.equal(plugin.isSessionUuid('subagent-dev-demo-01'), false);
 
   assert.equal(plugin.agentSessionId({ harness: 'codex', session_id: 'wrong-host' }), '');
   assert.equal(plugin.agentSessionId({ native_id: '/root/alias' }), '');
@@ -728,12 +740,13 @@ for (const label of ['进入子代理聊天', '进入聊天']) test(`实际${lab
     };
     const view = createPlugin(name => name === 'react' ? React : runtime(name));
     const address = { parentSessionId: 'parent-A', childSessionId: 'real-child', mode: 'history-only' };
-    let finishReady, retainedOptions, released = 0; const opened = [];
+    let finishProjections, retained = 0, released = 0; const opened = [], refreshed = [];
     const ctx = {
       sessions: {
         list: { getSnapshot: () => ({ byId: { 'parent-A': { cwd: '/one' }, 'parent-B': { cwd: '/two' } } }), subscribe: () => () => {} },
         subagentAddress: () => address,
-        retain: (_target, options) => { retainedOptions = options; return { ready: new Promise(resolve => { finishReady = resolve; }), release: () => { released++; } }; },
+        refreshProjections: parent => { refreshed.push(parent); return new Promise(resolve => { finishProjections = resolve; }); },
+        retain: () => { retained++; return { ready: Promise.resolve(), release: () => { released++; } }; },
       }, uiWorkspace: { openSession: target => { opened.push(target); } }, layout: { selectPanel: () => {} },
     };
     const value = { enabled: true, projects: [{ path: '/one', enabled: true }, { path: '/two', enabled: true }] };
@@ -751,17 +764,17 @@ for (const label of ['进入子代理聊天', '进入聊天']) test(`实际${lab
       const button = flatten(render()).find(node => node?.type === 'button' && node.props.children?.includes(label));
       assert.ok(button);
       const pending = button.props.onClick(); await tick();
-      assert.equal(typeof finishReady, 'function');
-      assert.ok(retainedOptions.signal, `${label}须向原生历史加载传递取消信号`);
+      assert.equal(typeof finishProjections, 'function', `${label}须先向原生投影确认父会话归属`);
+      assert.deepEqual(refreshed, ['parent-A']);
       if (transition === 'unmount') slots.forEach(slot => slot?.cleanup?.());
       else {
         child.props.sessionId = 'parent-B'; child.props.workspacePath = '/two'; render(); await tick(); render();
         if (transition === 'return') { child.props.sessionId = 'parent-A'; child.props.workspacePath = '/one'; render(); await tick(); render(); }
       }
-      assert.equal(retainedOptions.signal.aborted, true, transition);
-      finishReady(); await pending; await tick();
+      finishProjections(); await pending; await tick();
       assert.deepEqual(opened, [], `${label}/${transition}不得打开旧聊天`);
-      assert.equal(released, 1, '取消后释放原生会话引用');
+      assert.equal(retained, 0, '现代宿主由 uiWorkspace 独占会话生命周期，不得额外 retain');
+      assert.equal(released, 0, '导航取消不需要外部释放引用');
       if (transition !== 'unmount') assert.ok(!flatten(render()).some(node => node?.props?.role === 'alert'), '旧请求不得给新上下文写错误');
     } finally { globalThis.fetch = originalFetch; slots.forEach(slot => slot?.cleanup?.()); }
   }
