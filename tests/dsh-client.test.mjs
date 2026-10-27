@@ -47,6 +47,18 @@ test('子代理导航优先真实会话、等待异步成功并正确返回拒�
   sessions.openSubagent = async () => ({ ok: true });
   assert.equal(await plugin.openAgentSession(ctx, '', agent), true);
   assert.deepEqual(panels, [null]);
+
+  // 测试 uiWorkspace.openSession 优先与导航
+  const uiOpened = [];
+  const uiCtx = {
+    get: key => key === 'uiWorkspace' ? { openSession: target => { uiOpened.push(target); return true; } } : null,
+    layout: { selectPanel: value => panels.push(value) }
+  };
+  assert.equal(await plugin.openAgentSession(uiCtx, 'current-chat', agent), true);
+  assert.equal(uiOpened.length, 1);
+  assert.equal(uiOpened[0].childSessionId, 'child');
+  assert.equal(uiOpened[0].parentSessionId, 'recorded-parent');
+
   assert.equal(plugin.agentSessionId({ harness: 'codex', session_id: 'wrong-host' }), '');
   assert.equal(plugin.agentSessionId({ native_id: '/root/alias' }), '');
 });

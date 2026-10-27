@@ -544,7 +544,21 @@ window.__ModuleLoader__.load({
     try {
       const sessions = ctx?.get?.('sessions') || ctx?.sessions;
       const workspaces = ctx?.get?.('workspaces') || ctx?.workspaces;
+      const uiWorkspace = ctx?.get?.('uiWorkspace') || ctx?.uiWorkspace;
       const layout = ctx?.get?.('layout') || ctx?.layout;
+      if (typeof uiWorkspace?.openSession === 'function') {
+        if (typeof sessions?.refreshSubagents === 'function' && parentSessionId) {
+          try { await sessions.refreshSubagents(parentSessionId); } catch {}
+        }
+        const retained = sessions?.subagentAddress?.(childId);
+        const target = retained && (!parentSessionId || retained.parentSessionId === parentSessionId)
+          ? retained
+          : (parentSessionId ? { parentSessionId, childSessionId: childId, mode: 'continuable' } : childId);
+        const result = await Promise.resolve(uiWorkspace.openSession(target));
+        if (result === false || result?.ok === false || result?.isError) return false;
+        layout?.selectPanel?.(null);
+        return true;
+      }
       if (sessions?.openSubagent) {
         if (typeof sessions.refreshSubagents === 'function' && parentSessionId) {
           try { await sessions.refreshSubagents(parentSessionId); } catch {}
