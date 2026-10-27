@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { activityStatus } from './activity.mjs';
 import { events, listRuns, status } from './loop.mjs';
 import { mainModule, VERSION, validId } from './lib.mjs';
-import { readCodexWorkspaces, resolveChatWorkspace, verifyCodexSubagent } from './codex-workspaces.mjs';
+import { readCodexWorkspaces, resolveChatWorkspace, verifyCodexSubagent, resolveCodexSubagent } from './codex-workspaces.mjs';
 import { themeCss } from './ui-theme.mjs';
 import { createWorkflowGraph } from './workflow-graph.mjs';
 import { chatHistory } from './dashboard.mjs';
@@ -111,9 +111,12 @@ export function createSettingsProtocol(manager = createSettingsManager(), option
     ...activity,
     agents: (activity?.agents ?? []).map(agent => {
       const threadId = [agent.session_id, agent.context?.id, agent.native_id].find(value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value));
-      return { ...agent, navigation: agent.harness === 'codex' && agent.context?.parent_id === session
-        ? navigationProof(root, session, threadId, workspace)
-        : { available: false, reason: '缺少当前工作区内可验证的子会话身份' } };
+      if (agent.harness !== 'codex' || agent.context?.parent_id !== session)
+        return { ...agent, navigation: { available: false, reason: '缺少当前工作区内可验证的子会话身份' } };
+      if (threadId) return { ...agent, navigation: navigationProof(root, session, threadId, workspace) };
+      const belongs = workspace?.roots?.some(member => process.platform === 'win32' ? path.resolve(member).toLowerCase() === path.resolve(root).toLowerCase() : path.resolve(member) === path.resolve(root));
+      const navigation = belongs ? resolveCodexSubagent(home(), { agentPath: agent.native_id, agentRole: `loop-${agent.role}`, parentThreadId: session, roots: workspace.roots }) : { available: false, reason: '父聊天不属于当前工作区' };
+      return { ...agent, ...(navigation.available ? { session_id: navigation.thread_id } : {}), navigation };
     }),
   });
   const sessionRuns = (root, session) => {

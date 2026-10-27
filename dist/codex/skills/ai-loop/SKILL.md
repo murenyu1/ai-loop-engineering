@@ -51,6 +51,8 @@ description: 在 Codex 环境中使用 AI Loop 工作流进行任务规划、代
 
 侧栏安全边界：`ai_loop.dashboard` 只用于用户明确要求打开面板；页面内刷新、初始化和配置后读取仅调用无 UI 资源的 `ai_loop.dashboard.read`。上下文缺失时保留手选，禁止自动发送定位聊天消息、让模型回调打开面板或从其他聊天缓存猜测归属。
 
+Codex 派发记录：仅当本会话收到可信的 `AI_LOOP_CHAT_CONTEXT` 时，观察记录的 `context.parent_id` 使用其中的父聊天标识；原生派发返回的代理路径原样记录为 `native_id` 和 `context.id`，不要把路径冒充聊天 UUID。看板仅在宿主索引中按父聊天、代理路径和角色唯一匹配，且会话头部核验通过后提供跳转；缺少可信上下文时不猜测、不补造。
+
 角色策略：未配置默认全部关闭，设置模型菜单的“关闭”映射 enabled=false，不把它当模型 ID。保存保留原模型，关闭或仅改自动入口不依赖模型目录。doctor dispatch=disabled 时由主代理继续工作，不能调用已发现但已关闭的角色；保留的原生文件不是启用证据。运行中停止需原生确认，independent 要求不能自动降级。包内 MCP thread 看板不启动 HTTP；真实客户端渲染、实际模型及 UI 仍分别验收。
 ```
 [1. 派发前校验]   ──> 执行 scripts/plugin.mjs doctor 核查派发条件；读取当前 attempt 与 revision

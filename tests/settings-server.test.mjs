@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { registerWorkspace } from '../scripts/workspaces.mjs';
 import { create, event, begin } from '../scripts/loop.mjs';
-import { recordActivity } from '../scripts/activity.mjs';
+import { recordActivity, activityStatus } from '../scripts/activity.mjs';
 import { PassThrough } from 'node:stream';
 import { createSettingsProtocol, dashboardHtml, DASHBOARD_TOOL, DASHBOARD_READ_TOOL, DASHBOARD_URI, PROTOCOL_VERSION, READ_TOOL, UPDATE_TOOL, runSettingsServer } from '../codex/scripts/settings-server.mjs';
 
@@ -322,7 +322,7 @@ test('现代 workspace_id 历史只启用原生验证子代理并在点击时重
   insert.run(parentId, project, '', '"user"'); insert.run(childId, project, rollout, JSON.stringify(source)); db.close();
   create(project, { goal: '真实导航', tasks: [{ id: 'task1', title: '开发', review: 'self', acceptance: ['可验证'], checks: [{ id: 'check', command: 'node --version' }] }] }, 'run1');
   begin(project, 'run1', 'task1', 'development');
-  recordActivity(project, 'run1', { id: 'nav-agent', task: 'task1', role: 'dev', harness: 'codex', state: 'requested', summary: '真实测试子线程', session_id: childId, context: { mode: 'independent', id: '/root/real-context-alias', parent_id: parentId } });
+  recordActivity(project, 'run1', { id: 'nav-agent', task: 'task1', role: 'dev', harness: 'codex', state: 'requested', summary: '真实测试子线程', native_id: '/root/repair_dev', context: { mode: 'independent', id: '/root/repair_dev', parent_id: parentId } });
   const managerFactory = () => ({
     read: async () => ({ values: {}, schema: { properties: {} }, dirty: false }),
     update: async () => ({ values: {}, schema: { properties: {} }, dirty: false }),
@@ -332,6 +332,8 @@ test('现代 workspace_id 历史只启用原生验证子代理并在点击时重
   const historical = await protocol.request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'ai_loop.dashboard.history', arguments: { workspace_id: 'project', session: parentId } } });
   const proof = historical.result.structuredContent.rounds[0].activity.agents[0].navigation;
   assert.deepEqual(proof, { available: true, thread_id: childId, parent_thread_id: parentId, role: 'loop-dev' });
+  assert.equal(historical.result.structuredContent.rounds[0].activity.agents[0].session_id, childId);
+  assert.equal(activityStatus(project, 'run1').agents[0].session_id, undefined);
   const rootHistory = await protocol.request({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'ai_loop.dashboard.history', arguments: { root: project, session: parentId } } });
   assert.equal(rootHistory.result.structuredContent.rounds[0].root, project);
   assert.equal(rootHistory.result.structuredContent.rounds[0].activity.agents[0].navigation.available, true);

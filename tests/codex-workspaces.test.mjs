@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readCodexWorkspaces, resolveChatWorkspace, verifyCodexSubagent } from '../codex/scripts/codex-workspaces.mjs';
+import { readCodexWorkspaces, resolveChatWorkspace, verifyCodexSubagent, resolveCodexSubagent } from '../codex/scripts/codex-workspaces.mjs';
 import { registerWorkspace, setWorkspaceRecordById, workspaceEntryById } from '../scripts/workspaces.mjs';
 import { createSettingsManager } from '../codex/scripts/native-settings.mjs';
 import { startupContext } from '../codex/scripts/session-start.mjs';
@@ -73,6 +73,36 @@ test('子代理导航只认可索引及rollout头部一致的真实子线程，�
   const db2 = new DatabaseSync(path.join(f.home, 'state_5.sqlite'));
   db2.prepare('UPDATE threads SET source=? WHERE id=?').run(JSON.stringify(guardian), childId); db2.close();
   assert.equal(verifyCodexSubagent(f.home, { threadId: childId, parentThreadId: parentId, roots: [f.a] }).available, false);
+});
+
+test('代理路径只在明确父聊天内唯一匹配并通过rollout验证后解析', t => {
+  let DatabaseSync; try { ({ DatabaseSync } = createRequire(import.meta.url)('node:sqlite')); } catch { t.skip('当前Node没有内置只读SQLite支持'); return; }
+  const f = fixture(t), sessions = path.join(f.home, 'sessions'); fs.mkdirSync(sessions);
+  const parentId = '01234567-89ab-cdef-0123-456789abcdef';
+  const agentPath = '/root/demo_dev';
+  const children = ['11234567-89ab-cdef-0123-456789abcdef', '21234567-89ab-cdef-0123-456789abcdef'];
+  const db = new DatabaseSync(path.join(f.home, 'state_5.sqlite'));
+  db.exec('CREATE TABLE threads (id TEXT, cwd TEXT, rollout_path TEXT, source TEXT)');
+  const insert = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?)');
+  insert.run(parentId, f.a, '', '"user"');
+  for (let index = 0; index < children.length; index++) {
+    const childId = children[index], rollout = path.join(sessions, `${childId}.jsonl`);
+    const source = { subagent: { thread_spawn: { parent_thread_id: parentId, depth: 1, agent_path: agentPath, agent_role: 'loop-dev' } } };
+    const header = { type: 'session_meta', payload: { id: childId, parent_thread_id: parentId, cwd: f.a, source } };
+    fs.writeFileSync(rollout, JSON.stringify(header) + '\n');
+    insert.run(childId, f.a, rollout, JSON.stringify(source));
+  }
+  db.close();
+  assert.deepEqual(resolveCodexSubagent(f.home, { agentPath, agentRole: 'loop-dev', parentThreadId: parentId, roots: [f.a] }), { available: false, reason: '匹配到多个子会话，无法唯一导航' });
+  assert.equal(resolveCodexSubagent(f.home, { agentPath, agentRole: 'loop-dev', roots: [f.a] }).available, false);
+  assert.equal(resolveCodexSubagent(f.home, { agentPath, agentRole: 'loop-tester', parentThreadId: parentId, roots: [f.a] }).available, false);
+
+  const db2 = new DatabaseSync(path.join(f.home, 'state_5.sqlite'));
+  db2.prepare('DELETE FROM threads WHERE id=?').run(children[1]); db2.close();
+  assert.deepEqual(resolveCodexSubagent(f.home, { agentPath, agentRole: 'loop-dev', parentThreadId: parentId, roots: [f.a] }), { available: true, thread_id: children[0], parent_thread_id: parentId, role: 'loop-dev' });
+  const wrongSource = { subagent: { thread_spawn: { parent_thread_id: parentId, depth: 1, agent_path: '/root/other', agent_role: 'loop-dev' } } };
+  fs.writeFileSync(path.join(sessions, `${children[0]}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id: children[0], parent_thread_id: parentId, cwd: f.a, source: wrongSource } }) + '\n');
+  assert.equal(resolveCodexSubagent(f.home, { agentPath, agentRole: 'loop-dev', parentThreadId: parentId, roots: [f.a] }).available, false);
 });
 
 test('按宿主项目 ID 合并全部目录，忽略旧活动根列表并保留启用状态', t => {

@@ -109,8 +109,49 @@ export function verifyCodexSubagent(home, { threadId, parentThreadId, roots } = 
     const headerSpawn = meta?.source?.subagent?.thread_spawn;
     if (!meta || (meta.id ?? meta.thread_id) !== threadId
       || meta.parent_thread_id !== parentThreadId || headerSpawn?.parent_thread_id !== parentThreadId
+      || headerSpawn?.agent_path !== spawn.agent_path || headerSpawn?.agent_role !== spawn.agent_role
       || !withinRoots(meta.cwd, roots)) return unavailable('子会话历史头部与父会话或工作区不匹配');
     return { available: true, thread_id: threadId, parent_thread_id: parentThreadId, role: spawn.agent_role };
+  } catch (error) {
+    if (error?.code === 'ERR_UNKNOWN_BUILTIN_MODULE' || error?.code === 'ERR_UNKNOWN_MODULE_REQUEST') return unavailable('当前 Node 不支持只读 Codex 会话索引验证');
+    if (error?.code === 'ENOENT' || error?.code === 'SQLITE_ERROR' || error?.code === 'ERR_MODULE_NOT_FOUND') return unavailable('Codex 子会话验证所需数据不可用');
+    return unavailable('Codex 子会话元数据不可用');
+  } finally { db?.close(); }
+}
+
+/** Resolve a Codex agent path only inside the explicitly supplied parent and workspace. */
+export function resolveCodexSubagent(home, { agentPath, agentRole, parentThreadId, roots } = {}) {
+  const unavailable = reason => ({ available: false, reason });
+  const roles = new Set(['loop-planner', 'loop-dev', 'loop-tester', 'loop-reviewer', 'loop-scribe']);
+  if (typeof agentPath !== 'string' || !agentPath.trim() || agentPath.length > 512
+    || !roles.has(agentRole) || typeof parentThreadId !== 'string' || !/^[a-f0-9-]{36}$/i.test(parentThreadId)
+    || !Array.isArray(roots) || !roots.length || roots.some(root => !existingRoot(root))) {
+    return unavailable('父聊天、工作区或代理身份不完整');
+  }
+  let db;
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    const files = fs.readdirSync(home).filter(name => /^state_\d+\.sqlite$/.test(name))
+      .sort((a, b) => Number(b.match(/\d+/)[0]) - Number(a.match(/\d+/)[0]));
+    if (!files.length) return unavailable('Codex 会话索引不可用');
+    const database = path.join(home, files[0]);
+    if (fs.lstatSync(database).isSymbolicLink()) return unavailable('Codex 会话索引不可用');
+    db = new DatabaseSync(database, { readOnly: true });
+    const columns = new Set(db.prepare('PRAGMA table_info(threads)').all().map(row => row.name));
+    for (const name of ['id', 'source']) if (!columns.has(name)) return unavailable('Codex 会话索引格式不受支持');
+    const candidates = [];
+    for (const row of db.prepare('SELECT id, source FROM threads').iterate()) {
+      if (typeof row.id !== 'string' || !/^[a-f0-9-]{36}$/i.test(row.id)) continue;
+      let source;
+      try { source = JSON.parse(row.source); } catch { continue; }
+      const spawn = source?.subagent?.thread_spawn;
+      if (spawn?.parent_thread_id === parentThreadId && spawn?.agent_path === agentPath && spawn?.agent_role === agentRole) {
+        candidates.push(row.id);
+        if (candidates.length > 1) break;
+      }
+    }
+    if (candidates.length !== 1) return unavailable(candidates.length ? '匹配到多个子会话，无法唯一导航' : '没有匹配的子会话');
+    return verifyCodexSubagent(home, { threadId: candidates[0], parentThreadId, roots });
   } catch (error) {
     if (error?.code === 'ERR_UNKNOWN_BUILTIN_MODULE' || error?.code === 'ERR_UNKNOWN_MODULE_REQUEST') return unavailable('当前 Node 不支持只读 Codex 会话索引验证');
     if (error?.code === 'ENOENT' || error?.code === 'SQLITE_ERROR' || error?.code === 'ERR_MODULE_NOT_FOUND') return unavailable('Codex 子会话验证所需数据不可用');
