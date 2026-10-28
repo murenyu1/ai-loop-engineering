@@ -52,7 +52,7 @@ description: 在已启用的项目中使用 AI Loop 工作流进行任务规划�
 [1. ai_loop_prepare] ──> 获取一次性凭据及 requested 结构
         │
         ▼
-[2. 原生工具记录]   ──> 将 requested 补充当前 revision，调用 activity.mjs record 保存
+[2. 原生工具记录]   ──> 将 requested 补充当前 revision，调用 activity.mjs record --harness dsh 保存；实际派发由 DSH 原生插件重新核验角色配置与 prepare 凭据
         │
         ▼
 [3. ai_loop_delegate] ─> 传入 execution 参数，DSH spawn 启动独立子代理

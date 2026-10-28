@@ -11,6 +11,8 @@ export function buildPlugin(output, options = {}) {
   assert(relative === 'dist/codex' || relative.startsWith('.release/'), '输出仅允许 dist/codex 或 .release/ 下的验证目录，不能覆盖源代码');
   const text = file => runtimeContent(BUNDLE, file === 'ui/agent-dashboard.html' ? 'plugin/ui/agent-dashboard.html' : file);
   const planned = new Map(PLUGIN_FILES.map(file => [file, text(file)]));
+  planned.set('scripts/activity-core.mjs', text('scripts/activity.mjs'));
+  planned.set('scripts/activity.mjs', text('scripts/codex-activity.mjs'));
   const manifest = JSON.parse(text('plugin/plugin.json').toString());
   assert(manifest.version === VERSION, '插件版本与核心不一致');
   planned.set('plugin.json', Buffer.from(JSON.stringify(manifest, null, 2) + '\n'));

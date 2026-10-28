@@ -277,7 +277,7 @@ export function apply(ctx, config) {
       if (!settings.enabled) throw new Error('此项目未启用 AI Loop，请在 DSH 插件设置中精确启用该工作区。');
       if (!roleOptions(settings, args.role)) throw new Error(`AI Loop ${ROLE_LABELS[args.role]}角色已关闭；请在插件设置中选择模型后再派发。`);
       const workflow = await import(pathToFileURL(path.join(coreRoot, 'scripts', 'activity.mjs')).href);
-      const authorization = workflow.dispatchCheck(root, args.run, args.task, args.role, args.attempt, scoped);
+      const authorization = workflow.dispatchCheck(root, args.run, args.task, args.role, args.attempt, { ...scoped, role_scope: 'dsh' });
       if (authorization.run_id !== args.run || authorization.task_id !== args.task || authorization.role !== args.role || authorization.attempt !== args.attempt) throw new Error('工作流只读派发校验未返回匹配的 run/task/role/attempt。');
       const direction = args.direction || null;
       const targetCwd = project_path === '.' ? cwd : projectRoot;
@@ -307,7 +307,7 @@ export function apply(ctx, config) {
       const latestSettings = projectSettings(config, root);
       if (!latestSettings.enabled || !roleOptions(latestSettings, args.role)) throw new Error(`AI Loop ${ROLE_LABELS[args.role]}角色已关闭或工作区已停用；已阻止新的子代理启动。`);
       if (JSON.stringify(roleOptions(latestSettings, args.role)) !== JSON.stringify(options)) throw new Error('模型预检期间角色配置变化，请重新预检。');
-      const finalAuthorization = workflow.dispatchCheck(root, args.run, args.task, args.role, args.attempt, scoped);
+      const finalAuthorization = workflow.dispatchCheck(root, args.run, args.task, args.role, args.attempt, { ...scoped, role_scope: 'dsh' });
       if (finalAuthorization.run_id !== args.run || finalAuthorization.task_id !== args.task || finalAuthorization.role !== args.role || finalAuthorization.attempt !== args.attempt) throw new Error('启动前工作流只读校验未返回匹配的 run/task/role/attempt。');
       const finalAgents = workflow.activityStatus(root, args.run, scoped).agents ?? [];
       if (authorization.execution_evidence === 'required-for-independent' && !finalAgents.some(item => item.id === args.execution && item.state === 'requested' && !item.native_id && item.requested?.dispatch_token === prepared.get(args.execution)?.dispatch_token)) throw new Error('启动前派发登记已变化，停止派发。');
@@ -369,7 +369,7 @@ export function apply(ctx, config) {
       const scoped = projectOptions(project_path);
       if (!settings.enabled || !roleOptions(settings, args.role)) throw new Error('工作区或角色未启用');
       const workflow = await import(pathToFileURL(path.join(coreRoot, 'scripts', 'activity.mjs')).href);
-      workflow.dispatchCheck(root, args.run, args.task, args.role, args.attempt, scoped);
+      workflow.dispatchCheck(root, args.run, args.task, args.role, args.attempt, { ...scoped, role_scope: 'dsh' });
       if (!validDirection(args.direction)) throw new Error('direction 只能是最多 64 字符的展示标签；任务拆分请使用正式 task id。');
       const direction = args.direction || null;
       const hasActiveTaskRole = item => sameProjectPath(item, project_path) && item.task === args.task && item.role === args.role;

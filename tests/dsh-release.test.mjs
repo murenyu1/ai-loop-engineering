@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { BUNDLE, VERSION, safePath } from '../scripts/lib.mjs';
 import { buildDsh, packDsh, tarball } from '../scripts/build-dsh.mjs';
 import { createPlugin } from '../dsh/client/index.mjs';
+import { create, begin } from '../core/scripts/loop.mjs';
 
 function untar(bytes, root) {
   const tar = gunzipSync(bytes), names = [];
@@ -58,6 +59,12 @@ test('DSH tgz 可复现、可独立运行核心且只携带登记源码', t => {
   const result = spawnSync(process.execPath, [path.join(unpacked, 'core/scripts/memory.mjs'), 'bootstrap', '--project', project], { encoding: 'utf8', windowsHide: true });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).active_count, 0);
+  create(project, { goal: 'DSH 登记入口', tasks: [{ id: 't', title: '测试', review: 'none', acceptance: ['完成'], checks: [{ id: 'c', command: 'fixture' }] }] }, 'smoke');
+  begin(project, 'smoke', 't', 'development');
+  fs.writeFileSync(path.join(project, '.ai-loop/request.json'), JSON.stringify({ id: 'one', task: 't', role: 'dev', harness: 'dsh', state: 'requested', requested: { dispatch_token: 'fixture-token' }, summary: '打包入口测试' }));
+  const registration = spawnSync(process.execPath, [path.join(unpacked, 'core/scripts/activity.mjs'), 'record', '--project', project, '--run', 'smoke', '--harness', 'dsh', '--input', '.ai-loop/request.json'], { encoding: 'utf8', windowsHide: true });
+  assert.equal(registration.status, 0, registration.stderr);
+  assert.equal(JSON.parse(registration.stdout).state, 'requested');
   assert.equal(buildDsh(undefined, { check: true }).status, 'checked');
 });
 

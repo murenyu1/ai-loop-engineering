@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import { panelHost } from './support/panel-host.mjs';
 import { DASHBOARD_READ_TOOL, DASHBOARD_TOOL } from '../codex/scripts/settings-server.mjs';
 import { create, begin } from '../scripts/loop.mjs';
-import { recordActivity } from '../scripts/activity.mjs';
+import { recordActivity as coreRecordActivity } from '../scripts/activity.mjs';
+const recordActivity = (project, run, input, options = {}) => coreRecordActivity(project, run, input, { ...options, role_scope: 'codex', role_policy: { dev: { enabled: true } } });
 
 test('无工作区的全局草稿可保存，项目草稿仍要求选择工作区', async t => {
   const host = await panelHost(t); await host.open(); await host.flush();

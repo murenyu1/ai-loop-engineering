@@ -1,5 +1,7 @@
 # AI Loop Engineering
 
+当前源码和本地安装包为 **4.7.4**，修复三入口角色配置隔离与 DSH 子代理导航。验收与安装状态见 [4.7.4 交接](docs/development/isolation-navigation-4.7.4.md)。下方旧版本下载链接保留为历史说明。
+
 **4.7.1** 修复旧流程记录中同任务阶段连线的误判，以及父工作区混入独立子项目旧运行的问题；保留旧记录原字节与跨任务依赖门禁。验收与安装说明见 [4.7.1 交付](docs/development/release-4.7.1.md)。
 
 AI Loop Engineering 4.7.1 提供通用工作流、Codex 插件和 DSH 插件三个独立包。发布状态见 [v4.7.1 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.7.1)；4.4.3 设置修复背景见 [开发交接](docs/development/settings-refresh.md)。

@@ -8,7 +8,7 @@ import { readCodexWorkspaces, resolveChatWorkspace, verifyCodexSubagent, resolve
 import { themeCss } from './ui-theme.mjs';
 import { createWorkflowGraph } from './workflow-graph.mjs';
 import { chatHistory } from './dashboard.mjs';
-import { userHome, resolveProfile } from './profiles.mjs';
+import { userHome, resolveEffectiveProfile } from './profiles.mjs';
 import { disabledProfile, roleEnabled } from './routing.mjs';
 import { createSettingsManager } from './native-settings.mjs';
 
@@ -283,7 +283,7 @@ export function createSettingsProtocol(manager = createSettingsManager(), option
           if (args.session !== undefined && !bound) throw new Error('此运行不属于当前聊天');
           const scope = { project_path: args.project_path };
           const current = status(root, run, scope);
-          const profile = resolveProfile(root, { home: home() }).profile || disabledProfile('codex');
+          const profile = resolveEffectiveProfile(root, { home: home() }).profile || disabledProfile('codex');
           const roles = Object.fromEntries(Object.entries(profile.roles).map(([role, value]) => [role, { enabled: roleEnabled(value), model: value.model }]));
           const observed = bound?.activity ?? activityStatus(root, run, scope);
           const activity = bound ? navigationActivity(root, args.session, observed, resolveChatWorkspace(home(), args.session)) : observed;

@@ -5,7 +5,8 @@ import { link } from './support.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { create, begin, finish, snapshot, record, fix, resume, stop, complete, event, events, status, validateSpec, mail, inbox, cli, listRuns } from '../scripts/loop.mjs';
-import { recordActivity } from '../scripts/activity.mjs';
+import { recordActivity as coreRecordActivity } from '../scripts/activity.mjs';
+const recordActivity = (project, run, input, options = {}) => coreRecordActivity(project, run, input, { ...options, role_scope: 'codex', role_policy: { reviewer: { enabled: true } } });
 
 function fixture(t, overrides = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-run-'));

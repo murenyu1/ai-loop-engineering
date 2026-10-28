@@ -1,9 +1,9 @@
 {
-  "version": "4.7.3",
+  "version": "4.7.4",
   "files": [
     {
       "path": ".codex-plugin/plugin.json",
-      "hash": "b1fa19a4ee021f64b523898ce7d9f331979850fea7f07476ff15cc5a07ef3715"
+      "hash": "a35c0268ccd2842f866e75cb28c9731565c727da1a202e0997cec7835c6c8523"
     },
     {
       "path": ".mcp.json",
@@ -35,7 +35,7 @@
     },
     {
       "path": "marketplace.json",
-      "hash": "eb1efdc61a760f4c2d970cb3423ed050098323f2e2017ef7015c1b14a1283edf"
+      "hash": "df8d5deb010e5e901de205a972c5f03791873729b547f4eae7d43a3c26d281f3"
     },
     {
       "path": "mcp.json",
@@ -47,19 +47,23 @@
     },
     {
       "path": "plugin.json",
-      "hash": "b234b2463baf9bcda559cb4466c2c41bf1f0a274b747ec4200c053241d2c682e"
+      "hash": "369d9786f7098d8db2dd62a4b919cdc81007023af7e538bfc0e8a9b33e4d244c"
     },
     {
       "path": "README.md",
-      "hash": "43a9e1ff1fe81f80dec04e4c96446fc2a5008eb97b628569211aa1856646d813"
+      "hash": "51cb161050861e767bf10f5f6c7475d23d73491392c87bdb54ec21ed8ea75b65"
     },
     {
       "path": "ROUTING.md",
       "hash": "49612689eb0fef98fef9324d55a7b1730e8973ea91f7e5d7d8876fda36cff8cd"
     },
     {
+      "path": "scripts/activity-core.mjs",
+      "hash": "f91c65eb47624c403f6be9a6dddf59beb1d0599d2c99d8ab1b6928cbbf0e4fac"
+    },
+    {
       "path": "scripts/activity.mjs",
-      "hash": "295b053fde614ea43c25a559ed438536c788a2415516dd6d3a7c8fe2e6403ac9"
+      "hash": "8d609943e2db30f00b58ad01d8dd30046cbb78eaad7e485078275a4033e03f12"
     },
     {
       "path": "scripts/adapters.mjs",
@@ -103,7 +107,7 @@
     },
     {
       "path": "scripts/lib.mjs",
-      "hash": "4ccf234c23bde7bfd5bac8e42e2a495d2d9eda0ce7380523d64a62228ec49818"
+      "hash": "eb5cb70a676971fc7bcd251895a069d2dfb3286ffefe4e0dc001ba349681b585"
     },
     {
       "path": "scripts/loop.mjs",
@@ -135,11 +139,11 @@
     },
     {
       "path": "scripts/plugin.mjs",
-      "hash": "64fa1f1654c09326163727ef42e637469d3a22ae59c57118d60d3ce53786dcc2"
+      "hash": "e68d0f9c2109c3e87f8a926c5c060934e41bfbdad2f43197d18f14414a78d220"
     },
     {
       "path": "scripts/profiles.mjs",
-      "hash": "7ae7f02f96eff1398d9a300bb2828bf06c1f3e7e0250dbef5ecc990bddbff802"
+      "hash": "e438a59569a845c4c871a444fec4898e930d51b69cb155d269fe8f19dc36b69b"
     },
     {
       "path": "scripts/README.md",
@@ -159,11 +163,11 @@
     },
     {
       "path": "scripts/settings-server.mjs",
-      "hash": "4007d17238fb4474f8aed30a1c915b996a720140c8083b432cc0a8b1052e6b91"
+      "hash": "61962e3b9f4b64c442f3cf98ef35a69abf5c3d8e985ea11afa02b589f6e5f3e2"
     },
     {
       "path": "scripts/source.mjs",
-      "hash": "69b7e4d6a9093b785b2c675fb121fcbfaca512d31b6e2591619393f8d860e19a"
+      "hash": "5d35d647d95cf5cb50b90135d1ae99e66ac73fad4d9c0a0fb6ffb2a7628fd8dc"
     },
     {
       "path": "scripts/storage.mjs",

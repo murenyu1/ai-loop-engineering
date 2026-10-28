@@ -543,23 +543,40 @@ window.__ModuleLoader__.load({
   }
   // 宿主已确认的寻址优先；确认不到时用显式 address —— DSH 契约允许显式 address 不预载 parent catalog，
   // 硬依赖 subagentAddress 返回值会让投影尚未物化的真实子会话被一律拒绝。
-  function sessionTarget(sessions, parentSessionId, childId) {
+  function sessionTarget(sessions, parentSessionId, childId, explicit = false) {
     let address = null;
     try {
       address = sessions?.subagentAddress?.(childId) ?? null;
     } catch {
       address = null;
     }
-    if (address && address.parentSessionId === parentSessionId && address.childSessionId === childId
-      && typeof address.mode === 'string' && address.mode && address.mode !== 'external') return address;
-    if (isSessionUuid(childId)) return { parentSessionId, childSessionId: childId, mode: 'continuable' };
+    if (address) {
+      if (address.parentSessionId === parentSessionId && address.childSessionId === childId
+        && typeof address.mode === 'string' && address.mode && address.mode !== 'external') return address;
+      return null;
+    }
+    if (explicit && isSessionUuid(childId)) return { parentSessionId, childSessionId: childId, mode: 'continuable' };
     return null;
+  }
+  function agentNavigation(ctx, parentSessionId, agent) {
+    const childId = agentSessionId(agent);
+    const recordedParent = agent?.context?.parent_id || agent?.parent_id || '';
+    const parent = parentSessionId || recordedParent;
+    if (!childId) return { reason: '未记录可导航的子代理会话标识。' };
+    if (!parent || recordedParent && recordedParent !== parent) return { reason: '无法确认此记录所属的父聊天。' };
+    try {
+      const sessions = ctx?.get?.('sessions') || ctx?.sessions;
+      const target = sessionTarget(sessions, parent, childId, recordedParent === parent);
+      if (target) return { childId, parentSessionId: parent, target };
+    } catch {}
+    return { reason: '此记录的标识未被宿主识别，无法进入子代理聊天。' };
   }
   async function openAgentSession(ctx, parentSessionId, agent, options = {}) {
     const childId = agentSessionId(agent);
     const current = () => typeof options.isCurrent !== 'function' || options.isCurrent();
     if (!childId || !current()) return false;
     const recordedParent = agent?.context?.parent_id || agent?.parent_id || '';
+    parentSessionId ||= recordedParent;
     if (!parentSessionId || recordedParent && recordedParent !== parentSessionId) return false;
     try {
       const sessions = ctx?.get?.('sessions') || ctx?.sessions;
@@ -567,14 +584,19 @@ window.__ModuleLoader__.load({
       const uiWorkspace = ctx?.get?.('uiWorkspace') || ctx?.uiWorkspace;
       const layout = ctx?.get?.('layout') || ctx?.layout;
       // 投影只用于加速宿主确认，失败或超慢都不能阻断导航。
-      if (typeof sessions?.refreshProjections === 'function') {
-        await Promise.resolve(sessions.refreshProjections(parentSessionId)).catch(() => {});
-      } else if (typeof sessions?.refreshSubagents === 'function') {
-        await Promise.resolve(sessions.refreshSubagents(parentSessionId)).catch(() => {});
+      const refresh = sessions?.refreshProjections || sessions?.refreshSubagents;
+      if (typeof refresh === 'function') {
+        let timer;
+        try {
+          await Promise.race([
+            Promise.resolve().then(() => refresh.call(sessions, parentSessionId)).catch(() => {}),
+            new Promise(resolve => { timer = setTimeout(resolve, options.refreshTimeoutMs ?? 1500); }),
+          ]);
+        } finally { clearTimeout(timer); }
       }
       if (!current()) return false;
       if (options.signal?.aborted) return false;
-      const target = sessionTarget(sessions, parentSessionId, childId);
+      const target = sessionTarget(sessions, parentSessionId, childId, recordedParent === parentSessionId);
       if (!target) return false;
       const settle = result => result !== false && result?.ok !== false && !result?.isError;
       // uiWorkspace.openSession 内部（replaceMain）自行 retain 主视图引用并释放上一份；
@@ -823,10 +845,11 @@ window.__ModuleLoader__.load({
     });
     const navigateAgent = (agent, key) => {
       const target = key ?? agentSessionId(agent);
-      const childId = agentSessionId(agent);
+      const navigation = agentNavigation(ctx, sessionKey, agent);
+      const childId = navigation.childId;
       if (!childId) {
-        setNavigationError('此记录没有真实子代理会话 ID，无法打开聊天。');
-        markNavigation(target, { state: 'error', message: '未记录可导航的会话标识，无法进入聊天。' });
+        setNavigationError(navigation.reason);
+        markNavigation(target, { state: 'error', message: navigation.reason });
         return Promise.resolve(false);
       }
       navigationController.current?.abort();
@@ -860,7 +883,8 @@ window.__ModuleLoader__.load({
       const roleDesc = ROLES[agent.role]?.name || agent.role || '未知角色';
       const isLive = agent.live === true && !['completed', 'failed', 'cancelled', 'stopped', 'ended_unknown'].includes(agent.state);
       const direction = agent.direction || (typeof agent.task === 'string' && agent.task.includes('#') ? agent.task.split('#')[1] : null);
-      const childId = agentSessionId(agent);
+      const navigation = agentNavigation(ctx, sessionKey, agent);
+      const childId = navigation.childId;
       const openSession = () => navigateAgent(agent, agentId);
       const feedback = navigationFeedback[agentId];
       const pending = feedback?.state === 'pending';
@@ -1253,13 +1277,14 @@ window.__ModuleLoader__.load({
             h('strong', { style: { color: roleColor[selectedNode.role] ?? roleColor.main } }, `${selectedNode.label} · ${detailAgents.length} 次已记录调用`),
             detailAgents.length ? detailAgents.map((agent, index) => {
               const id = agent.native_id || agent.id || `agent-${index}`;
-              const childId = agentSessionId(agent);
+              const navigation = agentNavigation(ctx, sessionKey, agent);
+              const childId = navigation.childId;
               const expanded = expandedAgentId === id;
               const feedback = navigationFeedback[id];
               return h('article', { key: id, style: { padding: `${theme.space ?? 12}px 0`, borderBottom: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, CanvasText 18%, transparent))' } },
                 h('div', { style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
                   h('strong', null, `${ROLES[agent.role]?.name ?? agent.role ?? '代理'} · ${agentStateLabel(agent.state)}`),
-                  childId ? h('button', { type: 'button', style: S.btn(false), 'aria-busy': feedback?.state === 'pending' || undefined, onClick: () => navigateAgent(agent, id) }, feedback?.state === 'pending' ? '正在打开…' : '进入子代理聊天') : h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, '未记录可导航的聊天标识'),
+                  childId ? h('button', { type: 'button', style: S.btn(false), 'aria-busy': feedback?.state === 'pending' || undefined, onClick: () => navigateAgent(agent, id) }, feedback?.state === 'pending' ? '正在打开…' : '进入子代理聊天') : h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, navigation.reason),
                 ),
                 feedback?.state === 'error' ? h('p', { role: 'alert', style: { margin: '4px 0', fontSize: 11, color: '#fca5a5', lineHeight: 1.4 } }, feedback.message) : null,
                 h('p', { style: { margin: '4px 0', fontSize: 12 } }, agent.summary ?? agent.observation?.summary ?? '暂无摘要'),
@@ -1273,12 +1298,13 @@ window.__ModuleLoader__.load({
             h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, `全部代理调用 (${agents.length})`),
             agents.map((agent, index) => {
               const id = agent.native_id || agent.id || `agent-${index}`;
-              const childId = agentSessionId(agent);
+              const navigation = agentNavigation(ctx, sessionKey, agent);
+              const childId = navigation.childId;
               const feedback = navigationFeedback[id];
               return h('article', { key: id, style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, CanvasText 18%, transparent))' } },
                 h('span', { style: { fontSize: 12 } }, `${ROLES[agent.role]?.name ?? agent.role ?? '代理'} · ${agent.task ?? '运行级'} · ${agentStateLabel(agent.state)} · ${agent.summary ?? '暂无摘要'}`),
                 h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-text-secondary, GrayText)' } }, tokenUsageLabel(agent.usage)),
-                childId ? h('button', { type: 'button', style: S.btn(false), 'aria-busy': feedback?.state === 'pending' || undefined, onClick: () => navigateAgent(agent, id) }, feedback?.state === 'pending' ? '正在打开…' : '进入聊天') : null,
+                childId ? h('button', { type: 'button', style: S.btn(false), 'aria-busy': feedback?.state === 'pending' || undefined, onClick: () => navigateAgent(agent, id) }, feedback?.state === 'pending' ? '正在打开…' : '进入聊天') : h('span', null, navigation.reason),
               );
             }),
           ),

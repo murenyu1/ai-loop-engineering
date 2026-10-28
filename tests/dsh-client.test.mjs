@@ -95,6 +95,13 @@ test('子代理导航只打开宿主确认且已就绪的真实父子会话', as
   const uuidCtx = { sessions: { subagentAddress: () => undefined }, uiWorkspace: { openSession: target => uuidOpened.push(target) }, layout: { selectPanel: () => {} } };
   assert.equal(await plugin.openAgentSession(uuidCtx, 'recorded-parent', uuidAgent), true);
   assert.deepEqual(uuidOpened, [{ parentSessionId: 'recorded-parent', childSessionId: uuid, mode: 'continuable' }]);
+  assert.equal(await plugin.openAgentSession(uuidCtx, 'recorded-parent', { harness: 'dsh', native_id: uuid }), false);
+  const wrongParentCtx = { sessions: { subagentAddress: () => ({ parentSessionId: 'other-parent', childSessionId: uuid, mode: 'continuable' }) }, uiWorkspace: { openSession: target => uuidOpened.push(target) } };
+  assert.equal(await plugin.openAgentSession(wrongParentCtx, 'recorded-parent', uuidAgent), false);
+  assert.equal(uuidOpened.length, 1);
+  const slowCtx = { sessions: { refreshProjections: () => new Promise(() => {}), subagentAddress: () => undefined }, uiWorkspace: { openSession: target => uuidOpened.push(target) } };
+  assert.equal(await plugin.openAgentSession(slowCtx, 'recorded-parent', uuidAgent, { refreshTimeoutMs: 10 }), true);
+  assert.equal(uuidOpened.length, 2);
 
   // 非 UUID 且宿主未确认 = 运行记录里的占位标识，必须拒绝而不是静默失败。
   const placeholderOpened = [];
@@ -627,6 +634,7 @@ test('聊天图展开观察对象可读，并使用真实子代理 ID 导航', a
     activity: { agents: [
       { id: 'execution-record', native_id: 'child-real', task: 'task1', role: 'dev', state: 'failed', live: false, context: { id: 'child-real', parent_id: 'parent-session' }, observation },
       { id: 'child-partial', native_id: 'child-partial', task: 'task1', role: 'tester', state: 'completed', live: false, context: { id: 'child-partial', parent_id: 'parent-session' }, usage: { input_tokens: 12 } },
+      { id: 'demo-record', harness: 'dsh', native_id: 'subagent-dev-demo-01', task: 'task1', role: 'dev', state: 'completed', context: { id: 'subagent-dev-demo-01', parent_id: 'parent-session' } },
     ] },
   };
   const originalFetch = globalThis.fetch;
@@ -707,6 +715,8 @@ test('聊天图展开观察对象可读，并使用真实子代理 ID 导航', a
     const detailsNodes = flatten(render());
     const openButton = detailsNodes.find(node => node?.type === 'button' && node.props.children?.includes('进入子代理聊天'));
     assert.ok(openButton);
+    assert.equal(detailsNodes.filter(node => node?.type === 'button' && node.props.children?.includes('进入子代理聊天')).length, 1, '演示记录不得显示可进入聊天按钮');
+    assert.ok(detailsNodes.includes('此记录的标识未被宿主识别，无法进入子代理聊天。'));
     await openButton.props.onClick();
     assert.deepEqual(opened, [childAddress]);
     const olderButton = nodes.find(node => node?.type === 'button' && node.props.children?.includes('加载更早运行'));
@@ -719,6 +729,7 @@ test('聊天图展开观察对象可读，并使用真实子代理 ID 导航', a
     assert.equal(requestedHistoryUrl.searchParams.has('session'), false);
     const workspaceAgent = flatten(render()).find(node => node?.type === 'button' && node.props.children?.includes('进入子代理聊天'));
     await workspaceAgent.props.onClick();
+    assert.equal(opened.length, 2, '工作区记录入口必须实际发起第二次导航');
     assert.equal(opened.at(-1).parentSessionId, 'parent-session', '工作区范围仍从真实记录取得父聊天');
   } finally {
     globalThis.fetch = originalFetch;

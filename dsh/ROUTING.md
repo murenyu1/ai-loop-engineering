@@ -12,7 +12,7 @@
 
 派发已开启角色（`planner`、`dev`、`tester`、`reviewer`、`scribe`）严格遵循四步闭环：
 1. **获取凭据**：调用 `ai_loop_prepare` 取得当前会话的一次性凭据及 requested 结构；
-2. **状态登记**：主代理通过原生文件工具将 requested 补充当前 `revision` 后，调用 `activity.mjs record` 持久化；
+2. **状态登记**：主代理通过原生文件工具将 requested 补充当前 `revision` 后，调用 `activity.mjs record --harness dsh` 持久化；实际派发由 DSH 插件重新检查角色和原生 prepare 凭据；
 3. **原生派发**：调用 `ai_loop_delegate`，将上述登记 id 作为 `execution` 传入。DSH 预检模型可用性后以独立上下文 spawn 启动子代理；
 4. **观察同步**：调用 `ai_loop_observe` 读取真实原生内存观察，落盘到 `reports/` 并调用 `activity.mjs` 同步 running 与终态证据。
 

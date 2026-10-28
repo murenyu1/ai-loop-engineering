@@ -9,6 +9,7 @@ import { createWorkflowGraph } from '../core/scripts/workflow-graph.mjs';
 import { create, validateSpec, status, begin } from '../core/scripts/loop.mjs';
 import { dispatchCheck, recordActivity } from '../core/scripts/activity.mjs';
 import { bootstrap } from '../core/scripts/memory.mjs';
+import { configureRoles } from '../core/scripts/roles.mjs';
 
 const task = { id: 'task1', title: '任务一', acceptance: ['完成'], review: 'self', checks: [{ id: 'all', command: 'node tests/all.mjs' }] };
 const spec = workflow => ({ goal: '图测试', tasks: [task], workflow });
@@ -51,6 +52,7 @@ test('主代理可登记运行级计划和共享记录，运行级开发被拒�
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, 'main.txt'), 'run');
   const run = create(root, spec(workflow), 'graph1').run_id;
+  configureRoles(root, { schema_version: 2, roles: Object.fromEntries(['planner','dev','tester','reviewer','scribe'].map(role => [role, { enabled: true, model: 'fixture' }])) }, { apply: true });
   assert.equal(status(root, run).workflow.nodes.length, 3);
   assert.equal(dispatchCheck(root, run, 'run', 'planner').task.id, 'run');
   assert.equal(dispatchCheck(root, run, 'run', 'scribe').task.id, 'run');
@@ -64,6 +66,7 @@ test('旧版未声明 workflow 的正式 task run 仍可作为开发任务', t =
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, 'main.txt'), 'run');
   const run = create(root, { goal: '旧任务兼容', tasks: [{ ...task, id: 'run' }] }, 'legacy1').run_id;
+  configureRoles(root, { schema_version: 2, roles: { dev: { enabled: true, model: 'fixture' } } }, { apply: true });
   begin(root, run, 'run', 'development');
   assert.equal(dispatchCheck(root, run, 'run', 'dev').task.id, 'run');
   assert.throws(() => validateSpec({ goal: '不能歧义', tasks: [{ ...task, id: 'run' }], workflow }), /保留 run 与 final/);

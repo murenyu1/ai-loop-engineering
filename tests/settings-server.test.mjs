@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { registerWorkspace } from '../scripts/workspaces.mjs';
 import { create, event, begin } from '../scripts/loop.mjs';
-import { recordActivity, activityStatus } from '../scripts/activity.mjs';
+import { recordActivity as coreRecordActivity, activityStatus } from '../scripts/activity.mjs';
+const recordActivity = (project, run, input, options = {}) => coreRecordActivity(project, run, input, { ...options, role_scope: 'codex', role_policy: { dev: { enabled: true } } });
 import { PassThrough } from 'node:stream';
 import { createSettingsProtocol, dashboardHtml, DASHBOARD_TOOL, DASHBOARD_READ_TOOL, DASHBOARD_URI, PROTOCOL_VERSION, READ_TOOL, UPDATE_TOOL, runSettingsServer } from '../codex/scripts/settings-server.mjs';
 

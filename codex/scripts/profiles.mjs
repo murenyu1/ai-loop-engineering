@@ -35,6 +35,18 @@ export function resolveProfile(project, options = {}) {
   }
   return { profile: null, scope: null, path: null, effective_model: 'unverified' };
 }
+export function resolveEffectiveProfile(project, options = {}) {
+  const home = options.home || userHome();
+  const normalize = value => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
+  const matches = readCodexWorkspaces(home).workspaces.filter(workspace => workspace.roots.some(root => normalize(root) === normalize(project)));
+  assert(matches.length <= 1, '工作区根目录属于多个 Codex 工作区，无法确定角色配置');
+  if (!matches.length) return resolveProfile(project, { home });
+  const resolved = resolveWorkspaceProfile(home, { ...matches[0], root: project });
+  assert(!resolved.materialization_conflict && !resolved.migration?.conflict, 'Codex 工作区角色配置不一致，停止派发');
+  const record = resolveProfile(project, { home, scope: resolved.scope || 'project' });
+  assert((record.profile_hash ?? null) === (resolved.profile_hash ?? null), 'Codex 工作区角色配置与原生配置不一致，停止派发');
+  return { ...record, workspace_id: matches[0].id };
+}
 export function configureProfile(project, profile, options = {}) {
   const scope = options.scope || 'global', home = options.home || userHome();
   assert(['project', 'global'].includes(scope), 'scope 须为 project / global');

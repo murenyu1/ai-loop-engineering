@@ -9,6 +9,7 @@ import { runPaths, newRunBase } from '../scripts/storage.mjs';
 import { recordActivity, activityStatus, dispatchCheck } from '../scripts/activity.mjs';
 import { bootstrap, checkpoint, readHandoff, save, inspect } from '../scripts/memory.mjs';
 import { chatHistory } from '../scripts/dashboard.mjs';
+import { configureRoles } from '../core/scripts/roles.mjs';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-storage-'));
@@ -17,6 +18,7 @@ function fixture(t) {
     fs.mkdirSync(path.join(root, name), { recursive: true });
     fs.writeFileSync(path.join(root, name, 'code.txt'), name);
   }
+  configureRoles(root, { schema_version: 2, roles: Object.fromEntries(['planner','dev','tester','reviewer','scribe'].map(role => [role, { enabled: true, model: 'fixture' }])) }, { apply: true });
   return root;
 }
 const spec = project_path => ({ goal: '项目边界验收', project_path, tasks: [{ id: 't', title: '任务', review: 'none', acceptance: ['隔离'], checks: [{ id: 'c', command: 'fixture' }] }] });

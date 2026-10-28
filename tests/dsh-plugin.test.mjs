@@ -5,12 +5,14 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { createConfig, projectKey, projectSettings, roleOptions, validateConfig, validateProjects, validateRoles } from '../dsh/config.mjs';
 import * as loop from '../core/scripts/loop.mjs';
-import { recordActivity } from '../core/scripts/activity.mjs';
+import { recordActivity as coreRecordActivity } from '../core/scripts/activity.mjs';
 import { chatHistory } from '../core/scripts/dashboard.mjs';
+import { configureRoles } from '../core/scripts/roles.mjs';
 
 const root = 'D:\\Projects\\example';
 const config = extra => ({ enabled: true, maxConcurrent: 2, roles: { reviewer: { provider: 'parent-provider', model: 'parent-model' } }, projects: [{ path: root, enabled: true }], ...extra });
 const signal = () => new AbortController().signal;
+const recordActivity = (project, run, input, options = {}) => coreRecordActivity(project, run, input, { ...options, role_scope: 'dsh' });
 
 test('DSH 精确项目启用、总开关与大小写路径，不启用子目录或未知项目', () => {
   assert.equal(projectSettings(config(), 'd:/projects/example/').enabled, true);
@@ -467,6 +469,14 @@ test('DSH 独立评审使用原生 spawn、准确模型预检和原生生命周�
   assert.match(spec.request.prompt[0].text, /审批策略为 never/);
   assert.deepEqual(spec.request.agentOptions, { provider: 'deepseek', model: 'reasoner', reasoningEffort: 'high' });
   await assert.rejects(f.run('reviewer', {}, 1), /更换 direction 或 attempt/);
+  f.pending[0].resolve({ stopReason: 'completed' });
+});
+
+test('DSH 派发只受 DSH 角色配置约束，通用角色配置不干扰', async () => {
+  const f = fixture(config({ roles: { reviewer: { provider: 'deepseek', model: 'reasoner' } } }));
+  configureRoles(f.project, { schema_version: 2, roles: {} }, { apply: true });
+  assert.match(await f.run(), /独立上下文/);
+  assert.equal(f.calls.length, 1);
   f.pending[0].resolve({ stopReason: 'completed' });
 });
 

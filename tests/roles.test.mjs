@@ -7,25 +7,69 @@ import { rolesStatus, roleEnabled, effectiveRoles, configureRoles, cli as rolesC
 import { disabledProfile, balanced, upgradeProfile, validateProfile, routeHash, nativeAgent } from '../scripts/routing.mjs';
 import { create, begin, finish, status, stop } from '../scripts/loop.mjs';
 import { dispatchCheck, recordActivity, activityStatus, cli as activityCli } from '../scripts/activity.mjs';
+import { cli as codexActivityCli } from '../codex/scripts/codex-activity.mjs';
+import { resolveEffectiveProfile } from '../codex/scripts/profiles.mjs';
+import { setWorkspaceRecordById } from '../codex/scripts/workspaces.mjs';
 
-function fixture(t, role_policy) {
+function fixture(t, role_policy, enabled = true) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-loop-policy-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const spec = { goal: '角色控制', ...(role_policy ? { role_policy } : {}), tasks: [{ id: 't1', title: '修改', managed_execution: true, acceptance: ['可验证'], review: 'independent', checks: [{ id: 'c', command: 'node --version' }] }] };
   create(root, spec, 'r1');
+  if (enabled) configureRoles(root, { schema_version: 2, roles: Object.fromEntries(['planner','dev','tester','reviewer','scribe'].map(role => [role, { enabled: true, model: 'fixture' }])) }, { apply: true });
   return root;
 }
 test('无配置默认关闭；项目显式 false 优先于全局模型，旧显式模型保留', t => {
-  const root = fixture(t);
+  const root = fixture(t, undefined, false);
   assert.ok(Object.values(rolesStatus(root).roles).every(role => !role.enabled));
   assert.equal(roleEnabled({}), false);
   assert.equal(roleEnabled({ model: 'existing' }), true);
   assert.equal(roleEnabled({ enabled: false, model: 'existing' }), false);
   assert.equal(effectiveRoles({ dev: { enabled: false } }, { dev: { enabled: true, model: 'm' } }).dev.enabled, false);
-  assert.throws(() => activityCli(['check', '--project', root, '--run', 'r1', '--task', 't1', '--role', 'dev']), /默认关闭/);
+  assert.throws(() => activityCli(['check', '--project', root, '--run', 'r1', '--task', 't1', '--role', 'dev']), /已关闭/);
+  assert.throws(() => activityCli(['check', '--project', root, '--run', 'r1', '--task', 't1', '--role', 'dev', '--harness', 'dsh']), /DSH 插件内/);
+});
+test('Codex 与通用角色策略分别生效，预登记和检查一致', t => {
+  const root = fixture(t, undefined, false);
+  begin(root, 'r1', 't1', 'development');
+  configureRoles(root, { schema_version: 2, roles: {} }, { apply: true });
+  const profile = disabledProfile('codex');
+  profile.roles.dev = { enabled: true, model: 'fixture', effort: 'high' };
+  const save = () => fs.writeFileSync(path.join(root, '.ai-loop/models.json'), JSON.stringify({ schema_version: 2, profile, profile_hash: routeHash(profile), native: { '.codex/agents/loop-dev.toml': 'a'.repeat(64) } }));
+  save();
+  const command = ['check', '--project', root, '--run', 'r1', '--task', 't1', '--role', 'dev'];
+  assert.throws(() => activityCli(command), /已关闭/);
+  assert.equal(codexActivityCli(command).role, 'dev');
+  const request = { id: 'codex-1', task: 't1', role: 'dev', harness: 'codex', state: 'requested', summary: '测试配置隔离' };
+  fs.writeFileSync(path.join(root, '.ai-loop/request.json'), JSON.stringify(request));
+  assert.equal(codexActivityCli(['record', '--project', root, '--run', 'r1', '--input', '.ai-loop/request.json']).state, 'requested');
+  profile.roles.dev.enabled = false; save();
+  configureRoles(root, { schema_version: 2, roles: { dev: { enabled: true, model: 'fixture' } } }, { apply: true });
+  assert.throws(() => codexActivityCli(command), /Codex 角色 dev 已关闭/);
+  assert.equal(activityCli(command).role, 'dev');
+});
+test('Codex 工作区继承全局时不会读取残留项目角色', t => {
+  const root = fixture(t, undefined, false);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-policy-home-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(home, '.codex-global-state.json'), JSON.stringify({ 'local-projects': { w: { rootPaths: [root] } } }));
+  setWorkspaceRecordById(home, { id: 'w', roots: [root], enabled: true, inherits_global: true });
+  const saveProfile = (file, profile, prefix) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const native = Object.fromEntries(Object.entries(profile.roles).filter(([, role]) => role.enabled).map(([role]) => [`${prefix}/loop-${role}.toml`, 'a'.repeat(64)]));
+    fs.writeFileSync(file, JSON.stringify({ schema_version: 2, profile, profile_hash: routeHash(profile), native }));
+  };
+  const global = disabledProfile('codex'); global.roles.dev = { enabled: true, model: 'global', effort: 'high' };
+  const local = disabledProfile('codex'); local.roles.dev = { enabled: false, model: 'local', effort: 'high' };
+  saveProfile(path.join(root, '.ai-loop/models.json'), local, '.codex/agents');
+  saveProfile(path.join(home, 'ai-loop/models.json'), global, 'agents');
+  const resolved = resolveEffectiveProfile(root, { home });
+  assert.equal(resolved.scope, 'global');
+  assert.equal(resolved.profile.roles.dev.model, 'global');
+  assert.equal(resolved.profile.roles.dev.enabled, true);
 });
 test('关闭不要求模型可用，保存草稿及乐观并发校验有效', t => {
-  const root = fixture(t);
+  const root = fixture(t, undefined, false);
   const input = { schema_version: 2, roles: { dev: { enabled: false, model: 'old-unavailable-model' } } };
   assert.equal(configureRoles(root, input).status, 'dry-run');
   assert.equal(rolesStatus(root).hash, null);

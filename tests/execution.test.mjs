@@ -6,12 +6,14 @@ import path from 'node:path';
 import * as loop from '../core/scripts/loop.mjs';
 import { recordActivity, dispatchCheck } from '../core/scripts/activity.mjs';
 import { bootstrap } from '../core/scripts/memory.mjs';
+import { configureRoles } from '../core/scripts/roles.mjs';
 
 function fixture(t, extra = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-evidence-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'one')); fs.mkdirSync(path.join(root, 'two'));
   fs.writeFileSync(path.join(root, 'one/code.txt'), 'one'); fs.writeFileSync(path.join(root, 'two/code.txt'), 'two');
+  configureRoles(root, { schema_version: 2, roles: { tester: { enabled: true, model: 'fixture' }, reviewer: { enabled: true, model: 'fixture' } } }, { apply: true });
   loop.create(root, { goal: '原生证据', tasks: [{ id: 't1', title: '独立评审', acceptance: ['证据绑定'], review: 'independent', checks: [{ id: 'c1', command: 'fixture-check' }] }], ...extra }, 'r1');
   const revision = () => loop.cli(['snapshot', '--project', root, '--run', 'r1']);
   const runDir = loop.paths(root, 'r1', extra.project_path).directory;

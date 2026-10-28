@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { bootstrap } from './memory.mjs';
-import { resolveProfile } from './profiles.mjs';
+import { resolveEffectiveProfile } from './profiles.mjs';
 import { inspectWindows } from './windows.mjs';
 import { assert, BUNDLE, sourceRelative, VERSION, rootPath, safePath, atomicWrite, jsonFile, args, allowArgs, mainModule, printResult } from './lib.mjs';
 import { digest } from './memory-store.mjs';
@@ -37,7 +37,7 @@ export function pluginDoctor(project, options = {}) {
       if (!fs.existsSync(target) || digest(fs.readFileSync(target)) !== item.hash) issues.push('插件文件缺失或变化：' + item.path);
     }
   }
-  const models = resolveProfile(root, { home: options.home });
+  const models = resolveEffectiveProfile(root, { home: options.home });
   const profile = models.profile || disabledProfile('codex');
   const enabledRoles = Object.keys(profile.roles).filter(role => roleEnabled(profile.roles[role]));
   if (models.profile && enabledRoles.length) {

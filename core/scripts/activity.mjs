@@ -1,8 +1,9 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { status } from './loop.mjs';
 import { executionEvidence } from './execution.mjs';
 import { ROLE_NAMES, roleEnabled, rolesStatus } from './roles.mjs';
-import { assert, rootPath, safePath, validId, jsonFile, writeJson, locked, args, allowArgs, mainModule, printResult } from './lib.mjs';
+import { assert, rootPath, safePath, validId, jsonFile, writeJson, locked, args, allowArgs, mainModule, printResult, BUNDLE } from './lib.mjs';
 import { resolveRunBase, runPaths } from './storage.mjs';
 
 const terminal = new Set(['completed', 'failed', 'stopped']);
@@ -10,6 +11,7 @@ const states = ['requested', 'running', 'waiting', 'stop_requested', 'unknown', 
 const text = value => typeof value === 'string' && value.trim() && value.length <= 1000;
 const validDirection = value => value === undefined || value === null || typeof value === 'string' && value.length <= 64 && !/[\u0000-\u001f\u007f]/.test(value);
 export function dispatchCheck(project, run, taskId, role, attempt, options = {}) {
+  assert(options.role_scope === undefined || ['codex', 'dsh'].includes(options.role_scope), '未知角色配置来源');
   const root = rootPath(project), current = status(root, validId(run), options);
   assert(current.status === 'active', '运行已关闭或停止，不能派发');
   assert(ROLE_NAMES.includes(role), '未知子代理角色');
@@ -24,9 +26,13 @@ export function dispatchCheck(project, run, taskId, role, attempt, options = {})
   assert(task, '任务不属于当前运行');
   const spec = jsonFile(runPaths(root, run, options.project_path).spec);
   if (spec.workflow) assert(spec.workflow.nodes.some(node => node.task === taskId && node.role === role), '任务图未声明此 task+role 派发节点');
-  if (spec.role_policy) assert(roleEnabled(spec.role_policy[role]), `角色 ${role} 已关闭，禁止派发`);
-  const savedPolicy = rolesStatus(root);
-  if (savedPolicy.source !== 'default-off') assert(roleEnabled(savedPolicy.roles[role]), `角色 ${role} 已关闭，禁止派发`);
+  if (!options.role_scope && spec.role_policy) assert(roleEnabled(spec.role_policy[role]), `角色 ${role} 已关闭，禁止派发`);
+  if (options.role_scope === 'codex') {
+    assert(roleEnabled(options.role_policy?.[role]), `Codex 角色 ${role} 已关闭，禁止派发`);
+  } else if (options.role_scope !== 'dsh') {
+    const savedPolicy = rolesStatus(root);
+    assert(roleEnabled(savedPolicy.roles[role]), `通用工作流角色 ${role} 已关闭，禁止派发`);
+  }
   const phase = { dev: 'developing', tester: 'verifying', reviewer: 'reviewing' }[role];
   if (phase) assert(task.phase === phase, `角色 ${role} 不能在任务阶段 ${task.phase} 派发`);
   if ((task.managed_execution || spec.execution_evidence) && ['tester', 'reviewer'].includes(role)) assert(Number.isInteger(attempt) && attempt === task.attempts?.[role], '派发 attempt 缺失或已过期');
@@ -113,16 +119,26 @@ export function activityStatus(project, run, options = {}) {
   const agents = [...data.agents, ...legacyAgents(root, run, options.project_path).filter(row => !row.native_id || !known.has(row.native_id))].map(({ history, observations, ...row }) => ({ ...row, observation: history?.at(-1) ?? observations?.at(-1) ?? null, live: false, stale: !terminal.has(row.state) && (!row.updated_at || Date.now() - Date.parse(row.updated_at) > 60000), usage: row.usage ?? null, effective_model: row.observed_model ?? 'unverified' }));
   return { schema_version: 2, run_id: run, agents, note: '仅最后观察，不是实时运行保证。completed 不代表任务 PASS；usage 缺失表示不可获取。' };
 }
-export function cli(argv) {
+export function cli(argv, adapter = {}) {
   const options = args(argv);
-  allowArgs(options, ['project', 'run', 'project-path', 'task', 'role', 'attempt', 'input', 'help']);
+  allowArgs(options, ['project', 'run', 'project-path', 'task', 'role', 'attempt', 'input', 'harness', 'help']);
   const [command] = options._;
   if (options.help || !command) return { usage: 'activity.mjs status|record|check --project ROOT --run ID [--input JSON | --task ID --role dev --attempt N]' };
   assert(options._.length === 1, '只能指定一个命令');
   if (command === 'status') return activityStatus(options.project, options.run, { project_path: options['project-path'] });
-  if (command === 'record') return recordActivity(options.project, options.run, jsonFile(safePath(rootPath(options.project), options.input)), { project_path: options['project-path'] });
+  assert(options.harness === undefined || options.harness === 'dsh', '不支持的宿主入口');
+  if (options.harness === 'dsh') {
+    const manifest = path.join(BUNDLE, '..', 'package.json');
+    assert(fs.existsSync(manifest) && jsonFile(manifest).name === 'dsh-plugin-ai-loop-engineering', 'DSH 登记只能使用 DSH 插件内的核心入口');
+  }
+  const scoped = { project_path: options['project-path'], ...(adapter.rolePolicy ? { role_scope: 'codex', role_policy: adapter.rolePolicy(options.project) } : options.harness === 'dsh' ? { role_scope: 'dsh' } : {}) };
+  if (command === 'record') {
+    const input = jsonFile(safePath(rootPath(options.project), options.input));
+    if (options.harness === 'dsh' && input.state === 'requested') assert(input.harness === 'dsh' && input.requested?.dispatch_token, 'DSH 登记须来自原生 prepare；实际派发由 DSH 配置再次校验');
+    return recordActivity(options.project, options.run, input, scoped);
+  }
   assert(command === 'check', '未知观察命令');
-  assert(roleEnabled(rolesStatus(options.project).roles[options.role]), '通用工作流角色默认关闭；请先显式启用');
-  return dispatchCheck(options.project, options.run, options.task, options.role, options.attempt === undefined ? undefined : Number(options.attempt), { project_path: options['project-path'] });
+  assert(options.harness !== 'dsh', 'DSH 派发检查须使用原生 ai_loop_prepare，由插件检查角色配置');
+  return dispatchCheck(options.project, options.run, options.task, options.role, options.attempt === undefined ? undefined : Number(options.attempt), scoped);
 }
 if (mainModule(import.meta.url)) printResult(() => cli(process.argv.slice(2)));

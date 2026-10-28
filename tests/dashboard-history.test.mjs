@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { create, begin } from '../scripts/loop.mjs';
-import { recordActivity } from '../scripts/activity.mjs';
+import { recordActivity as coreRecordActivity } from '../scripts/activity.mjs';
+const recordActivity = (project, run, input, options = {}) => coreRecordActivity(project, run, input, { ...options, role_scope: 'codex', role_policy: { dev: { enabled: true } } });
 import { chatHistory } from '../scripts/dashboard.mjs';
 
 test('无关运行的损坏JSON不阻断有效聊天历史，分页仍保持隔离并报告损坏数量', t => {

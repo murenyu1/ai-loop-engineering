@@ -1,10 +1,10 @@
 {
-  "version": "4.7.3",
+  "version": "4.7.4",
   "harness": "dsh",
   "files": [
     {
       "path": "client.js",
-      "hash": "5195eaee01f9427ea2e941d4388dace6981afa63f9106dd2e54d18f83ef842cd"
+      "hash": "5ca556e83f20d97e726b3ce473822b99e9f957e2be0ef1bdb3fc80874a6f4b75"
     },
     {
       "path": "config.mjs",
@@ -48,7 +48,7 @@
     },
     {
       "path": "core/scripts/activity.mjs",
-      "hash": "295b053fde614ea43c25a559ed438536c788a2415516dd6d3a7c8fe2e6403ac9"
+      "hash": "f91c65eb47624c403f6be9a6dddf59beb1d0599d2c99d8ab1b6928cbbf0e4fac"
     },
     {
       "path": "core/scripts/dashboard.mjs",
@@ -60,7 +60,7 @@
     },
     {
       "path": "core/scripts/lib.mjs",
-      "hash": "aed1e0710e307eb0688e75271ede03c979073fdd51ac2c6b4cd094dd16ba4c2e"
+      "hash": "ed02ff57fcdd67f3b40085040df323730ae7b0e9e773d9a0b5f31f7cd6b31cff"
     },
     {
       "path": "core/scripts/loop.mjs",
@@ -76,7 +76,7 @@
     },
     {
       "path": "core/scripts/README.md",
-      "hash": "6edf119e430cbe635d304e1fb17887051a1d94e6a1d74b7931c4892c9c558e43"
+      "hash": "9bf443d1600f71834d761ed4f4eac1557a586b05e583ce0d9362bb1710667628"
     },
     {
       "path": "core/scripts/roles.mjs",
@@ -112,19 +112,19 @@
     },
     {
       "path": "index.mjs",
-      "hash": "cfbc18c84eebd0a04c2e6d059bd41ca63b8bb0d7bb89753e6cd1beb9bf8dc497"
+      "hash": "a17fbbff1ce9a5e7672903e02d8ac191c5eeb1fd58964da7f55a9a857f0b0ca1"
     },
     {
       "path": "package.json",
-      "hash": "bf0d408f26fb7927c7316ee886090642177e811ec7081721cec1f6f2a98ce222"
+      "hash": "19801500a7ec64a78d41952d820d42b8b1778774633e60948865e99aad680c71"
     },
     {
       "path": "README.md",
-      "hash": "5d70071945e22b88978d8e36b7c1e080215ab70795687e8e92021fdda21012df"
+      "hash": "32e9bd30b47962198ad78491cda7c77e66d8e89048f0c0d1286e8bd81921b515"
     },
     {
       "path": "ROUTING.md",
-      "hash": "6921f41754dacc99c71cb391c8f6a4d8b9740b4c54fea1a1d3c4730c5d2a5d2d"
+      "hash": "966fc15d06142f55f286db159860339905b09ee3aaaffd9ab529a59fc17dcdc5"
     },
     {
       "path": "skills/ai-loop-models/SKILL.md",
@@ -132,7 +132,7 @@
     },
     {
       "path": "skills/ai-loop/SKILL.md",
-      "hash": "3acf7796853221ca6f74de834d31c9a2c61a0de7f4c01be79237960131e76867"
+      "hash": "b3bc5ceeb46c7b1d6420cf7102b5886f2baf856622ccd51df94a8a02dc6f99ec"
     }
   ]
 }
