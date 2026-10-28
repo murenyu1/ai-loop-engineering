@@ -22,3 +22,4 @@ await import('./dev-status.test.mjs');
 await import('./layout.test.mjs');
 
 await import('./storage.test.mjs');
+await import('./verify.test.mjs');

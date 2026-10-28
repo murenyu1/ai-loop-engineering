@@ -1,9 +1,9 @@
 {
-  "version": "4.7.4",
+  "version": "4.7.5",
   "files": [
     {
       "path": ".codex-plugin/plugin.json",
-      "hash": "a35c0268ccd2842f866e75cb28c9731565c727da1a202e0997cec7835c6c8523"
+      "hash": "51f669e97563aa007b5e0338620df35396db75b095d95590c77d963c6fe2d2d8"
     },
     {
       "path": ".mcp.json",
@@ -35,7 +35,7 @@
     },
     {
       "path": "marketplace.json",
-      "hash": "df8d5deb010e5e901de205a972c5f03791873729b547f4eae7d43a3c26d281f3"
+      "hash": "3799e91d1b3c380427f315c325afe6c87ffc0ae2be21301a370b9061e6750a68"
     },
     {
       "path": "mcp.json",
@@ -47,11 +47,11 @@
     },
     {
       "path": "plugin.json",
-      "hash": "369d9786f7098d8db2dd62a4b919cdc81007023af7e538bfc0e8a9b33e4d244c"
+      "hash": "8c279644507153d49a262df7c8a905051578ca0c1f4d43a3444e3f5b41da2c86"
     },
     {
       "path": "README.md",
-      "hash": "51cb161050861e767bf10f5f6c7475d23d73491392c87bdb54ec21ed8ea75b65"
+      "hash": "41698af2b011f66b3763aa9cae83b067e7d3a798d80f6a908756065035d378ec"
     },
     {
       "path": "ROUTING.md",
@@ -107,7 +107,7 @@
     },
     {
       "path": "scripts/lib.mjs",
-      "hash": "eb5cb70a676971fc7bcd251895a069d2dfb3286ffefe4e0dc001ba349681b585"
+      "hash": "821a3f6d9e36b8ea54309f77209fbf75866111450831bdf6c16062f512276ae4"
     },
     {
       "path": "scripts/loop.mjs",

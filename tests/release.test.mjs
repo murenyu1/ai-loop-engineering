@@ -8,7 +8,7 @@ import { inflateRawSync } from 'node:zlib';
 import { spawnSync } from 'node:child_process';
 import { buildRelease } from '../scripts/build-release.mjs';
 import { buildPlugin } from '../scripts/build-plugin.mjs';
-import { BUNDLE, safePath } from '../scripts/lib.mjs';
+import { BUNDLE, VERSION, safePath } from '../scripts/lib.mjs';
 import { registerWorkspace, setWorkspaceEnabled } from '../scripts/workspaces.mjs';
 import { startupContext } from '../scripts/session-start.mjs';
 import { installPlugin } from '../scripts/install-plugin.mjs';
@@ -24,6 +24,31 @@ function unpack(file,root) {
   }
   assert.equal(bytes.readUInt32LE(pos),0x02014b50);return names;
 }
+
+test('当前版本声明和三个包的文档入口一致，历史发行说明保留', () => {
+  for (const file of ['package.json', 'codex/plugin.json', 'dsh/package.json']) {
+    assert.equal(JSON.parse(fs.readFileSync(path.join(BUNDLE, file), 'utf8')).version, VERSION, file);
+  }
+  const marketplace = JSON.parse(fs.readFileSync(path.join(BUNDLE, 'codex/marketplace.json'), 'utf8'));
+  assert.equal(marketplace.plugins[0].version, VERSION);
+  for (const file of ['README.md', 'core/README.md', 'codex/README.md', 'dsh/README.md']) {
+    const content = fs.readFileSync(path.join(BUNDLE, file), 'utf8');
+    assert.ok(content.slice(0, 1800).includes(VERSION), file);
+    assert.ok(!/当前版本为 \*\*4\.7\.1\*\*/.test(content), file);
+  }
+});
+
+test('独立Codex包README的本地链接在包内可达，不依赖源码目录', () => {
+  const built = buildPlugin();
+  const readme = fs.readFileSync(path.join(built.output, 'README.md'), 'utf8');
+  for (const match of readme.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
+    const target = match[1].split('#')[0];
+    if (!target || /^[a-z][a-z0-9+.-]*:/i.test(target)) continue;
+    const file = safePath(built.output, decodeURIComponent(target));
+    assert.ok(fs.statSync(file).isFile(), '包内README链接缺失：' + target);
+  }
+  assert.ok(readme.includes(VERSION));
+});
 test('独立发行包可复现、通用与 Codex ZIP 可在仓库外运行',t=>{
   assert.throws(()=>buildPlugin('core/unexpected-output'),/输出仅允许/);
   const first=buildRelease(),second=buildRelease();assert.deepEqual(first,second);

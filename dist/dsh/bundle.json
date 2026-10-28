@@ -1,5 +1,5 @@
 {
-  "version": "4.7.4",
+  "version": "4.7.5",
   "harness": "dsh",
   "files": [
     {
@@ -40,7 +40,7 @@
     },
     {
       "path": "core/README.md",
-      "hash": "528e36838aab5c790e34225cd046208d12a4e0fcc5208c4e71ca4becc2d18431"
+      "hash": "a06bd9752951c3ee2b754ce23174b022d566ec76a2d2f431b89f5c65c3dfe0c5"
     },
     {
       "path": "core/ROUTING.md",
@@ -60,7 +60,7 @@
     },
     {
       "path": "core/scripts/lib.mjs",
-      "hash": "ed02ff57fcdd67f3b40085040df323730ae7b0e9e773d9a0b5f31f7cd6b31cff"
+      "hash": "a6113d3235d1ebc9f81950f41148a253d89654e7ed381a505928f1e697e16475"
     },
     {
       "path": "core/scripts/loop.mjs",
@@ -116,11 +116,11 @@
     },
     {
       "path": "package.json",
-      "hash": "19801500a7ec64a78d41952d820d42b8b1778774633e60948865e99aad680c71"
+      "hash": "93c513d81304a1e16d6f7ba78c03ebea197e9d6f35f1ef8ee3d62d05c6f8e445"
     },
     {
       "path": "README.md",
-      "hash": "32e9bd30b47962198ad78491cda7c77e66d8e89048f0c0d1286e8bd81921b515"
+      "hash": "13d241a524c0ccb39a18cca18648a8d4d3c9cc9bf995a117413d022128cf50ea"
     },
     {
       "path": "ROUTING.md",
