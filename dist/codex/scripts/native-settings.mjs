@@ -101,7 +101,7 @@ export function createSettingsManager(options = {}) {
         return disabledProfile('codex');
       }
       if (migrated.migration?.needed) lastError = '检测到根目录旧配置；统一保存后将迁移为工作区配置。';
-      return upgradeProfile(migrated.profile || currentRecord(workspace.root, home, 'global').profile || disabledProfile('codex'));
+      return upgradeProfile(migrated.profile || disabledProfile('codex'));
     }
     const project = projectFor();
     const active = currentRecord(project, home, scope);
@@ -424,7 +424,8 @@ export function createSettingsManager(options = {}) {
     assert(['ready', 'not-windows'].includes(info.status), 'Windows 目录所有者检查未通过，停止恢复');
     const base = bases.get(key());
     const currentSnapshot = profileSnapshot(project, home, scope, draft().workspace_profile_source_id, selectedWorkspaceId);
-    assert(base && !currentSnapshot.error
+    // 已读取的静态冲突允许显式恢复；所有摘要与注册表版本仍须匹配读取基线。
+    assert(base
       && (currentSnapshot.profile_hash || null) === base.profile_hash
       && currentSnapshot.fallback_hash === base.fallback_hash
       && currentSnapshot.materialized_hash === base.materialized_hash

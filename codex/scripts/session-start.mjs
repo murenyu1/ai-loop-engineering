@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { BUNDLE, ID, safePath, jsonFile, mainModule } from '../../scripts/lib.mjs';
-import { resolveWorkspaceProfile } from '../../scripts/profiles.mjs';
+import { resolveEffectiveProfile } from '../../scripts/profiles.mjs';
 import { readCodexWorkspaces } from './codex-workspaces.mjs';
 import { roleEnabled } from '../../scripts/routing.mjs';
 
@@ -27,7 +27,7 @@ export function startupContext(input, options = {}) {
     }
   }
   const bundle = options.bundle || BUNDLE;
-  const profile = resolveWorkspaceProfile(home, { ...codexWorkspace, root }).profile;
+  const profile = resolveEffectiveProfile(root, { home }).profile;
   const enabledRoles = profile ? Object.keys(profile.roles).filter(role => roleEnabled(profile.roles[role])) : [];
   const context = [
     '本工作区已由用户在 AI Loop 管理面板启用自动入口。',

@@ -4,11 +4,11 @@
 
 4.7.1 同步全局草稿保存、周期状态读取与同名项目运行定位修复。原生角色及技能保留 Codex 调度方式，新独立评审要求关联真实调用证据；看板显示子项目归属。下文链接为 4.7.1 发行包。
 
-# AI Loop Codex 插件 4.7.5
+# AI Loop Codex 插件 4.7.6
 
-当前源码和本地候选包版本为 **4.7.5**；下方旧发行版本链接保留为历史说明。源码版本、已安装版本、自动测试和实际界面验收分别核对，不能以文件版本替代验收结论。
+当前源码和本地候选包版本为 **4.7.6**；下方旧发行版本链接保留为历史说明。源码版本、已安装版本、自动测试和实际界面验收分别核对，不能以文件版本替代验收结论。
 
-4.7.5 修复独立包文档链接与版本说明，并提供仓库维护用验收脚本，直接保存原始日志、退出码和前后源码快照。完整验收记录保存在源码仓库的 `docs/development/`；独立插件包不包含这些开发资料。
+4.7.6 统一设置页、诊断、启动提示、子代理登记和看板的工作区模型继承，修复 CLI 项目配置事务与安装文件碰撞保护。仓库验收脚本保存原始日志、退出码和前后源码快照。完整验收记录保存在源码仓库的 `docs/development/`；独立插件包不包含这些开发资料。
 
 本插件包与通用工作流、DSH 插件统一收录在 [v4.7.1 Release](https://github.com/murenyu1/ai-loop-engineering/releases/tag/v4.7.1)：[下载 Codex 插件](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.1/ai-loop-codex-4.7.1.zip)；完整性校验使用该 Release 的 [SHA256SUMS](https://github.com/murenyu1/ai-loop-engineering/releases/download/v4.7.1/SHA256SUMS)。4.4.3 及更早下载仍作为历史版本保留。插件预检使用 `node PLUGIN/scripts/plugin.mjs doctor --project ROOT`；兼容 `doctor.mjs` 也会识别插件项目。配置检查、原生执行、实际模型和界面分别验收。
 

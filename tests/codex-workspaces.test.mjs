@@ -165,14 +165,14 @@ test('不同工作区共享同一物理目录时阻止保存', t => {
   assert.throws(() => setWorkspaceRecordById(f.home, { id: 'b', roots: [f.a], enabled: true }), /同时属于多个/);
 });
 
-test('SessionStart按工作区ID读取集中profile，启用状态仍按成员目录校验', t => {
+test('SessionStart读取经工作区事务物化的集中profile，启用状态按成员目录校验', t => {
   const f = fixture(t);
   f.save({ 'local-projects': { a: { name: '项目甲', rootPaths: [f.a, f.b] } } });
   const oldProfile = disabledProfile('codex');
   fs.mkdirSync(path.join(f.a, '.ai-loop'));
   fs.writeFileSync(path.join(f.a, '.ai-loop', 'models.json'), JSON.stringify({ schema_version: 2, profile: oldProfile, profile_hash: routeHash(oldProfile), native: {} }));
   const profile = balanced('codex');
-  setWorkspaceRecordById(f.home, { id: 'a', roots: [f.a, f.b], enabled: true, profile, profile_hash: routeHash(profile), inherits_global: false, materialized_profiles: { [f.a]: routeHash(oldProfile), [f.b]: null } });
+  configureWorkspaceProfile(f.home, readCodexWorkspaces(f.home).workspaces[0], profile, { apply: true, enabled: true });
   const output = startupContext({ hook_event_name: 'SessionStart', cwd: f.a, session_id: 'parent' }, { home: f.home });
   assert.match(output.hookSpecificOutput.additionalContext, /已开启角色：planner、reviewer、dev、tester、scribe/);
 });
@@ -180,7 +180,7 @@ test('SessionStart按工作区ID读取集中profile，启用状态仍按成员�
 test('SessionStart严格跟随当前宿主ID与成员集合，删除或移除后不再注入', t => {
   const f = fixture(t);
   f.save({ 'local-projects': { a: { name: '项目甲', rootPaths: [f.a, f.b] } } });
-  setWorkspaceRecordById(f.home, { id: 'a', roots: [f.a, f.b], enabled: true, profile: balanced('codex'), profile_hash: routeHash(balanced('codex')) });
+  configureWorkspaceProfile(f.home, readCodexWorkspaces(f.home).workspaces[0], balanced('codex'), { apply: true, enabled: true });
   assert.ok(startupContext({ hook_event_name: 'SessionStart', cwd: f.a }, { home: f.home }));
   f.save({ 'local-projects': { a: { name: '项目甲', rootPaths: [f.b] } } });
   assert.equal(startupContext({ hook_event_name: 'SessionStart', cwd: f.a }, { home: f.home }), null);

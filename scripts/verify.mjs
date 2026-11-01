@@ -117,7 +117,7 @@ export async function verify(options={}) {
 export function cli(argv) {
   const parsed=args(argv); allowArgs(parsed,['out','help']);
   assert(!parsed._.length && (parsed.help===undefined || parsed.help===true), '参数无效');
-  if(parsed.help) return {usage:'在正常用户宿主中运行：node scripts/verify.mjs --out .ai-loop/verification-4.7.5',note:'先进行Windows用户/所有者只读预检；不通过时不启动测试。'};
+  if(parsed.help) return {usage:'在正常用户宿主中运行：node scripts/verify.mjs --out .ai-loop/verification-4.7.6',note:'先进行Windows用户/所有者只读预检；不通过时不启动测试。'};
   assert(typeof parsed.out==='string','必须显式指定 --out 专属证据目录');
   return {run:true,out:parsed.out};
 }

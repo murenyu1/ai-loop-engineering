@@ -35,17 +35,22 @@ export function resolveProfile(project, options = {}) {
   }
   return { profile: null, scope: null, path: null, effective_model: 'unverified' };
 }
-export function resolveEffectiveProfile(project, options = {}) {
+export function workspaceForProject(project, options = {}) {
   const home = options.home || userHome();
   const normalize = value => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
   const matches = readCodexWorkspaces(home).workspaces.filter(workspace => workspace.roots.some(root => normalize(root) === normalize(project)));
   assert(matches.length <= 1, '工作区根目录属于多个 Codex 工作区，无法确定角色配置');
-  if (!matches.length) return resolveProfile(project, { home });
-  const resolved = resolveWorkspaceProfile(home, { ...matches[0], root: project });
+  return matches[0] || null;
+}
+export function resolveEffectiveProfile(project, options = {}) {
+  const home = options.home || userHome();
+  const workspace = workspaceForProject(project, { home });
+  if (!workspace) return resolveProfile(project, { home });
+  const resolved = resolveWorkspaceProfile(home, { ...workspace, root: project });
   assert(!resolved.materialization_conflict && !resolved.migration?.conflict, 'Codex 工作区角色配置不一致，停止派发');
   const record = resolveProfile(project, { home, scope: resolved.scope || 'project' });
   assert((record.profile_hash ?? null) === (resolved.profile_hash ?? null), 'Codex 工作区角色配置与原生配置不一致，停止派发');
-  return { ...record, workspace_id: matches[0].id };
+  return { ...record, workspace_id: workspace.id };
 }
 export function configureProfile(project, profile, options = {}) {
   const scope = options.scope || 'global', home = options.home || userHome();
@@ -154,12 +159,20 @@ export function resolveWorkspaceProfile(home, workspace) {
     const valid = validateProfile(saved.profile, 'codex');
     assert(saved.profile_hash === routeHash(valid), '工作区模型配置摘要损坏，停止使用');
     const actualMembers = readMembers();
-    const materializationConflict = !saved.inherits_global && saved.materialized_profiles && actualMembers.some(item => saved.materialized_profiles[item.root] !== item.profile_hash);
+    const materializationConflict = actualMembers.some(item => item.profile_hash !== saved.profile_hash
+      || saved.materialized_profiles && saved.materialized_profiles[item.root] !== item.profile_hash);
     return { ...saved, profile: valid, profile_hash: routeHash(valid), scope: 'project', workspace_id: workspace.id, materialization_conflict: Boolean(materializationConflict), actual_members: actualMembers, member_profiles: actualMembers, migration: null };
   }
   const members = readMembers().map(item => ({ ...item, ...resolveProfile(item.root, { home, scope: 'project' }) }));
   const hashes = [...new Set(members.map(item => item.profile_hash ?? null))];
   const conflict = hashes.length > 1;
+  if (members.every(item => !item.profile)) {
+    const inherited = resolveProfile(workspace.root, { home, scope: 'global' });
+    const memberProfiles = members.map(item => ({ root: item.root, profile_hash: null }));
+    return { ...saved, profile: inherited.profile, profile_hash: inherited.profile_hash ?? null,
+      scope: 'global', inherits_global: true, workspace_id: workspace.id, migration: null,
+      materialization_conflict: false, member_profiles: memberProfiles, actual_members: memberProfiles };
+  }
   const sources = members.map((item, index) => ({ root: workspace.roots[index], profile: item.profile, profile_hash: item.profile_hash ?? null }));
   return {
     profile: conflict ? null : members[0]?.profile ?? null,
@@ -213,6 +226,7 @@ function sameBytes(left, right) {
 }
 
 export function resetWorkspaceProfile(home, workspace, options = {}) {
+  if (options.apply === false) return resetWorkspaceProfileTransaction(home, workspace, options);
   return locked(home, 'workspace-profile-reset', () => resetWorkspaceProfileTransaction(home, workspace, options));
 }
 
@@ -230,6 +244,8 @@ function resetWorkspaceProfileTransaction(home, workspace, options = {}) {
       backups.set(file, fs.existsSync(file) ? fs.readFileSync(file) : null);
     }
   }
+  const fallback = resolveProfile(workspace.root, { home, scope: 'global' }).profile;
+  if (options.apply === false) return { status: 'dry-run', workspace_id: workspace.id, roots: workspace.roots, changes: [...backups.keys()], fallback };
   const applied = [], resetMembers = new Set();
   try {
     for (const [index, root] of workspace.roots.entries()) {
@@ -276,6 +292,7 @@ function resetWorkspaceProfileTransaction(home, workspace, options = {}) {
 }
 
 export function configureWorkspaceProfile(home, workspace, profile, options = {}) {
+  if (options.apply === false) return configureWorkspaceProfileTransaction(home, workspace, profile, options);
   return locked(home, 'workspace-profile-save', () => configureWorkspaceProfileTransaction(home, workspace, profile, options));
 }
 
@@ -295,6 +312,8 @@ function configureWorkspaceProfileTransaction(home, workspace, profile, options 
     if (record.profile && previous?.profile_hash && !previous.inherits_global && record.profile_hash !== previous.profile_hash) assert(false, `成员目录 ${root} 的配置与工作区配置不一致，需先解决冲突`);
   }
   workspaceCurrent(home, workspace);
+  if (options.apply === false) return { status: 'dry-run', scope, workspace_id: workspace.id, roots: workspace.roots,
+    changes: [...new Set(previews.flatMap(preview => preview.changes))], profile, effective_model: 'unverified' };
   for (const preview of previews) for (const file of preview.changes) {
     if (!before.has(file)) before.set(file, fs.existsSync(file) ? fs.readFileSync(file) : null);
   }

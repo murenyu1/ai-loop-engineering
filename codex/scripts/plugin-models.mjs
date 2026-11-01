@@ -1,6 +1,6 @@
 import { createInterface } from 'node:readline/promises';
 import { stdin, stderr } from 'node:process';
-import { resolveProfile, configureProfile, resetProjectProfile } from '../../scripts/profiles.mjs';
+import { resolveProfile, resolveEffectiveProfile, resolveWorkspaceProfile, workspaceForProject, userHome, configureProfile, resetProjectProfile, configureWorkspaceProfile, resetWorkspaceProfile } from '../../scripts/profiles.mjs';
 import { balanced, disabledProfile, upgradeProfile, ROLES } from '../../scripts/routing.mjs';
 import { inspectNative } from '../../scripts/doctor.mjs';
 import { assert, rootPath, jsonFile, args, allowArgs, mainModule } from '../../scripts/lib.mjs';
@@ -16,16 +16,25 @@ export async function cli(argv, io = { input: stdin, output: stderr }) {
     const native = await inspectNative(root, 'codex');
     return { models: native.models, error: native.models_error, next_cursor: native.models_next_cursor, source: 'native-model/list', warning: '原生服务返回的模型和强度；未返回时询问用户，不用静态预设冒充可用列表' };
   }
-  const current = resolveProfile(root, command === 'status' ? options : { ...options, scope: options.scope || 'global' });
+  const home = userHome();
+  const workspace = options.scope === 'project' ? workspaceForProject(root, { home }) : null;
+  const current = command === 'status' && !options.scope
+    ? resolveEffectiveProfile(root, { home })
+    : command !== 'status' && workspace
+      ? resolveWorkspaceProfile(home, { ...workspace, root })
+      : resolveProfile(root, { ...options, home, scope: options.scope || 'global' });
   if (command === 'status') {
     assert(['role', 'model', 'effort', 'enabled', 'concurrency', 'input', 'preset', 'apply'].every(key => options[key] === undefined), 'status 不接受修改参数');
     return { ...current, profile: current.profile || disabledProfile('codex') };
   }
   if (command === 'reset') {
     assert(options.scope === 'project', 'reset 仅撤销项目覆盖，恢复全局默认；全局默认用 configure 更新');
-    return resetProjectProfile(root, options);
+    return workspace
+      ? resetWorkspaceProfile(home, workspace, { ...options, apply: options.apply === true })
+      : resetProjectProfile(root, options);
   }
   assert(['configure', 'set'].includes(command), '未知模型设置命令');
+  assert(!current.materialization_conflict && !current.migration?.conflict, 'Codex 工作区角色配置不一致，请先在原生设置页解决冲突');
   assert(!(options.input && options.preset) && (!options.preset || options.preset === 'balanced'), '选择 input 或明确预设 balanced，不能同时指定');
   let profile = options.input ? jsonFile(options.input) : upgradeProfile(options.preset ? balanced('codex') : current.profile || disabledProfile('codex'));
   if (command === 'set') {
@@ -61,7 +70,9 @@ export async function cli(argv, io = { input: stdin, output: stderr }) {
     }
   }
   if (options.concurrency !== undefined) profile.concurrency = Number(options.concurrency);
-  return configureProfile(root, profile, { ...options, scope: options.scope || 'global' });
+  return workspace
+    ? configureWorkspaceProfile(home, workspace, profile, { ...options, apply: options.apply === true })
+    : configureProfile(root, profile, { ...options, scope: options.scope || 'global' });
 }
 if (mainModule(import.meta.url)) {
   try { console.log(JSON.stringify(await cli(process.argv.slice(2)), null, 2)); }
